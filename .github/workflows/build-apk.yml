@@ -28,7 +28,9 @@ jobs:
           unzip -q ai-auto-trader-v4-assembly.zip
           test -f ai-auto-trader-v4-assembly/settings.gradle.kts
           test -f ai-auto-trader-v4-assembly/android/app/build.gradle.kts
-
+      - name: Enable AndroidX support
+        run: |
+         echo 'android.useAndroidX=true' >> ai-auto-trader-v4-assembly/gradle.properties
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
