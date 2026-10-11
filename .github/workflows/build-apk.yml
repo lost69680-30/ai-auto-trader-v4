@@ -28,9 +28,11 @@ jobs:
           unzip -q ai-auto-trader-v4-assembly.zip
           test -f ai-auto-trader-v4-assembly/settings.gradle.kts
           test -f ai-auto-trader-v4-assembly/android/app/build.gradle.kts
-      - name: Enable AndroidX support
+      - name: Enable AndroidX and increase Gradle memory
         run: |
-         echo 'android.useAndroidX=true' >> ai-auto-trader-v4-assembly/gradle.properties
+          echo 'android.useAndroidX=true' >> ai-auto-trader-v4-assembly/gradle.properties
+          echo 'org.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8' >> ai-auto-trader-v4-assembly/gradle.properties
+          echo 'kotlin.daemon.jvmargs=-Xmx1g' >> ai-auto-trader-v4-assembly/gradle.properties:
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
