@@ -61,7 +61,7 @@ jobs:
           echo 'kotlin.daemon.jvmargs=-Xmx1g' >> "$PROJECT_DIR/gradle.properties"
 
       - name: Build Android debug APK
-        run: gradle -p "$PROJECT_DIR" :android:app:assembleDebug --no-daemon
+        run: gradle -p "$PROJECT_DIR" :android:app:assembleDebug -PpaperApiBaseUrl=https://ai-auto-trader-v4-backend.onrender.com --no-daemon
 
       - name: Verify APK
         run: test -s "$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
