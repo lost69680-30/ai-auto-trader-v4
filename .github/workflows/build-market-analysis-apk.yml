@@ -55,7 +55,12 @@ jobs:
           fi
 
           echo "PROJECT_DIR=$PROJECT" >> "$GITHUB_ENV"
-
+      - name: Enable AndroidX
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '\nandroid.useAndroidX=true\n' >> "$PROJECT_DIR/gradle.properties"
+          cat "$PROJECT_DIR/gradle.properties"
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
