@@ -56,23 +56,14 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT" >> "$GITHUB_ENV"
 
-      - name: Locate Gradle wrapper
-        shell: bash
-        run: |
-          set -euo pipefail
-          PROJECT="$PROJECT_DIR"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
 
-          if [ -f "$PROJECT/gradlew" ]; then
-            echo "GRADLE_CMD=$PROJECT/gradlew" >> "$GITHUB_ENV"
-          elif [ -f "$PROJECT/android/gradlew" ]; then
-            echo "GRADLE_CMD=$PROJECT/android/gradlew" >> "$GITHUB_ENV"
-          else
-            echo "Gradle wrapper was not found."
-            find "$PROJECT" -maxdepth 5 \
-              \( -name gradlew -o -name settings.gradle -o -name settings.gradle.kts \) \
-              -print
-            exit 1
-          fi
+      - name: Verify Gradle installation
+        shell: bash
+        run: gradle --version
 
       - name: Run Android unit tests
         shell: bash
