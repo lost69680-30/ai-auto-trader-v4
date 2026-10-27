@@ -55,6 +55,22 @@ jobs:
           fi
 
           echo "PROJECT_DIR=$PROJECT" >> "$GITHUB_ENV"
+    
+      - name: Configure Gradle memory
+        shell: bash
+        run: |
+          set -euo pipefail
+          touch "$PROJECT_DIR/gradle.properties"
+          if grep -q '^org.gradle.jvmargs=' "$PROJECT_DIR/gradle.properties"; then
+            sed -i 's|^org.gradle.jvmargs=.*|org.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8|' "$PROJECT_DIR/gradle.properties"
+          else
+            printf '\norg.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8\n' >> "$PROJECT_DIR/gradle.properties"
+          fi
+          if ! grep -q '^android.useAndroidX=' "$PROJECT_DIR/gradle.properties"; then
+            printf 'android.useAndroidX=true\n' >> "$PROJECT_DIR/gradle.properties"
+          fi
+          cat "$PROJECT_DIR/gradle.properties"
+
       - name: Enable AndroidX
         shell: bash
         run: |
@@ -74,13 +90,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gradle -p "$PROJECT_DIR" :android:app:testDebugUnitTest --no-daemon
+          gradle -p "$PROJECT_DIR" :android:app:testDebugUnitTest :android:app:assembleDebug --no-daemon --max-workers=2
 
       - name: Build debug APK
         shell: bash
-        run: |
-          set -euo pipefail
-          gradle -p "$PROJECT_DIR" :android:app:assembleDebug --no-daemon
+        run: echo "APK build was included in the test Gradle invocation."
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
