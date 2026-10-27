@@ -69,28 +69,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x "$GRADLE_CMD"
-
-          if [ "$GRADLE_CMD" = "$PROJECT_DIR/android/gradlew" ]; then
-            cd "$PROJECT_DIR/android"
-            ./gradlew testDebugUnitTest --no-daemon
-          else
-            cd "$PROJECT_DIR"
-            ./gradlew :android:app:testDebugUnitTest --no-daemon
-          fi
+          gradle -p "$PROJECT_DIR" :android:app:testDebugUnitTest --no-daemon
 
       - name: Build debug APK
         shell: bash
         run: |
           set -euo pipefail
-
-          if [ "$GRADLE_CMD" = "$PROJECT_DIR/android/gradlew" ]; then
-            cd "$PROJECT_DIR/android"
-            ./gradlew assembleDebug --no-daemon
-          else
-            cd "$PROJECT_DIR"
-            ./gradlew :android:app:assembleDebug --no-daemon
-          fi
+          gradle -p "$PROJECT_DIR" :android:app:assembleDebug --no-daemon
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
