@@ -1,0 +1,328 @@
+name: Build AI Auto Trader APK - Market Analysis
+
+on:
+workflow_dispatch:
+push:
+paths:
+- ".github/workflows/build-market-analysis-apk.yml"
+
+permissions:
+contents: read
+
+concurrency:
+group: market-analysis-apk
+cancel-in-progress: false
+
+jobs:
+build:
+runs-on: ubuntu-latest
+timeout-minutes: 30
+
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
+
+  - name: Verify project archive
+    shell: bash
+    run: |
+      set -euo pipefail
+      test -f ai-auto-trader-v4-emergency-stop-v7.zip
+      unzip -t ai-auto-trader-v4-emergency-stop-v7.zip
+
+  - name: Set up Java 17
+    uses: actions/setup-java@v4
+    with:
+      distribution: temurin
+      java-version: "17"
+
+  - name: Set up Gradle
+    uses: gradle/actions/setup-gradle@v4
+    with:
+      gradle-version: "8.9"
+
+  - name: Extract project
+    shell: bash
+    run: |
+      set -euo pipefail
+      mkdir -p "$GITHUB_WORKSPACE/extracted-project"
+      unzip -q ai-auto-trader-v4-emergency-stop-v7.zip \
+        -d "$GITHUB_WORKSPACE/extracted-project"
+      echo "PROJECT_DIR=$GITHUB_WORKSPACE/extracted-project/ai-auto-trader-v4-assembly" >> "$GITHUB_ENV"
+      test -f "$GITHUB_WORKSPACE/extracted-project/ai-auto-trader-v4-assembly/android/app/build.gradle.kts"
+      test -f "$GITHUB_WORKSPACE/extracted-project/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+
+  - name: Add market analysis engine and tests
+    shell: bash
+    run: |
+      set -euo pipefail
+      python - <<'PY'
+      from pathlib import Path
+      import os
+
+      project = Path(os.environ["PROJECT_DIR"])
+      main = project / "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+      engine = project / "android/app/src/main/java/com/aiautotrader/v4/MarketAnalysisEngine.kt"
+      test = project / "android/app/src/test/java/com/aiautotrader/v4/MarketAnalysisEngineTest.kt"
+      gradle_file = project / "android/app/build.gradle.kts"
+
+      source = main.read_text(encoding="utf-8")
+      if engine.exists() or test.exists():
+          raise SystemExit("Analysis files already exist. Stop and review rather than overwrite.")
+      start = "@Composable\nprivate fun AnalysisScreen() {"
+      end = "\nprivate enum class ChartKind"
+      if source.count(start) != 1 or source.count(end) != 1:
+          raise SystemExit("Android screen anchors do not match the expected V7 project.")
+
+      engine_code = r'''package com.aiautotrader.v4
+
+      import kotlin.math.abs
+
+      internal data class MarketCandle(
+          val openTime: String,
+          val closeTime: String,
+          val open: Double,
+          val high: Double,
+          val low: Double,
+          val close: Double,
+          val volume: Double,
+          val isClosed: Boolean
+      )
+
+      internal data class MarketAnalysisMetrics(
+          val trend: String,
+          val momentum: String,
+          val lastClose: Double,
+          val ema20: Double,
+          val ema50: Double,
+          val rsi14: Double,
+          val atr14: Double,
+          val atrPct: Double,
+          val support20: Double,
+          val resistance20: Double,
+          val volumeRatio20: Double?,
+          val ordersAuthorized: Boolean = false
+      )
+
+      internal object MarketAnalysisEngine {
+          fun calculate(candles: List<MarketCandle>): MarketAnalysisMetrics {
+              require(candles.size >= 50) { "At least 50 candles are required" }
+
+              var previousTime = ""
+              candles.forEachIndexed { index, c ->
+                  require(c.isClosed) { "Unclosed candle rejected" }
+                  require(c.openTime.isNotBlank() && c.closeTime > c.openTime) {
+                      "Invalid candle timestamps"
+                  }
+                  if (index > 0) require(c.openTime > previousTime) {
+                      "Candle timestamps must be increasing"
+                  }
+                  require(listOf(c.open, c.high, c.low, c.close, c.volume).all { it.isFinite() }) {
+                      "Non-finite candle values"
+                  }
+                  require(minOf(c.open, c.high, c.low, c.close) > 0.0 && c.volume >= 0.0) {
+                      "Invalid price or volume"
+                  }
+                  require(c.high >= maxOf(c.open, c.close, c.low) &&
+                      c.low <= minOf(c.open, c.close, c.high)) { "Invalid OHLC geometry" }
+                  previousTime = c.openTime
+              }
+
+              val closes = candles.map { it.close }
+              val ema20 = ema(closes, 20)
+              val ema50 = ema(closes, 50)
+              val changes = (1 until closes.size).map { closes[it] - closes[it - 1] }
+              var gain = changes.take(14).map { maxOf(it, 0.0) }.average()
+              var loss = changes.take(14).map { maxOf(-it, 0.0) }.average()
+              for (i in 14 until changes.size) {
+                  gain = (gain * 13 + maxOf(changes[i], 0.0)) / 14
+                  loss = (loss * 13 + maxOf(-changes[i], 0.0)) / 14
+              }
+              val rsi = if (loss == 0.0) {
+                  if (gain == 0.0) 50.0 else 100.0
+              } else 100.0 - 100.0 / (1.0 + gain / loss)
+
+              val ranges = (1 until candles.size).map { i ->
+                  val c = candles[i]
+                  maxOf(c.high - c.low, abs(c.high - candles[i - 1].close),
+                      abs(c.low - candles[i - 1].close))
+              }
+              var atr = ranges.take(14).average()
+              for (i in 14 until ranges.size) atr = (atr * 13 + ranges[i]) / 14
+              require(atr.isFinite() && atr > 0.0) { "ATR invalid or zero" }
+
+              val last = candles.last()
+              val trend = when {
+                  last.close > ema20 && ema20 > ema50 -> "BULLISH"
+                  last.close < ema20 && ema20 < ema50 -> "BEARISH"
+                  else -> "MIXED"
+              }
+              val recent = candles.takeLast(20)
+              val averageVolume = candles.dropLast(1).takeLast(20).map { it.volume }.average()
+              return MarketAnalysisMetrics(
+                  trend = trend,
+                  momentum = when {
+                      rsi >= 55 -> "BULLISH MOMENTUM"
+                      rsi <= 45 -> "BEARISH MOMENTUM"
+                      else -> "NEUTRAL MOMENTUM"
+                  },
+                  lastClose = last.close,
+                  ema20 = ema20,
+                  ema50 = ema50,
+                  rsi14 = rsi,
+                  atr14 = atr,
+                  atrPct = atr / last.close * 100,
+                  support20 = recent.minOf { it.low },
+                  resistance20 = recent.maxOf { it.high },
+                  volumeRatio20 = if (averageVolume > 0) last.volume / averageVolume else null,
+                  ordersAuthorized = false
+              )
+          }
+
+          private fun ema(values: List<Double>, period: Int): Double {
+              require(values.size >= period)
+              var result = values.take(period).average()
+              val alpha = 2.0 / (period + 1)
+              for (i in period until values.size) result = alpha * values[i] + (1 - alpha) * result
+              return result
+          }
+      }
+      '''
+
+      test_code = r'''package com.aiautotrader.v4
+
+      import org.junit.Assert.*
+      import org.junit.Test
+
+      class MarketAnalysisEngineTest {
+          private fun sample(count: Int = 60, rising: Boolean = true) =
+              (0 until count).map { i ->
+                  val open = if (rising) 100.0 + i * 0.5 else 100.0
+                  val close = if (rising) open + 0.4 else 100.0
+                  val t = i.toString().padStart(6, '0')
+                  MarketCandle(t, t + "z", open, maxOf(open, close) + 1,
+                      minOf(open, close) - 1, close, 100.0, true)
+              }
+
+          @Test fun risingCandlesAreBullishButNeverAuthorizeOrders() {
+              val r = MarketAnalysisEngine.calculate(sample())
+              assertEquals("BULLISH", r.trend)
+              assertTrue(r.ema20 > r.ema50)
+              assertTrue(r.rsi14 > 55)
+              assertFalse(r.ordersAuthorized)
+          }
+
+          @Test fun flatCandlesHaveNeutralRsi() {
+              val r = MarketAnalysisEngine.calculate(sample(rising = false))
+              assertEquals(50.0, r.rsi14, 0.001)
+              assertFalse(r.ordersAuthorized)
+          }
+
+          @Test(expected = IllegalArgumentException::class)
+          fun insufficientHistoryIsRejected() {
+              MarketAnalysisEngine.calculate(sample(count = 20))
+          }
+
+          @Test(expected = IllegalArgumentException::class)
+          fun malformedOhlcIsRejected() {
+              val data = sample().toMutableList()
+              data[59] = data[59].copy(high = 1.0)
+              MarketAnalysisEngine.calculate(data)
+          }
+
+          @Test(expected = IllegalArgumentException::class)
+          fun outOfOrderCandlesAreRejected() {
+              MarketAnalysisEngine.calculate(sample().reversed())
+          }
+
+          @Test(expected = IllegalArgumentException::class)
+          fun unclosedCandleIsRejected() {
+              val data = sample().toMutableList()
+              data[59] = data[59].copy(isClosed = false)
+              MarketAnalysisEngine.calculate(data)
+          }
+      }
+      '''
+
+      source = source.replace(source[source.index(start):source.index(end)], start + r'''
+          val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
+          var symbol by remember { mutableStateOf("BTCUSDT") }
+          var status by remember { mutableStateOf("READ-ONLY ANALYSIS ENGINE ADDED") }
+          Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+              Text("MARKET ANALYSIS", color = Gold, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+              Text("Analysis engine is installed, but live candles are not connected in this workflow.", color = Muted)
+              Text("Status: " + status, color = Gold)
+              Text("Indicators: EMA20/50, RSI14, ATR14, support/resistance and volume ratio.", color = White)
+              Text("Risk authorization: NOT RUN. Orders authorized: false.", color = Red)
+              Text("Next integration step: connect a validated backend market response to this screen.", color = Muted)
+          }
+      }
+      '''.rstrip())
+      main.write_text(source, encoding="utf-8")
+      engine.write_text(engine_code + "\n", encoding="utf-8")
+      test.parent.mkdir(parents=True, exist_ok=True)
+      test.write_text(test_code + "\n", encoding="utf-8")
+
+      gradle = gradle_file.read_text(encoding="utf-8")
+      dep = 'testImplementation("junit:junit:4.13.2")'
+      if dep not in gradle:
+          if gradle.count("dependencies {") != 1:
+              raise SystemExit("Cannot safely add JUnit dependency.")
+          gradle = gradle.replace("dependencies {", "dependencies {\n    " + dep, 1)
+          gradle_file.write_text(gradle, encoding="utf-8")
+      print("Market analysis engine and unit tests added.")
+      PY
+
+  - name: Configure Android build
+    shell: bash
+    run: |
+      set -euo pipefail
+      cd "$PROJECT_DIR"
+      test -f gradlew && chmod +x gradlew || true
+      if [ -f gradlew ]; then
+        ./gradlew --version
+      else
+        gradle --version
+      fi
+
+  - name: Run market analysis unit tests
+    shell: bash
+    run: |
+      set -euo pipefail
+      cd "$PROJECT_DIR"
+      if [ -f gradlew ]; then
+        ./gradlew :android:app:testDebugUnitTest --no-daemon
+      else
+        gradle :android:app:testDebugUnitTest --no-daemon
+      fi
+
+  - name: Build debug APK
+    shell: bash
+    env:
+      PAPER_API_BASE_URL: https://ai-auto-trader-v4-backend.onrender.com
+    run: |
+      set -euo pipefail
+      cd "$PROJECT_DIR"
+      if [ -f gradlew ]; then
+        ./gradlew :android:app:assembleDebug --no-daemon -PpaperApiBaseUrl="$PAPER_API_BASE_URL"
+      else
+        gradle :android:app:assembleDebug --no-daemon -PpaperApiBaseUrl="$PAPER_API_BASE_URL"
+      fi
+      find android/app/build/outputs/apk/debug -maxdepth 1 -name '*.apk' -print -quit | grep -q .
+
+  - name: Upload APK
+    uses: actions/upload-artifact@v4
+    with:
+      name: ai-auto-trader-v4-market-analysis-debug-apk
+      path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/*.apk
+      if-no-files-found: error
+      retention-days: 14
+
+  - name: Upload market analysis source
+    uses: actions/upload-artifact@v4
+    with:
+      name: ai-auto-trader-v4-market-analysis-source
+      path: |
+        ${{ env.PROJECT_DIR }}/android/app/src/main/java/com/aiautotrader/v4/MarketAnalysisEngine.kt
+        ${{ env.PROJECT_DIR }}/android/app/src/test/java/com/aiautotrader/v4/MarketAnalysisEngineTest.kt
+      if-no-files-found: error
+      retention-days: 14
