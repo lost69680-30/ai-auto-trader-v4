@@ -1,0 +1,289 @@
+name: Build AI Auto Trader APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'ai-auto-trader-v4-consolidated-audit-backend-resumed.zip'
+      - 'ai-auto-trader-v4-assembly.zip'
+      - 'ai-auto-trader-v4-emergency-stop-v7.zip'
+      - '.github/workflows/build-apk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-debug-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Extract updated project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -f ai-auto-trader-v4-emergency-stop-v7.zip ]; then
+            PROJECT_ZIP=ai-auto-trader-v4-emergency-stop-v7.zip
+          elif [ -f ai-auto-trader-v4-consolidated-audit-backend-resumed.zip ]; then
+            PROJECT_ZIP=ai-auto-trader-v4-consolidated-audit-backend-resumed.zip
+          elif [ -f ai-auto-trader-v4-assembly.zip ]; then
+            PROJECT_ZIP=ai-auto-trader-v4-assembly.zip
+          else
+            echo "ERROR: No supported project ZIP found in repository root."
+            exit 1
+          fi
+
+          echo "Selected project archive: $PROJECT_ZIP"
+          mkdir -p extracted-project
+          unzip -q "$PROJECT_ZIP" -d extracted-project
+
+          PROJECT_DIR=extracted-project/ai-auto-trader-v4-assembly
+
+          if [ ! -f "$PROJECT_DIR/settings.gradle.kts" ]; then
+            echo "ERROR: settings.gradle.kts not found at $PROJECT_DIR"
+            find extracted-project -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT_DIR/android/app/build.gradle.kts" ]; then
+            echo "ERROR: Android app Gradle file not found."
+            find extracted-project -maxdepth 5 -type f | head -100
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Apply encrypted token persistence patch and regression checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import sys
+
+          project = Path(os.environ["PROJECT_DIR"])
+          main_path = project / "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+          store_path = project / "android/app/src/main/java/com/aiautotrader/v4/BackendTokenStore.kt"
+          source = main_path.read_text(encoding="utf-8")
+
+          # RED check: the source archive must still contain the known in-memory-only token state.
+          old_state = 'private fun ReadOnlyBackendConnectionCard() {\n    var token by remember { mutableStateOf("") }'
+          if source.count(old_state) != 1:
+              raise SystemExit("STOP: MainActivity token-state anchor changed; refusing an unsafe automatic patch.")
+          if store_path.exists():
+              raise SystemExit("STOP: BackendTokenStore.kt already exists; inspect the source instead of overwriting it.")
+
+          # GREEN patch: load the saved token from a single encrypted device store whenever this card is composed.
+          new_state = ('private fun ReadOnlyBackendConnectionCard() {\n'
+                       '    val context = androidx.compose.ui.platform.LocalContext.current\n'
+                       '    val tokenStore = remember { BackendTokenStore(context) }\n'
+                       '    var token by remember { mutableStateOf(tokenStore.read().orEmpty()) }')
+          source = source.replace(old_state, new_state, 1)
+
+          start = source.index("private fun ReadOnlyBackendConnectionCard()")
+          end = source.index("\n@Composable\nprivate fun DashboardScreen", start)
+          section = source[start:end]
+          old_click = '            onClick = {\n                loading = true\n                status = "CHECKING"\n                scope.launch {'
+          if section.count(old_click) != 1:
+              raise SystemExit("STOP: Connect-button anchor changed; refusing an unsafe automatic patch.")
+          new_click = ('            onClick = {\n'
+                       '                val normalizedToken = token.trim()\n'
+                       '                val tokenSaved = try { tokenStore.save(normalizedToken); true } catch (_: Exception) { false }\n'
+                       '                if (!tokenSaved) {\n'
+                       '                    status = "TOKEN STORAGE ERROR"\n'
+                       '                    details = "No API request was sent because the bearer token could not be stored securely on this device."\n'
+                       '                    return@Button\n'
+                       '                }\n'
+                       '                token = normalizedToken\n'
+                       '                loading = true\n'
+                       '                status = \"CHECKING\"\n'
+                       '                scope.launch {')
+          section = section.replace(old_click, new_click, 1)
+
+          old_note = '        Text("Token stays in memory for this screen session; do not use an exchange key here. Stop activation is one-way from this screen; clearing requires a separate protected process.", color = Muted, fontSize = 10.sp)'
+          new_note = '''        Button(
+                      enabled = !loading && token.isNotBlank(),
+                      onClick = {
+                          tokenStore.clear()
+                          token = ""
+                          status = "NOT CONNECTED"
+                          details = "Saved backend token cleared from this device."
+                          openPositions = "—"
+                          emergencyStop = "UNKNOWN"
+                          feedStatus = "UNKNOWN"
+                      },
+                      modifier = Modifier.fillMaxWidth(),
+                      colors = ButtonDefaults.buttonColors(containerColor = PanelAlt, contentColor = White)
+                  ) { Text("FORGET SAVED TOKEN") }
+                  Text("The bearer token is encrypted on this device with Android Keystore. Clearing it here does not change the backend emergency-stop state. Do not use an exchange key here.", color = Muted, fontSize = 10.sp)'''
+          if section.count(old_note) != 1:
+              raise SystemExit("STOP: token safety-note anchor changed; refusing an unsafe automatic patch.")
+          section = section.replace(old_note, new_note, 1)
+          source = source[:start] + section + source[end:]
+
+          store_code = r'''package com.aiautotrader.v4
+          
+          import android.content.Context
+          import android.security.keystore.KeyGenParameterSpec
+          import android.security.keystore.KeyProperties
+          import android.util.Base64
+          import java.security.KeyStore
+          import javax.crypto.Cipher
+          import javax.crypto.KeyGenerator
+          import javax.crypto.SecretKey
+          import javax.crypto.spec.GCMParameterSpec
+          
+          /** Stores only the backend bearer token, encrypted with an Android Keystore AES key. */
+          internal class BackendTokenStore(context: Context) {
+              private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+          
+              fun read(): String? {
+                  val encoded = preferences.getString(TOKEN_KEY, null) ?: return null
+                  return try {
+                      val payload = Base64.decode(encoded, Base64.NO_WRAP)
+                      require(payload.size > IV_BYTES + GCM_TAG_BYTES / 8) { "Invalid encrypted token payload" }
+                      val iv = payload.copyOfRange(0, IV_BYTES)
+                      val encrypted = payload.copyOfRange(IV_BYTES, payload.size)
+                      val cipher = Cipher.getInstance(TRANSFORMATION)
+                      cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(GCM_TAG_BYTES, iv))
+                      String(cipher.doFinal(encrypted), Charsets.UTF_8).takeIf { it.isNotBlank() }
+                  } catch (_: Exception) {
+                      clear()
+                      null
+                  }
+              }
+          
+              /** Throws if secure persistence fails so the caller can avoid sending a request. */
+              fun save(token: String) {
+                  val normalized = token.trim()
+                  require(normalized.length >= 32) { "Bearer token is missing or too short" }
+                  val cipher = Cipher.getInstance(TRANSFORMATION)
+                  cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+                  val iv = cipher.iv ?: error("Keystore did not provide an IV")
+                  require(iv.size == IV_BYTES) { "Unexpected AES-GCM IV length" }
+                  val encrypted = cipher.doFinal(normalized.toByteArray(Charsets.UTF_8))
+                  val payload = ByteArray(iv.size + encrypted.size)
+                  System.arraycopy(iv, 0, payload, 0, iv.size)
+                  System.arraycopy(encrypted, 0, payload, iv.size, encrypted.size)
+                  preferences.edit().putString(TOKEN_KEY, Base64.encodeToString(payload, Base64.NO_WRAP)).apply()
+              }
+          
+              fun clear() {
+                  preferences.edit().remove(TOKEN_KEY).apply()
+                  try {
+                      val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE)
+                      keyStore.load(null)
+                      keyStore.deleteEntry(KEY_ALIAS)
+                  } catch (_: Exception) {
+                      // The encrypted preference is removed even if Android Keystore cleanup is unavailable.
+                  }
+              }
+          
+              private fun getOrCreateKey(): SecretKey {
+                  val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE)
+                  keyStore.load(null)
+                  (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+          
+                  val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEY_STORE)
+                  val spec = KeyGenParameterSpec.Builder(
+                      KEY_ALIAS,
+                      KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+                  )
+                      .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                      .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                      .setRandomizedEncryptionRequired(true)
+                      .build()
+                  generator.init(spec)
+                  return generator.generateKey()
+              }
+          
+              private companion object {
+                  const val PREFERENCES_NAME = "backend_session_secure_v1"
+                  const val TOKEN_KEY = "encrypted_bearer_token"
+                  const val KEY_ALIAS = "ai_auto_trader_backend_token_aes_v1"
+                  const val ANDROID_KEY_STORE = "AndroidKeyStore"
+                  const val TRANSFORMATION = "AES/GCM/NoPadding"
+                  const val IV_BYTES = 12
+                  const val GCM_TAG_BYTES = 128
+              }
+          }'''
+
+          # Regression assertions: persist on connect, restore on composition, and support explicit removal.
+          if "tokenStore.read().orEmpty()" not in source:
+              raise SystemExit("FAIL: token is not restored from the encrypted store")
+          if "tokenStore.save(normalizedToken)" not in source:
+              raise SystemExit("FAIL: token is not saved before a backend request")
+          if "FORGET SAVED TOKEN" not in source or "tokenStore.clear()" not in source:
+              raise SystemExit("FAIL: explicit token removal control is missing")
+          if "Token stays in memory for this screen session" in source:
+              raise SystemExit("FAIL: stale in-memory-only token warning remains")
+
+          main_path.write_text(source, encoding="utf-8")
+          store_path.write_text(store_code + "\n", encoding="utf-8")
+          print("PASS: encrypted token restore/save/clear checks passed.")
+          print("PASS: API token storage uses AES-GCM with a key held in Android Keystore.")
+          print("PASS: token persistence failures stop the request rather than silently continuing.")
+          PY
+
+      - name: Configure Android build
+        shell: bash
+        run: |
+          set -euo pipefail
+          touch "$PROJECT_DIR/gradle.properties"
+          echo 'android.useAndroidX=true' >> "$PROJECT_DIR/gradle.properties"
+          echo 'org.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8' >> "$PROJECT_DIR/gradle.properties"
+          echo 'kotlin.daemon.jvmargs=-Xmx1g' >> "$PROJECT_DIR/gradle.properties"
+
+      - name: Build Android debug APK
+        run: |
+          gradle -p "$PROJECT_DIR" :android:app:assembleDebug \
+            -PpaperApiBaseUrl=https://ai-auto-trader-v4-backend.onrender.com \
+            --no-daemon
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_PATH="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK_PATH"
+          echo "APK built successfully:"
+          ls -lh "$APK_PATH"
+          sha256sum "$APK_PATH"
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-auto-trader-v4-debug-apk
+          path: extracted-project/ai-auto-trader-v4-assembly/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload patched source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          zip -qr "$GITHUB_WORKSPACE/ai-auto-trader-v4-token-persistence-source.zip" . -x '**/build/**' '**/.gradle/**'
+      - name: Save patched source archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-auto-trader-v4-token-persistence-source
+          path: ai-auto-trader-v4-token-persistence-source.zip
+          if-no-files-found: error
+          retention-days: 14
