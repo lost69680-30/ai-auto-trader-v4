@@ -1,5 +1,8 @@
 name: Solo V4 Step 5 - Historical Evaluation
 on:
+  push:
+    paths:
+      - ".github/workflows/solo-step5-historical-evaluation.yml"
   workflow_dispatch:
     inputs:
       symbol:
