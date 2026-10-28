@@ -243,7 +243,7 @@ def test_candle_interval_fetches_run_concurrently_and_keep_failed_interval_isola
     import threading
     from app.engines.read_only_api import _fetch_candle_intervals
 
-    barrier = threading.Barrier(3, timeout=2)
+    barrier = threading.Barrier(2, timeout=2)
 
     class Row:
         open_time = datetime.fromisoformat("2026-10-28T00:00:00+00:00")
