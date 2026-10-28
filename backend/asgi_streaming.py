@@ -37,6 +37,7 @@ def create_streaming_asgi_app(
     http_app: Callable,
     snapshot_provider: Callable[[], list[dict]],
     token: str,
+    allowed_symbols: set[str] | frozenset[str],
     max_age_seconds: float = 90.0,
     poll_interval_seconds: float = 5.0,
 ) -> Callable:
@@ -50,6 +51,10 @@ def create_streaming_asgi_app(
         raise ValueError("HTTP app and snapshot provider must be callable")
     if not isinstance(token, str) or len(token) < 32:
         raise ValueError("stream token must be at least 32 characters")
+    if (not isinstance(allowed_symbols, (set, frozenset)) or not allowed_symbols
+            or any(not isinstance(symbol, str) or not symbol or symbol != symbol.upper()
+                   or not symbol.isalnum() for symbol in allowed_symbols)):
+        raise ValueError("a non-empty uppercase alphanumeric symbol allowlist is required")
     if max_age_seconds <= 0:
         raise ValueError("max_age_seconds must be positive")
     if poll_interval_seconds < 0.25 or poll_interval_seconds > 60:
@@ -85,6 +90,8 @@ def create_streaming_asgi_app(
                 if isinstance(snapshots, list):
                     for snapshot in snapshots[:MAX_STREAM_SNAPSHOTS_PER_TICK]:
                         try:
+                            if not isinstance(snapshot, Mapping) or snapshot.get("symbol") not in allowed_symbols:
+                                continue
                             event = make_market_snapshot_event(
                                 snapshot, max_age_seconds=max_age_seconds
                             )
