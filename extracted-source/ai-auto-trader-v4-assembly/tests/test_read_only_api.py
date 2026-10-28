@@ -160,3 +160,46 @@ def test_candle_history_endpoint_rejects_missing_or_invalid_symbol(tmp_path):
     status, _, body = request(app, path="/api/v1/markets/candles?symbol=", auth="Bearer " + TOKEN)
     assert status.startswith("400")
     assert body["orders_authorized"] is False
+
+
+def test_binance_spot_testnet_account_endpoint_is_read_only_and_fails_closed(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+
+    app = create_app(
+        database_path=db,
+        token=TOKEN,
+        account_status=lambda: {
+            "connected": True,
+            "mode": "BINANCE_SPOT_TESTNET_READ_ONLY",
+            "status": "CONNECTED",
+            "balances": [{"asset": "USDT", "free": "100.0", "locked": "0.0"}],
+            "orders_authorized": False,
+        },
+    )
+    status, _, body = request(
+        app, path="/api/v1/binance-spot-testnet/account", auth="Bearer " + TOKEN
+    )
+    assert status.startswith("200")
+    assert body["mode"] == "BINANCE_SPOT_TESTNET_READ_ONLY"
+    assert body["balances"] == [{"asset": "USDT", "free": "100.0", "locked": "0.0"}]
+    assert body["orders_authorized"] is False
+
+    unsafe_app = create_app(
+        database_path=db,
+        token=TOKEN,
+        account_status=lambda: {
+            "connected": True,
+            "mode": "BINANCE_SPOT_TESTNET_READ_ONLY",
+            "status": "CONNECTED",
+            "balances": [{"asset": "USDT", "free": "100.0", "locked": "0.0"}],
+            "orders_authorized": True,
+        },
+    )
+    unsafe_status, _, unsafe_body = request(
+        unsafe_app, path="/api/v1/binance-spot-testnet/account", auth="Bearer " + TOKEN
+    )
+    assert unsafe_status.startswith("503")
+    assert unsafe_body["orders_authorized"] is False
+    assert unsafe_body["balances"] == []

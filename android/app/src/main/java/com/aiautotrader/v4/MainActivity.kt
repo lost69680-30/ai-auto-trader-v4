@@ -194,6 +194,7 @@ private data class TechnicalSnapshot(
     val volume: String,
     val candlePattern: String,
     val priceActionStructure: String,
+    val riskFlags: List<String>,
     val enoughData: Boolean,
     val directionalReady: Boolean,
 )
@@ -339,6 +340,46 @@ internal fun relativeVolumeRatio(candles: List<MarketCandle>): Double? {
 }
 
 /**
+ * Transparent market-condition checks for the selected candle interval.
+ * These are rule-based observations, not a calibrated risk score or trade signal.
+ * Missing inputs are explicitly reported; they are never interpreted as low risk.
+ */
+internal fun marketRiskFlags(
+    atrPercent: Double?,
+    rsi: Double?,
+    relativeVolume: Double?,
+    trend: String,
+): List<String> {
+    val flags = mutableListOf<String>()
+    if (atrPercent == null || !atrPercent.isFinite() || atrPercent < 0.0) {
+        flags += "ATR check unavailable; elevated candle ranges are not ruled out"
+    } else if (atrPercent >= 2.5) {
+        flags += "ATR14 ≥ 2.5% of close for this interval; large observed ranges (heuristic, not timeframe-calibrated)"
+    }
+
+    if (rsi == null || !rsi.isFinite() || rsi !in 0.0..100.0) {
+        flags += "RSI check unavailable; momentum stretch is not assessed"
+    } else if (rsi >= 70.0) {
+        flags += "RSI ≥ 70; upside momentum is stretched and may reverse"
+    } else if (rsi <= 30.0) {
+        flags += "RSI ≤ 30; downside momentum is stretched and may reverse"
+    }
+
+    if (relativeVolume == null || !relativeVolume.isFinite() || relativeVolume < 0.0) {
+        flags += "Relative-volume check unavailable; need 21 candles and a positive prior-volume baseline"
+    } else if (relativeVolume >= 2.0) {
+        flags += "Relative volume ≥ 2.0× the prior 20-candle average; spike may reflect continuation or exhaustion"
+    }
+
+    if (rsi != null && rsi.isFinite() && rsi in 0.0..100.0 &&
+        ((trend.startsWith("Uptrend") && rsi <= 45.0) ||
+         (trend.startsWith("Downtrend") && rsi >= 55.0))) {
+        flags += "Trend and RSI disagree; directional evidence is mixed"
+    }
+    return flags
+}
+
+/**
  * Detect confirmed swing structure using two candles on each side of a pivot.
  * Both the last two swing highs and lows must agree before a directional label
  * is shown. This is descriptive price-action context, not a prediction or signal.
@@ -441,13 +482,13 @@ private fun analyzeCandles(candles: List<MarketCandle>): TechnicalSnapshot {
             "Rejected · invalid OHLCV", "Rejected · invalid OHLCV", "Rejected · invalid OHLCV",
             "Unavailable", "Unavailable", "Unavailable", "Unavailable", "Unavailable",
             "Blocked · invalid candles", "Blocked · invalid candles", "Blocked · invalid candles",
-            "Blocked · invalid candles", "Blocked · invalid candle data",
-            "Unavailable · invalid swing history", false, false
+            "Blocked · invalid candles", "Blocked · invalid candle data", "Unavailable · invalid swing history",
+            listOf("Risk checks blocked · invalid OHLCV"), false, false
         )
     }
     val closes = c.map { it.close }
     val enough = c.size >= 50
-    if (c.size < 20) return TechnicalSnapshot("Need 20+ candles", "Need 50+ candles", "Need 15+ candles", "Need 35+ candles", "Need 20+ candles", "Need 15+ candles", "Need positive volume", "Need 20+ candles", "Unavailable", "Unavailable", "Unavailable", "Insufficient data", "Need 2+ candles", "Need 9+ candles for confirmed swings", false, false)
+    if (c.size < 20) return TechnicalSnapshot("Need 20+ candles", "Need 50+ candles", "Need 15+ candles", "Need 35+ candles", "Need 20+ candles", "Need 15+ candles", "Need positive volume", "Need 20+ candles", "Unavailable", "Unavailable", "Unavailable", "Insufficient data", "Need 2+ candles", "Need 9+ candles for confirmed swings", listOf("Risk checks unavailable · insufficient validated candle history"), false, false)
     val e20 = ema(closes, 20)
     val e50 = ema(closes, 50)
     val rsi = if (closes.size >= 15) {
@@ -496,6 +537,8 @@ private fun analyzeCandles(candles: List<MarketCandle>): TechnicalSnapshot {
     }
     val momentum = when { rsi == null -> "Insufficient candles"; rsi >= 70 -> "RSI overbought (${fmtIndicator(rsi, 1)})"; rsi <= 30 -> "RSI oversold (${fmtIndicator(rsi, 1)})"; rsi > 55 -> "Positive (${fmtIndicator(rsi, 1)})"; rsi < 45 -> "Negative (${fmtIndicator(rsi, 1)})"; else -> "Neutral (${fmtIndicator(rsi, 1)})" }
     val volatility = if (atr != null && closes.last() > 0) "ATR ${fmtIndicator(atr)} (${fmtIndicator(100 * atr / closes.last(), 2)}% of price)" else "Need 15+ candles"
+    val atrPercent = atr?.let { 100.0 * it / closes.last() }
+    val riskFlags = marketRiskFlags(atrPercent, rsi, volRatio, trend)
     return TechnicalSnapshot(
         e20?.let { fmtIndicator(it) } ?: "Need 20+ candles", e50?.let { fmtIndicator(it) } ?: "Need 50+ candles",
         rsi?.let { fmtIndicator(it, 1) } ?: "Need 15+ candles", macd, bb,
@@ -505,6 +548,7 @@ private fun analyzeCandles(candles: List<MarketCandle>): TechnicalSnapshot {
         if (volRatio != null) "Last / prior 20-candle average: ${fmtIndicator(volRatio, 2)}×" else "Unavailable · need 21 candles and non-zero baseline",
         detectRecentCandlestickPattern(c),
         priceActionStructure(c),
+        riskFlags,
         enough,
         e20 != null && rsi != null
     )
@@ -1230,6 +1274,26 @@ private fun AnalysisScreen() {
                 AnalysisValue("AI signal", "HOLD · no approved strategy signal", Gold)
                 AnalysisValue("Risk check", "BLOCKED · authorization not verified in this check", Red)
                 Text("Indicators and swing structure are calculated locally from validated, closed backend candles and are advisory only. They do not constitute a validated strategy signal, do not authorize orders, and do not guarantee profitability. Missing, stale or insufficient data must never be used to infer a trade.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+            }
+            SectionTitle("RISK & MARKET CONDITIONS")
+            CardPanel {
+                Text("Rule-based observations · not a calibrated risk score", color = Muted, fontSize = 11.sp)
+                val riskFlags = technical?.riskFlags.orEmpty()
+                if (riskFlags.isEmpty()) {
+                    Text(
+                        if (technical == null) "Unavailable · risk conditions were not assessed because validated candle analysis is unavailable."
+                        else "No configured flags detected · this does not mean risk is low or absent.",
+                        color = Gold, fontSize = 12.sp, lineHeight = 17.sp
+                    )
+                } else {
+                    riskFlags.forEach { flag ->
+                        Text("• $flag", color = Color(0xFFFFC857), fontSize = 11.sp, lineHeight = 16.sp)
+                    }
+                }
+                Text(
+                    "Thresholds are screening heuristics and are not calibrated across instruments or timeframes. This panel does not estimate loss probability, forecast profit, or authorize orders.",
+                    color = Muted, fontSize = 11.sp, lineHeight = 16.sp
+                )
             }
         } else {
             SectionTitle("PERFORMANCE ANALYTICS")
