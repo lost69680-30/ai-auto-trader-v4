@@ -10,7 +10,6 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 try:
     import psycopg
@@ -211,7 +210,7 @@ def import_sqlite_ledger(sqlite_path: str | Path, database_url: str) -> dict[str
                 ).fetchone()[0]
                 if sequence_name:
                     connection.execute(
-                        "SELECT setval(%s, %s, %s)",
+                        "SELECT setval(%s::regclass, %s, %s)",
                         (sequence_name, int(max_id) if max_id is not None else 1, max_id is not None),
                     )
 
