@@ -217,8 +217,10 @@ class PostgresPaperLedger(SQLitePaperLedger):
             self._connection.close()
             if isinstance(exc, RuntimeError) and "PostgreSQL ledger initialization failed" in str(exc):
                 raise
+            detail = str(exc).replace(dsn.strip(), "[connection URL redacted]")[:240]
             raise RuntimeError(
-                f"PostgreSQL ledger initialization failed ({type(exc).__name__}); no local fallback was attempted."
+                f"PostgreSQL ledger initialization failed ({type(exc).__name__}: {detail}); "
+                "no local fallback was attempted."
             ) from None
 
     def _validate_schema(self) -> None:
@@ -232,7 +234,7 @@ class PostgresPaperLedger(SQLitePaperLedger):
         self._connection.execute("SET search_path TO paper_ledger")
         table_rows = self._connection.execute(
             "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = current_schema() AND table_type = chr(66) || chr(65) || chr(83) || chr(69) || chr(32) || chr(84) || chr(65) || chr(66) || chr(76) || chr(69)"
+            "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
         ).fetchall()
         available_tables = {row["table_name"] for row in table_rows}
         missing_tables = sorted(set(_REQUIRED_COLUMNS) - available_tables)
