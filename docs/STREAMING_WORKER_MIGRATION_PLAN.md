@@ -70,3 +70,23 @@ Use an isolated staging service/environment. Do not point it at production mutat
 - No Supabase migration or permission changes.
 - No credential rotation or secret display.
 - No claim of profitability from unit tests, synthetic replay, or paper fills.
+
+## Phase 3 entry-gate audit (2026-10-29)
+
+Repository inspection found blockers that must be resolved before starting the analysis worker in a deployed environment:
+
+- `PaperServiceApplication.from_env()` constructs `BinanceUsdMFuturesAdapter`, which targets the USD-M futures API. The user's current target is crypto spot read-only/testnet analysis; wiring this service in unchanged would analyze the wrong market domain.
+- `PaperServiceApplication.create()` opens `SQLitePaperLedger` directly. It does not use the API's `_open_ledger()` PostgreSQL selection path or `PostgresPaperLedger`. Pointing both processes at a SQLite path would not provide shared durable state on an ephemeral host; pointing at Supabase requires an explicit compatible ledger composition and a verified schema.
+- The API's existing market cache and the paper-service worker are separate data paths. The worker must consume the same validated spot candle/price contract or use a separately tested spot adapter, with explicit freshness and symbol allowlists.
+- A process-local loop alone is not duplicate-run protection. Before any deployed worker can write paper intents, it needs a durable lease/idempotency guard and restart/reconciliation tests against the selected database.
+- The existing streaming endpoint currently emits validated market snapshots only. It does not claim to stream analysis results, worker health, positions, or emergency-stop updates.
+
+### Required gate before worker implementation/deployment
+
+1. Define the spot market adapter interface and prove it with deterministic contract tests; keep all exchange calls public/read-only.
+2. Refactor paper-service ledger injection so PostgreSQL can be selected explicitly without SQLite fallback, and test connection/schema failure as a startup blocker. Do not apply a migration or alter Supabase permissions as part of this work.
+3. Add a durable worker lease/idempotency mechanism, plus tests for concurrent starts, retry after crash, stale data, emergency stop, and restart recovery.
+4. Add an explicit non-production configuration validation that refuses to start if market mode, database backend, simulated equity/risk settings, or symbol allowlist are missing or inconsistent.
+5. Only then run isolated tests. Staging deployment remains a separate approval gate; no Render settings, production traffic, Supabase schema/data, secrets, or billing are changed by this audit.
+
+**Current decision:** worker deployment is blocked pending these gates. Existing code is useful research/paper-simulation infrastructure, but it is not yet a safe drop-in worker for the current spot/read-only API. All worker outputs must continue to carry `orders_authorized: false`; no exchange order-placement path is permitted.
