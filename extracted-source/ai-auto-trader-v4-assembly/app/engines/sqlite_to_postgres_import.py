@@ -194,10 +194,11 @@ def import_sqlite_ledger(sqlite_path: str | Path, database_url: str) -> dict[str
                 column_sql = ", ".join(columns)
                 placeholders = ", ".join(["%s"] * len(columns))
                 insert_sql = f"INSERT INTO {table} ({column_sql}) VALUES ({placeholders})"
-                connection.executemany(
-                    insert_sql,
-                    [tuple(record[column] for column in columns) for record in rows_by_table[table]],
-                )
+                with connection.cursor() as cursor:
+                    cursor.executemany(
+                        insert_sql,
+                        [tuple(record[column] for column in columns) for record in rows_by_table[table]],
+                    )
 
             # Explicit IDs were preserved; move sequences forward before committing.
             for table, identity_column in IDENTITY_COLUMNS.items():
@@ -234,8 +235,10 @@ def import_sqlite_ledger(sqlite_path: str | Path, database_url: str) -> dict[str
     except Exception as exc:
         if isinstance(exc, (ValueError, RuntimeError)):
             raise
+        detail = str(exc).replace(database_url.strip(), "[connection URL redacted]")[:240]
         raise RuntimeError(
-            f"SQLite-to-PostgreSQL import failed ({type(exc).__name__}); transaction was rolled back."
+            f"SQLite-to-PostgreSQL import failed ({type(exc).__name__}: {detail}); "
+            "transaction was rolled back."
         ) from None
     finally:
         connection.close()
