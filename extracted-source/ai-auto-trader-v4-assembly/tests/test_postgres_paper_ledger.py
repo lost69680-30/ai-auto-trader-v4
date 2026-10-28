@@ -43,6 +43,17 @@ def disposable_postgres_schema():
         pytest.fail(f"Required migration file is missing: {migration_path.name}")
     with psycopg.connect(TEST_DSN, autocommit=True, prepare_threshold=None) as connection:
         connection.execute("DROP SCHEMA IF EXISTS paper_ledger CASCADE")
+        connection.execute(
+            """
+            DO $
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN; END IF;
+            END
+            $
+            """
+        )
         connection.execute(migration_path.read_text(encoding="utf-8"), prepare=False)
     yield
 
@@ -258,3 +269,31 @@ def test_sqlite_import_refuses_nonempty_postgres_destination(tmp_path):
         ids = {order.proposal_id for order in target.orders}
         assert ids == {"existing-destination-order"}
         assert target.orders_authorized is False
+
+
+def test_migration_enables_rls_and_grants_no_public_api_role_access():
+    with psycopg.connect(TEST_DSN, autocommit=True, prepare_threshold=None) as connection:
+        rows = connection.execute(
+            """
+            SELECT c.relname, c.relrowsecurity
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'paper_ledger' AND c.relkind = 'r'
+            """
+        ).fetchall()
+        assert len(rows) == 9
+        assert all(row[1] is True for row in rows)
+
+        for role in ("anon", "authenticated", "service_role"):
+            assert connection.execute(
+                "SELECT has_schema_privilege(%s, 'paper_ledger', 'USAGE')", (role,)
+            ).fetchone()[0] is False
+            for table in (
+                "paper_orders", "paper_fills", "paper_positions", "paper_funding_events",
+                "paper_audit_events", "paper_system_controls", "paper_order_cancellations",
+                "paper_position_extrema", "paper_equity_snapshots",
+            ):
+                assert connection.execute(
+                    "SELECT has_table_privilege(%s, %s, 'SELECT')",
+                    (role, f"paper_ledger.{table}"),
+                ).fetchone()[0] is False
