@@ -23,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: solo-v4-extended-timeframes
+  group: solo-v4-extended-timeframes-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:

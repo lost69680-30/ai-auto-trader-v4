@@ -83,3 +83,18 @@ def test_relative_volume_uses_only_the_prior_twenty_candles():
     assert "candles.dropLast(1).takeLast(20)" in source
     assert "Last / prior 20-candle average" in source
     assert "need 21 candles and non-zero baseline" in source
+
+
+def test_swing_structure_is_added_without_replacing_existing_candle_pattern_detection():
+    source = SOURCE.read_text(encoding="utf-8")
+    for required in (
+        "internal fun priceActionStructure(",
+        "higher highs + higher lows",
+        "lower highs + lower lows",
+        'IndicatorRow("Swing structure"',
+        'IndicatorRow("Recent candle pattern", technical?.candlePattern',
+        "detectRecentCandlestickPattern(c)",
+        "NOT CALIBRATED",
+        "do not authorize orders",
+    ):
+        assert required in source

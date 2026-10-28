@@ -72,4 +72,29 @@ class MarketAnalysisChecksTest {
         val zeroVolume = List(21) { index -> candle(Instant.parse("2026-10-28T08:00:00Z").plusSeconds(index * 60L).toString(), 0.0) }
         assertNull(relativeVolumeRatio(zeroVolume))
     }
+
+    @Test
+    fun identifiesConfirmedHigherHighsAndHigherLows() {
+        val highs = listOf(11.0, 13.0, 15.0, 13.0, 12.0, 14.0, 16.0, 15.0, 14.0, 15.0, 17.0, 16.0, 15.0)
+        val lows = listOf(9.0, 10.0, 12.0, 11.0, 10.0, 11.0, 12.0, 12.0, 11.0, 12.0, 13.0, 14.0, 13.0)
+        val candles = highs.indices.map { i ->
+            val midpoint = (highs[i] + lows[i]) / 2.0
+            MarketCandle("2026-10-28T00:00:00Z", midpoint, highs[i], lows[i], midpoint, 100.0)
+        }
+        assertTrue(priceActionStructure(candles).contains("higher highs + higher lows"))
+    }
+
+    @Test
+    fun identifiesConfirmedLowerHighsAndLowerLows() {
+        val baseHighs = listOf(11.0, 13.0, 15.0, 13.0, 12.0, 14.0, 16.0, 15.0, 14.0, 15.0, 17.0, 16.0, 15.0)
+        val baseLows = listOf(9.0, 10.0, 12.0, 11.0, 10.0, 11.0, 12.0, 12.0, 11.0, 12.0, 13.0, 14.0, 13.0)
+        val highs = baseLows.map { 40.0 - it }
+        val lows = baseHighs.map { 40.0 - it }
+        val candles = highs.indices.map { i ->
+            val midpoint = (highs[i] + lows[i]) / 2.0
+            MarketCandle("2026-10-28T00:00:00Z", midpoint, highs[i], lows[i], midpoint, 100.0)
+        }
+        assertTrue(priceActionStructure(candles).contains("lower highs + lower lows"))
+    }
+
 }
