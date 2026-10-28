@@ -138,7 +138,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
         else:
             if path == "/api/v1/status":
                 try:
-                    with SQLitePaperLedger(database_path) as ledger:
+                    with _open_ledger(database_path) as ledger
                         feed = market_status() if market_status else {"status": "UNKNOWN", "orders_authorized": False}
                         payload = {
                             "service": "ai-auto-trader-v4", "mode": "PAPER_ONLY",
@@ -197,7 +197,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                         "reason": "market feed unavailable", "orders_authorized": False}), "503 Service Unavailable"
             elif path in ("/api/v1/positions", "/api/v1/orders", "/api/v1/audit", "/api/v1/funding"):
                 try:
-                    with SQLitePaperLedger(database_path) as ledger:
+                    with _open_ledger(database_path) as ledger
                         if path.endswith("/positions"):
                             payload = {"items": [_position_dict(p) for p in ledger.positions],
                                        "orders_authorized": False, "state_storage": state_storage}
@@ -217,7 +217,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                     body, status = _json_bytes({"error": "ledger_unavailable"}), "503 Service Unavailable"
             elif path == "/api/v1/risk":
                 try:
-                    with SQLitePaperLedger(database_path) as ledger:
+                    with _open_ledger(database_path) as ledger
                         snapshots = ledger._connection.execute(
                             "SELECT * FROM paper_equity_snapshots ORDER BY snapshot_at DESC LIMIT 1"
                         ).fetchone()
