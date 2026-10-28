@@ -130,26 +130,9 @@ class _PostgresConnection:
                 **postgres_connection_ssl_options(dsn),
             )
         except Exception as exc:
-            # Preserve a short driver diagnostic so malformed connection options can
-            # be identified, while never emitting the configured URI or credentials.
-            detail = str(exc)
-            detail = detail.replace(dsn, "[database URI redacted]")
-            # Redact password-like key/value text without echoing the value.
-            detail = re.sub(
-                r"(?i)(password\s*=\s*)(?:'[^']*'|\"[^\"]*\"|[^\s,]+)",
-                r"\1[redacted]",
-                detail,
-            )
-            detail = re.sub(
-                r"(?i)(postgres(?:ql)?://[^:/\s]+:)[^@\s]+@",
-                r"\1[redacted]@",
-                detail,
-            )
-            detail = re.sub(r"\s+", " ", detail).strip()[:180]
-            suffix = f": {detail}" if detail else ""
+            # Never include a connection URL or credential in application logs.
             raise RuntimeError(
-                f"Unable to connect to the configured PostgreSQL ledger "
-                f"({type(exc).__name__}{suffix}); sensitive values redacted."
+                f"Unable to connect to the configured PostgreSQL ledger ({type(exc).__name__}); details redacted."
             ) from None
         self.row_factory = None
 
