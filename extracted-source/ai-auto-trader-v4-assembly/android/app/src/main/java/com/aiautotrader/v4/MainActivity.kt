@@ -941,7 +941,7 @@ private fun ReadOnlyBackendConnectionCard() {
                             val reason = e.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(180)
                                 ?.takeIf { it.isNotBlank() } ?: "No additional detail supplied"
                             Triple(
-                                "CONNECTION ERROR (\${e.javaClass.simpleName})",
+                                "CONNECTION ERROR (${e.javaClass.simpleName})",
                                 "Failed during $requestStage. $reason. Verify the HTTPS URL, hosting status, and network access.",
                                 null
                             )
