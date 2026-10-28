@@ -2,7 +2,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:allowBackup="false"
-        android:label="AI Auto Trader v4"
+        android:icon="@drawable/ic_solo_logo"
+        android:roundIcon="@drawable/ic_solo_logo"
+        android:label="Solo"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
         <activity
