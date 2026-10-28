@@ -53,3 +53,26 @@ Replace the Render runtime's ephemeral `/tmp/v4data/paper-ledger.sqlite3` as the
 - No secret creation, reading, or posting in GitHub.
 - No Render environment change or production deployment in this implementation branch.
 - No claim of persistence until the database is connected and restart/concurrency tests pass.
+
+## Implementation status on the feature branch
+
+The following implementation is present on feature/supabase-durable-ledger:
+- A PostgreSQL adapter for the existing paper ledger API and SQLite query behavior, with startup schema checks, fail-closed behavior when PAPER_DATABASE_URL is set but invalid/unavailable, and a transaction-scoped advisory lock for serialized write operations.
+- A private paper_ledger schema migration with all nine state tables, constraints, indexes, RLS enabled, and no grants through the public API roles.
+- A one-time importer invoked as python -m app.engines.sqlite_to_postgres_import --sqlite-path /path/to/paper-ledger.sqlite3. It reads the source ledger read-only, verifies SQLite integrity and foreign keys, refuses a populated target (except for the default inactive Emergency Stop seed), imports in a single PostgreSQL transaction, preserves identity values and Emergency Stop state, checks row counts, and rolls back on errors.
+- Remote PostgreSQL connections are upgraded to TLS (sslmode=require) unless a stronger verification mode is already configured. Local disposable test databases are exempted.
+- A PostgreSQL CI workflow uses an isolated disposable PostgreSQL service and applies the migration only to that test database.
+
+## Test evidence
+
+The disposable PostgreSQL workflow passed 313 tests on commit 509e27c1a0b729c1a0a44f28bc924b89e6c55c03. Subsequent root/package parity and root TLS-contract changes have their own CI run in progress. Do not interpret this as validation against the actual Supabase instance or as a production deployment.
+
+## Required production setup and cutover steps
+
+1. In the Supabase dashboard, open Connect and choose the Session pooler connection method. On the Free plan, the shared session pooler is IPv4-accessible; its port is normally 5432. Do not use the transaction pooler (6543) because the adapter relies on session state and transaction-scoped locking.
+2. Store the connection string as a Render secret named PAPER_DATABASE_URL. Do not put it into GitHub, the APK, logs, or this chat. It must use SSL; the code enforces TLS for remote hosts unless a stronger mode is selected.
+3. Apply supabase/migrations/20261028010000_create_paper_ledger_schema.sql to the intended Supabase project only after reviewing the SQL and backing up any data that matters. This migration has not been applied to the real project by this branch.
+4. Before any cutover, obtain a consistent copy of the old SQLite file and stop writes to it. Do not import an actively changing database. Run the importer only after the migration has created paper_ledger; the importer intentionally refuses a non-empty destination.
+5. Configure PAPER_DATABASE_URL on Render only after the database schema, secret, copy/import, and restore checks are reviewed. Verify startup integrity, row counts, API status, Emergency Stop persistence after restart, and orders_authorized=false before considering the cutover complete.
+
+The Render service currently remains on main with PAPER_DATABASE_PATH=/tmp/v4data/paper-ledger.sqlite3. This branch has not updated Render settings, applied the real Supabase migration, imported user data, merged the branch, or deployed to production.
