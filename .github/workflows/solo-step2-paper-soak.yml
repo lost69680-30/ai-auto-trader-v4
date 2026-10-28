@@ -1,0 +1,83 @@
+name: Solo V4 Step 2 - Paper Soak Safety Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "Simulated hours (1-24 for routine check)"
+        required: true
+        default: "24"
+        type: choice
+        options:
+          - "1"
+          - "6"
+          - "24"
+  push:
+    paths:
+      - ".github/workflows/solo-step2-paper-soak.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solo-v4-step2-paper-soak
+  cancel-in-progress: false
+
+jobs:
+  paper-soak:
+    name: Synthetic paper-trading reliability check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: python -m pip install -e ".[test]"
+
+      - name: Run focused paper-ledger and safety tests
+        run: python -m pytest -q tests/test_paper_soak.py tests/test_paper_replay.py tests/test_paper_ledger.py tests/test_protection_engine.py tests/test_risk_guardian.py tests/test_read_only_api.py
+
+      - name: Run synthetic soak and save report
+        env:
+          SOAK_HOURS: ${{ github.event.inputs.hours || '24' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          python -m app.engines.paper_soak --hours "${SOAK_HOURS}" --database artifacts/paper-soak.sqlite3 | tee artifacts/paper-soak-report.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("artifacts/paper-soak-report.json").read_text())
+          required = {
+              "passed": True,
+              "orders_authorized": False,
+              "duplicate_orders": 0,
+              "open_positions": 0,
+              "emergency_stop_active": False,
+          }
+          failures = {key: {"expected": value, "actual": report.get(key)}
+                      for key, value in required.items() if report.get(key) != value}
+          if failures:
+              raise SystemExit("Safety assertions failed: " + json.dumps(failures, sort_keys=True))
+          print("PASS: synthetic soak safety assertions verified.")
+          print(json.dumps({k: report[k] for k in (
+              "simulated_hours", "events_processed", "orders_recorded", "fills",
+              "closed_positions", "protection_exits", "stale_market_updates_rejected",
+              "restart_events", "realized_net_pnl", "total_fees",
+              "maximum_realized_drawdown", "orders_authorized", "passed"
+          )}, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload synthetic soak report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solo-v4-step2-paper-soak-report
+          path: artifacts/paper-soak-report.json
+          if-no-files-found: warn
+          retention-days: 14
