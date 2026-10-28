@@ -9,9 +9,11 @@ import hmac
 import logging
 import json
 import os
+import tempfile
 import time
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable, Iterable
 from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
@@ -22,6 +24,35 @@ from backend.timeframe_aggregation import aggregate_complete_yearly_candles
 
 def _json_bytes(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def _state_storage_status(database_path: str) -> dict[str, object]:
+    """Describe what the configured SQLite path can and cannot guarantee."""
+    warning = (
+        "SQLite file storage is not proof of persistence across a host restart or redeploy. "
+        "Configure and verify a persistent disk or external durable database before relying "
+        "on emergency-stop or paper-ledger state recovery."
+    )
+    try:
+        resolved = Path(database_path).expanduser().resolve()
+        temporary_root = Path(tempfile.gettempdir()).resolve()
+        if resolved == temporary_root or temporary_root in resolved.parents:
+            return {
+                "durability": "EPHEMERAL",
+                "survives_restart": False,
+                "warning": (
+                    "The configured SQLite path is under the temporary directory. Paper ledger "
+                    "and emergency-stop state may be lost on host restart, redeploy or spin-down. "
+                    "Use verified persistent storage before relying on recovery."
+                ),
+            }
+    except (OSError, RuntimeError, ValueError):
+        pass
+    return {
+        "durability": "UNVERIFIED",
+        "survives_restart": None,
+        "warning": warning,
+    }
 
 
 def _position_dict(p) -> dict[str, object]:
@@ -45,6 +76,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
         raise ValueError("API token must be at least 32 characters; configure it as a secret")
     if not database_path or database_path == ":memory:":
         raise ValueError("API requires a durable file-backed paper ledger")
+    state_storage = _state_storage_status(database_path)
 
     def app(environ, start_response):
         method = environ.get("REQUEST_METHOD", "GET").upper()
@@ -68,7 +100,8 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                     ledger.activate_emergency_stop(occurred_at=time.time(), reason=reason.strip())
                     payload = {"emergency_stop_active": ledger.emergency_stop_active,
                                "emergency_stop_reason": ledger.emergency_stop_reason,
-                               "orders_authorized": False, "mode": "PAPER_ONLY"}
+                               "orders_authorized": False, "mode": "PAPER_ONLY",
+                               "state_storage": state_storage}
                 body, status = _json_bytes(payload), "200 OK"
             except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
                 body, status = _json_bytes({"error": "invalid_request", "orders_authorized": False}), "400 Bad Request"
@@ -86,7 +119,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                             "orders_authorized": False, "emergency_stop_active": ledger.emergency_stop_active,
                             "emergency_stop_reason": ledger.emergency_stop_reason,
                             "open_position_count": len(ledger.open_positions), "feed": feed,
-                            "server_time": time.time(),
+                            "state_storage": state_storage, "server_time": time.time(),
                         }
                     body, status = _json_bytes(payload), "200 OK"
                 except Exception:
@@ -140,15 +173,19 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                 try:
                     with SQLitePaperLedger(database_path) as ledger:
                         if path.endswith("/positions"):
-                            payload = {"items": [_position_dict(p) for p in ledger.positions], "orders_authorized": False}
+                            payload = {"items": [_position_dict(p) for p in ledger.positions],
+                                       "orders_authorized": False, "state_storage": state_storage}
                         elif path.endswith("/orders"):
-                            payload = {"items": [vars_order(o) for o in ledger.orders], "orders_authorized": False}
+                            payload = {"items": [vars_order(o) for o in ledger.orders],
+                                       "orders_authorized": False, "state_storage": state_storage}
                         elif path.endswith("/funding"):
-                            payload = {"items": [dict(e) for e in ledger.funding_events], "orders_authorized": False}
+                            payload = {"items": [dict(e) for e in ledger.funding_events],
+                                       "orders_authorized": False, "state_storage": state_storage}
                         else:
                             payload = {"items": [{"event_id": e.event_id, "event_type": e.event_type,
                                 "proposal_id": e.proposal_id, "occurred_at": e.occurred_at,
-                                "payload": dict(e.payload)} for e in ledger.audit_events()], "orders_authorized": False}
+                                "payload": dict(e.payload)} for e in ledger.audit_events()],
+                                "orders_authorized": False, "state_storage": state_storage}
                     body, status = _json_bytes(payload), "200 OK"
                 except Exception:
                     body, status = _json_bytes({"error": "ledger_unavailable"}), "503 Service Unavailable"
@@ -160,7 +197,8 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                         ).fetchone()
                         payload = {"emergency_stop_active": ledger.emergency_stop_active,
                                    "open_position_count": len(ledger.open_positions), "orders_authorized": False,
-                                   "latest_snapshot": dict(snapshots) if snapshots else None}
+                                   "latest_snapshot": dict(snapshots) if snapshots else None,
+                                   "state_storage": state_storage}
                     body, status = _json_bytes(payload), "200 OK"
                 except Exception:
                     body, status = _json_bytes({"error": "ledger_unavailable"}), "503 Service Unavailable"
@@ -266,6 +304,25 @@ def main() -> None:
         raise SystemExit("Spot market-data mode is public production data; disable PAPER_MARKET_TESTNET")
     if not symbols:
         raise SystemExit("PAPER_MARKET_SYMBOLS must include at least one symbol")
+
+    try:
+        with SQLitePaperLedger(database) as ledger:
+            ledger.verify_integrity()
+    except Exception as exc:
+        raise SystemExit(
+            "Paper ledger startup integrity check failed; refusing to start the API."
+        ) from exc
+    storage_state = _state_storage_status(database)
+    if storage_state["durability"] == "EPHEMERAL":
+        logging.warning(
+            "Configured paper ledger storage is ephemeral; emergency-stop and ledger state "
+            "may not survive a host restart or redeploy. orders_authorized=False"
+        )
+    else:
+        logging.warning(
+            "Configured paper ledger storage durability is unverified; do not rely on restart "
+            "recovery until persistent storage is confirmed. orders_authorized=False"
+        )
 
     cache = MarketFeedCache(max_age_seconds=max_age)
     binance_testnet_account = BinanceSpotTestnetAccountClient()

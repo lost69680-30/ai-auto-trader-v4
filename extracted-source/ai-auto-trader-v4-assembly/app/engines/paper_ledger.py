@@ -180,12 +180,18 @@ class SQLitePaperLedger:
             isolation_level=None,
             check_same_thread=False,
         )
-        self._connection.row_factory = sqlite3.Row
-        self._connection.execute("PRAGMA foreign_keys = ON")
-        self._connection.execute("PRAGMA busy_timeout = 10000")
-        if self.database_path != ":memory:":
-            self._connection.execute("PRAGMA journal_mode = WAL")
-        self._create_schema()
+        try:
+            self._connection.row_factory = sqlite3.Row
+            self._connection.execute("PRAGMA foreign_keys = ON")
+            self._connection.execute("PRAGMA busy_timeout = 10000")
+            if self.database_path != ":memory:":
+                self._connection.execute("PRAGMA journal_mode = WAL")
+            self._create_schema()
+        except Exception:
+            # Do not leak a half-initialized connection when startup detects a
+            # damaged or incompatible database. Callers must fail closed.
+            self._connection.close()
+            raise
 
     def _create_schema(self) -> None:
         self._connection.executescript(
@@ -297,6 +303,21 @@ class SQLitePaperLedger:
                (control_key, active, updated_at, reason, activated_at)
                VALUES ('emergency_stop', 0, 0, '', NULL)"""
         )
+
+    def verify_integrity(self) -> str:
+        """Verify SQLite pages and foreign-key consistency; raise on damaged state."""
+        with self._lock:
+            rows = self._connection.execute("PRAGMA integrity_check").fetchall()
+            messages = [str(row[0]) for row in rows]
+            if messages != ["ok"]:
+                detail = "; ".join(messages[:10]) or "no integrity result"
+                raise sqlite3.DatabaseError(f"paper ledger integrity check failed: {detail}")
+            foreign_key_errors = self._connection.execute("PRAGMA foreign_key_check").fetchall()
+            if foreign_key_errors:
+                raise sqlite3.IntegrityError(
+                    f"paper ledger contains {len(foreign_key_errors)} foreign-key violation(s)"
+                )
+        return "ok"
 
     def close(self) -> None:
         with self._lock:

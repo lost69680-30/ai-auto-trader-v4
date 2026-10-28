@@ -77,6 +77,8 @@ jobs:
           cmp app/core/risk_guardian.py extracted-source/ai-auto-trader-v4-assembly/app/core/risk_guardian.py
           cmp app/engines/orchestrator.py extracted-source/ai-auto-trader-v4-assembly/app/engines/orchestrator.py
           cmp app/engines/paper_ledger.py extracted-source/ai-auto-trader-v4-assembly/app/engines/paper_ledger.py
+          cmp app/engines/paper_service_app.py extracted-source/ai-auto-trader-v4-assembly/app/engines/paper_service_app.py
+          cmp app/engines/paper_sizing.py extracted-source/ai-auto-trader-v4-assembly/app/engines/paper_sizing.py
           cmp tests/test_risk_guardian.py extracted-source/ai-auto-trader-v4-assembly/tests/test_risk_guardian.py
           cmp tests/test_risk_guardian_additional.py extracted-source/ai-auto-trader-v4-assembly/tests/test_risk_guardian_additional.py
           cmp tests/test_risk_guardian_malformed_inputs.py extracted-source/ai-auto-trader-v4-assembly/tests/test_risk_guardian_malformed_inputs.py
@@ -91,6 +93,7 @@ jobs:
           cmp android/app/src/test/java/com/aiautotrader/v4/TimeframeBiasTest.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/TimeframeBiasTest.kt
           cmp tests/test_android_technical_analysis_contract.py extracted-source/ai-auto-trader-v4-assembly/tests/test_android_technical_analysis_contract.py
           cmp tests/test_read_only_api.py extracted-source/ai-auto-trader-v4-assembly/tests/test_read_only_api.py
+          cmp tests/test_paper_ledger.py extracted-source/ai-auto-trader-v4-assembly/tests/test_paper_ledger.py
           echo "PASS: checked Android source/tests and backend files match their Render package copies."
 
       - name: Compile Python modules
