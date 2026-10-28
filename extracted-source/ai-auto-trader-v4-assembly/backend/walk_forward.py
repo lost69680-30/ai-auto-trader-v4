@@ -86,16 +86,20 @@ def _evaluate_window(
     name: str,
     backtest_config: BacktestConfig,
     research_config: ResearchConfig,
+    train_bars: int,
 ) -> EvaluationWindow:
-    window = rows[start:end]
-    # A segment has its own equity baseline. Its earliest candles are indicator warmup;
-    # no observations outside this window are used to calculate its result.
-    now = window[-1].timestamp.astimezone(timezone.utc)
+    # Prior training-window candles are indicator warmup only. The backtest explicitly
+    # blocks entries before the OOS boundary; benchmark returns use only the test segment.
+    context_start = max(0, start - train_bars)
+    context_rows = rows[context_start:end]
+    test_rows = rows[start:end]
+    now = context_rows[-1].timestamp.astimezone(timezone.utc)
     strategy = run_backtest(
-        symbol, window, config=backtest_config, research_config=research_config, research_now=now
+        symbol, context_rows, config=backtest_config, research_config=research_config,
+        research_now=now, start_timestamp=test_rows[0].timestamp,
     )
-    entry_price = window[0].open
-    exit_price = window[-1].close
+    entry_price = test_rows[0].open
+    exit_price = test_rows[-1].close
     gross_return = exit_price / entry_price - 1.0
     round_trip_cost = 2.0 * (
         backtest_config.fee_bps_per_side + backtest_config.slippage_bps_per_side
@@ -152,14 +156,14 @@ def evaluate_walk_forward(
     while test_start + cfg.validation_bars <= holdout_start:
         folds.append(_evaluate_window(
             symbol, rows, test_start, test_start + cfg.validation_bars,
-            f"walk_forward_{fold_number}", bt_cfg, rs_cfg,
+            f"walk_forward_{fold_number}", bt_cfg, rs_cfg, cfg.train_bars,
         ))
         fold_number += 1
         test_start += cfg.step_bars
     if not folds:
         raise ValueError("not enough pre-holdout history for at least one validation fold")
     holdout = _evaluate_window(
-        symbol, rows, holdout_start, len(rows), "untouched_holdout", bt_cfg, rs_cfg
+        symbol, rows, holdout_start, len(rows), "untouched_holdout", bt_cfg, rs_cfg, cfg.train_bars
     )
     return WalkForwardResult(
         symbol=symbol,
