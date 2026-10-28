@@ -181,6 +181,8 @@ private data class TechnicalSnapshot(
     val momentum: String,
     val volatility: String,
     val volume: String,
+    val priceActionStructure: String,
+    val lastCandlePattern: String,
     val enoughData: Boolean,
 )
 
@@ -324,6 +326,97 @@ internal fun relativeVolumeRatio(candles: List<MarketCandle>): Double? {
     return (currentVolume / baseline).takeIf { it.isFinite() }
 }
 
+/**
+ * Detect confirmed swing structure using two candles on each side of a pivot.
+ * The last two confirmed swing highs and lows must both agree. This is price-action
+ * context only, not a prediction or a trade signal.
+ */
+internal fun priceActionStructure(candles: List<MarketCandle>): String {
+    if (candles.size < 9) return "Insufficient history for confirmed swings"
+    val start = maxOf(2, candles.size - 60)
+    val swingHighs = mutableListOf<Double>()
+    val swingLows = mutableListOf<Double>()
+
+    for (i in start until candles.size - 2) {
+        val current = candles[i]
+        val priorHighs = maxOf(candles[i - 2].high, candles[i - 1].high)
+        val nextHighs = maxOf(candles[i + 1].high, candles[i + 2].high)
+        if (current.high > priorHighs && current.high >= nextHighs) {
+            swingHighs += current.high
+        }
+
+        val priorLows = minOf(candles[i - 2].low, candles[i - 1].low)
+        val nextLows = minOf(candles[i + 1].low, candles[i + 2].low)
+        if (current.low < priorLows && current.low <= nextLows) {
+            swingLows += current.low
+        }
+    }
+
+    if (swingHighs.size < 2 || swingLows.size < 2) {
+        return "Insufficient confirmed swing highs/lows"
+    }
+
+    val previousHigh = swingHighs[swingHighs.lastIndex - 1]
+    val latestHigh = swingHighs.last()
+    val previousLow = swingLows[swingLows.lastIndex - 1]
+    val latestLow = swingLows.last()
+
+    return when {
+        latestHigh > previousHigh && latestLow > previousLow ->
+            "Bullish swing structure · higher highs + higher lows"
+        latestHigh < previousHigh && latestLow < previousLow ->
+            "Bearish swing structure · lower highs + lower lows"
+        else -> "Mixed / range-bound swings · no clear structure"
+    }
+}
+
+/**
+ * Label a small set of common candle shapes for context. Pattern names are heuristic
+ * and require confirmation; this function never creates or authorizes a trade signal.
+ */
+internal fun lastCandlePattern(candles: List<MarketCandle>): String {
+    if (candles.isEmpty()) return "Unavailable · no closed candle"
+    val current = candles.last()
+    val values = listOf(current.open, current.high, current.low, current.close, current.volume)
+    if (!values.all { it.isFinite() } || current.low <= 0.0 ||
+        current.high < maxOf(current.open, current.close) ||
+        current.low > minOf(current.open, current.close) || current.volume < 0.0) {
+        return "Unavailable · invalid candle"
+    }
+    val range = current.high - current.low
+    if (range <= 0.0) return "Flat-range candle · no pattern"
+    val body = kotlin.math.abs(current.close - current.open)
+    val upperWick = current.high - maxOf(current.open, current.close)
+    val lowerWick = minOf(current.open, current.close) - current.low
+
+    if (candles.size >= 2) {
+        val previous = candles[candles.lastIndex - 1]
+        val previousValid = previous.open.isFinite() && previous.high.isFinite() &&
+            previous.low.isFinite() && previous.close.isFinite() &&
+            previous.high >= maxOf(previous.open, previous.close) &&
+            previous.low <= minOf(previous.open, previous.close)
+        if (previousValid) {
+            val bullishEngulfing = previous.close < previous.open &&
+                current.close > current.open &&
+                current.open <= previous.close && current.close >= previous.open
+            if (bullishEngulfing) return "Bullish engulfing · heuristic; confirmation required"
+            val bearishEngulfing = previous.close > previous.open &&
+                current.close < current.open &&
+                current.open >= previous.close && current.close <= previous.open
+            if (bearishEngulfing) return "Bearish engulfing · heuristic; confirmation required"
+        }
+    }
+
+    if (body / range <= 0.10) return "Doji-like candle · indecision context"
+    if (lowerWick >= body * 2.0 && upperWick <= body) {
+        return "Hammer-like candle · heuristic; confirmation required"
+    }
+    if (upperWick >= body * 2.0 && lowerWick <= body) {
+        return "Shooting-star-like candle · heuristic; confirmation required"
+    }
+    return "No basic pattern detected"
+}
+
 // Read-only indicator calculations from validated, closed backend candles. These never authorize orders.
 private fun analyzeCandles(candles: List<MarketCandle>): TechnicalSnapshot {
     val c = candles
@@ -337,12 +430,18 @@ private fun analyzeCandles(candles: List<MarketCandle>): TechnicalSnapshot {
             "Rejected · invalid OHLCV", "Rejected · invalid OHLCV", "Rejected · invalid OHLCV",
             "Unavailable", "Unavailable", "Unavailable", "Unavailable", "Unavailable",
             "Blocked · invalid candles", "Blocked · invalid candles", "Blocked · invalid candles",
-            "Blocked · invalid candles", false
+            "Blocked · invalid candles", "Unavailable · invalid swing history",
+            "Unavailable · invalid candle pattern", false
         )
     }
     val closes = c.map { it.close }
     val enough = c.size >= 50
-    if (c.size < 20) return TechnicalSnapshot("Need 20+ candles", "Need 50+ candles", "Need 15+ candles", "Need 35+ candles", "Need 20+ candles", "Need 15+ candles", "Need positive volume", "Need 20+ candles", "Unavailable", "Unavailable", "Unavailable", "Insufficient data", false)
+    if (c.size < 20) return TechnicalSnapshot(
+        "Need 20+ candles", "Need 50+ candles", "Need 15+ candles", "Need 35+ candles",
+        "Need 20+ candles", "Need 15+ candles", "Need positive volume", "Need 20+ candles",
+        "Unavailable", "Unavailable", "Unavailable", "Insufficient data",
+        "Need more candles for confirmed swings", "Need a closed candle", false
+    )
     val e20 = ema(closes, 20)
     val e50 = ema(closes, 50)
     val rsi = if (closes.size >= 15) {
@@ -396,6 +495,8 @@ private fun analyzeCandles(candles: List<MarketCandle>): TechnicalSnapshot {
         if (support != null && resistance != null) "S ${fmtIndicator(support)} · R ${fmtIndicator(resistance)}" else "Unavailable",
         trend, momentum, volatility,
         if (volRatio != null) "Last / prior 20-candle average: ${fmtIndicator(volRatio, 2)}×" else "Unavailable · need 21 candles and non-zero baseline",
+        priceActionStructure(c),
+        lastCandlePattern(c),
         enough
     )
 }
@@ -1034,6 +1135,8 @@ private fun AnalysisScreen() {
                 IndicatorRow("ATR 14 · volatility", technical?.atr14 ?: "Unavailable · no validated candles")
                 IndicatorRow("VWAP", technical?.vwap ?: "Unavailable · no validated candles")
                 IndicatorRow("Support / resistance · 20 candles", technical?.supportResistance ?: "Unavailable · no validated candles")
+                IndicatorRow("Swing structure", technical?.priceActionStructure ?: "Unavailable · no validated candles")
+                IndicatorRow("Last candle pattern · heuristic", technical?.lastCandlePattern ?: "Unavailable · no validated candles")
                 IndicatorRow("Volume analysis", technical?.volume ?: "Unavailable · no validated candles")
                 IndicatorRow("Selected timeframe", "$timeframe · ${selectedTimeframe?.status ?: "Unavailable"}")
             }
@@ -1114,7 +1217,7 @@ private fun AnalysisScreen() {
                 )
                 AnalysisValue("AI signal", "HOLD · no approved strategy signal", Gold)
                 AnalysisValue("Risk check", "BLOCKED · authorization not verified in this check", Red)
-                Text("Indicators are calculated locally from validated, closed backend candles and are advisory only. They do not constitute a validated strategy signal, do not authorize orders, and do not guarantee profitability. Missing, stale or insufficient data must never be used to infer a trade.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+                Text("Indicators, swing structure and simple candle-pattern labels are calculated from validated, closed backend candles. Pattern recognition is heuristic and requires independent confirmation; none of this is a calibrated probability, validated strategy signal or order authorization. Missing, stale or insufficient data must never be used to infer a trade.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
             }
         } else {
             SectionTitle("PERFORMANCE ANALYTICS")
