@@ -1,0 +1,101 @@
+
+name: Solo V4 Multi-Timeframe Analysis APK Build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'solo-v4-multitimeframe-source-v1.zip'
+      - '.github/workflows/build-solo-multitimeframe-apk.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solo-v4-multitimeframe
+  cancel-in-progress: false
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test runner
+        run: python -m pip install pytest
+
+      - name: Extract multi-timeframe source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s solo-v4-multitimeframe-source-v1.zip
+          mkdir extracted-source
+          unzip -q solo-v4-multitimeframe-source-v1.zip -d extracted-source
+          echo "PROJECT_DIR=extracted-source/ai-auto-trader-v4-assembly" >> "$GITHUB_ENV"
+          test -f extracted-source/ai-auto-trader-v4-assembly/settings.gradle.kts
+          test -f extracted-source/ai-auto-trader-v4-assembly/tests/test_android_technical_analysis_contract.py
+
+      - name: Run analysis contract tests
+        shell: bash
+        run: |
+          python -m pytest -q "$PROJECT_DIR/tests/test_android_technical_analysis_contract.py"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Configure Android build
+        shell: bash
+        run: |
+          set -euo pipefail
+          touch "$PROJECT_DIR/gradle.properties"
+          grep -q '^android.useAndroidX=true$' "$PROJECT_DIR/gradle.properties" || echo 'android.useAndroidX=true' >> "$PROJECT_DIR/gradle.properties"
+          grep -q '^org.gradle.jvmargs=' "$PROJECT_DIR/gradle.properties" || echo 'org.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8' >> "$PROJECT_DIR/gradle.properties"
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle -p "$PROJECT_DIR" :android:app:assembleDebug \
+            -PpaperApiBaseUrl=https://ai-auto-trader-v4-backend.onrender.com \
+            --no-daemon
+
+      - name: Verify APK exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          ls -lh "$APK"
+          sha256sum "$APK"
+
+      - name: Upload installable debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: solo-v4-multitimeframe-debug-apk
+          path: extracted-source/ai-auto-trader-v4-assembly/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: solo-v4-multitimeframe-source
+          path: solo-v4-multitimeframe-source-v1.zip
+          if-no-files-found: error
+          retention-days: 14
