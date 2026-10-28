@@ -1,18 +1,17 @@
 
-name: Solo V4 Direct Interval Candles Backend + APK
+name: Solo V4 Cached Market Chart APK
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - 'solo-v4-direct-interval-candles-source-v2.zip'
-      - '.github/workflows/build-solo-v4-direct-interval-candles.yml'
+      - ".github/workflows/build-solo-v4-direct-interval-candles.yml"
 
 permissions:
   contents: write
 
 concurrency:
-  group: solo-v4-direct-interval-candles
+  group: solo-v4-cached-market-chart
   cancel-in-progress: false
 
 jobs:
@@ -29,35 +28,144 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
-      - name: Extract updated project source
+      - name: Locate project source
         shell: bash
         run: |
           set -euo pipefail
-          test -s solo-v4-direct-interval-candles-source-v2.zip
-          mkdir extracted-source
-          unzip -q solo-v4-direct-interval-candles-source-v2.zip -d extracted-source
-          test -f extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py
-          test -f extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt
-          echo "PROJECT_DIR=extracted-source/ai-auto-trader-v4-assembly" >> "$GITHUB_ENV"
+          if [ -f app/engines/read_only_api.py ] &&
+             [ -f android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt ]; then
+            PROJECT_DIR="."
+          elif [ -f extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py ] &&
+               [ -f extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt ]; then
+            PROJECT_DIR="extracted-source/ai-auto-trader-v4-assembly"
+          else
+            echo "Expected current project source was not found."
+            echo "No source changes were made."
+            exit 1
+          fi
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          test -f "$PROJECT_DIR/android/app/build.gradle.kts"
 
-      - name: Install Python test dependencies
-        run: python -m pip install -e 'extracted-source/ai-auto-trader-v4-assembly[test]'
+      - name: Apply safe candle-cache optimization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
 
-      - name: Run complete backend and contract test suite
-        run: python -m pytest -q "$PROJECT_DIR/tests" "$PROJECT_DIR/backend/tests"
+          project = Path(os.environ["PROJECT_DIR"])
+          path = project / "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+          source = path.read_text(encoding="utf-8")
+
+          state_old = '''    val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+}'''
+          state_new = '''    val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+    // Reuse validated closed candles across navigation.
+    val candleHistoryBySymbol =
+        mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
+}'''
+
+          if "val candleHistoryBySymbol =" not in source:
+              if state_old not in source:
+                  raise SystemExit("STOP: BackendSession insertion point did not match.")
+              source = source.replace(state_old, state_new, 1)
+
+          old = '''    var candleHistoryByTimeframe by remember { mutableStateOf<Map<String, List<MarketCandle>>>(emptyMap()) }
+    var candleHistoryLoading by remember { mutableStateOf(false) }
+    LaunchedEffect(sessionToken, selectedMarket?.symbol) {
+        candleHistoryByTimeframe = emptyMap()
+        if (sessionToken.length >= 32 && selectedMarket != null) {
+            while (true) {
+                candleHistoryLoading = true
+                val history = withContext(Dispatchers.IO) {
+                    try { fetchCandleHistory(sessionToken, selectedMarket.symbol) } catch (_: Exception) { emptyMap() }
+                }
+                candleHistoryByTimeframe = history
+                candleHistoryLoading = false
+                delay(60_000)
+            }
+        } else {
+            candleHistoryLoading = false
+        }
+    }'''
+
+          new = '''    val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol.orEmpty())
+    val candleHistoryByTimeframe =
+        BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
+    var candleHistoryLoading by remember { mutableStateOf(false) }
+
+    LaunchedEffect(sessionToken, selectedMarket?.symbol) {
+        if (sessionToken.length >= 32 && selectedMarket != null) {
+            while (true) {
+                candleHistoryLoading = true
+                val history = withContext(Dispatchers.IO) {
+                    try {
+                        fetchCandleHistory(sessionToken, selectedMarket.symbol)
+                    } catch (_: Exception) {
+                        emptyMap()
+                    }
+                }
+
+                // Never erase a working chart when a refresh fails or is empty.
+                if (history.isNotEmpty()) {
+                    BackendSession.candleHistoryBySymbol.value =
+                        BackendSession.candleHistoryBySymbol.value +
+                        (candleSymbolKey to history)
+                }
+
+                candleHistoryLoading = false
+                delay(60_000)
+            }
+        } else {
+            candleHistoryLoading = false
+        }
+    }'''
+
+          if old in source:
+              source = source.replace(old, new, 1)
+          elif "val candleHistoryByTimeframe =" not in source:
+              raise SystemExit("STOP: candle-loading block did not match.")
+
+          if (
+              "val candleHistoryBySymbol =" not in source
+              or "Never erase a working chart" not in source
+          ):
+              raise SystemExit("STOP: optimization checks failed.")
+
+          path.write_text(source, encoding="utf-8")
+          print("PASS: candle cache patch applied.")
+          PY
+
+      - name: Install backend test dependencies
+        run: python -m pip install -e ".[test]"
+
+      - name: Run backend and contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d tests ] && [ -d backend/tests ]; then
+            python -m pytest -q tests backend/tests
+          elif [ -d "$PROJECT_DIR/tests" ] && [ -d "$PROJECT_DIR/backend/tests" ]; then
+            python -m pip install -e "$PROJECT_DIR[test]"
+            python -m pytest -q "$PROJECT_DIR/tests" "$PROJECT_DIR/backend/tests"
+          else
+            echo "STOP: expected test directories were not found."
+            exit 1
+          fi
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: "8.9"
 
       - name: Build debug APK
         shell: bash
@@ -70,26 +178,30 @@ jobs:
           test -s "$APK"
           sha256sum "$APK"
 
-      - name: Upload installable debug APK
+      - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: solo-v4-direct-interval-candles-debug-apk
-          path: extracted-source/ai-auto-trader-v4-assembly/android/app/build/outputs/apk/debug/app-debug.apk
+          name: solo-v4-cached-market-chart-debug-apk
+          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
 
-      - name: Sync tested source into repository for Render deployment
+      - name: Sync optimized Android source
         shell: bash
         run: |
           set -euo pipefail
-          rsync -a --exclude='.pytest_cache/' --exclude='__pycache__/' --exclude='.github/workflows/' \
-            "$PROJECT_DIR/" ./
-          git add -A
+          SOURCE="$PROJECT_DIR/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+          TARGET="android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+          if [ "$SOURCE" != "$TARGET" ]; then
+            mkdir -p "$(dirname "$TARGET")"
+            cp "$SOURCE" "$TARGET"
+          fi
+          git add android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt
           if git diff --cached --quiet; then
-            echo 'No source changes to commit.'
+            echo "No source changes to commit."
           else
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -m 'Add direct multi-timeframe candle history'
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Cache validated candles across Market navigation"
             git push
           fi
