@@ -38,7 +38,8 @@ def _position_dict(p) -> dict[str, object]:
 
 def create_app(*, database_path: str, token: str, market_status: Callable[[], dict] | None = None,
                market_items: Callable[[], list[dict]] | None = None,
-               market_candles: Callable[[str], dict] | None = None):
+               market_candles: Callable[[str], dict] | None = None,
+               account_status: Callable[[], dict] | None = None):
     """Create WSGI app. A strong API token is mandatory; no permissive defaults."""
     if not isinstance(token, str) or len(token) < 32:
         raise ValueError("API token must be at least 32 characters; configure it as a secret")
@@ -106,6 +107,23 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                     body, status = _json_bytes({"error": "invalid_or_unavailable_candle_request", "orders_authorized": False}), "400 Bad Request"
                 except Exception:
                     body, status = _json_bytes({"error": "market_candles_unavailable", "orders_authorized": False}), "503 Service Unavailable"
+            elif path == "/api/v1/binance-spot-testnet/account":
+                try:
+                    if account_status is None:
+                        payload = {"connected": False, "mode": "BINANCE_SPOT_TESTNET_READ_ONLY",
+                                   "status": "NOT_CONFIGURED", "balances": [], "orders_authorized": False}
+                        body, status = _json_bytes(payload), "503 Service Unavailable"
+                    else:
+                        payload = account_status()
+                        if (not isinstance(payload, dict)
+                                or payload.get("orders_authorized") is not False
+                                or not isinstance(payload.get("balances"), list)
+                                or payload.get("mode") != "BINANCE_SPOT_TESTNET_READ_ONLY"):
+                            raise ValueError("account provider returned an invalid or unsafe response")
+                        body, status = _json_bytes(payload), ("200 OK" if payload.get("connected") else "503 Service Unavailable")
+                except Exception:
+                    body, status = _json_bytes({"connected": False, "mode": "BINANCE_SPOT_TESTNET_READ_ONLY",
+                        "status": "UNAVAILABLE", "balances": [], "orders_authorized": False}), "503 Service Unavailable"
             elif path == "/api/v1/markets":
                 try:
                     feed = market_status() if market_status else {"status": "UNKNOWN", "orders_authorized": False}
@@ -225,6 +243,7 @@ def main() -> None:
     """Run the authenticated read-only API and independent public market poller."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     from backend.market_data_adapter import BinanceSpotMarketDataAdapter, BinanceUsdMFuturesAdapter
+    from backend.binance_spot_testnet_account import BinanceSpotTestnetAccountClient
     from backend.market_worker import MarketDataWorker, MarketWorkerConfig
 
     token = os.environ.get("PAPER_API_TOKEN", "")
@@ -249,6 +268,7 @@ def main() -> None:
         raise SystemExit("PAPER_MARKET_SYMBOLS must include at least one symbol")
 
     cache = MarketFeedCache(max_age_seconds=max_age)
+    binance_testnet_account = BinanceSpotTestnetAccountClient()
     if market_mode == "spot":
         source = BinanceSpotMarketDataAdapter()
         logging.info("market data mode=SPOT_PUBLIC_ANALYSIS_ONLY; spot last price is not futures mark price")
@@ -326,7 +346,8 @@ def main() -> None:
     try:
         with make_server(host, port, create_app(database_path=database, token=token,
                                                 market_status=cache.status, market_items=cache.items,
-                                                market_candles=market_candles)) as server:
+                                                market_candles=market_candles,
+                                                account_status=binance_testnet_account.account_summary)) as server:
             print(f"Read-only paper API listening on {host}:{port}; public market poller active; no execution routes")
             server.serve_forever()
     finally:

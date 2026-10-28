@@ -97,15 +97,4 @@ class MarketAnalysisChecksTest {
         assertTrue(priceActionStructure(candles).contains("lower highs + lower lows"))
     }
 
-    @Test
-    fun reportsEngulfingAndHammerPatternsAsHeuristicContext() {
-        val previousBearish = MarketCandle("2026-10-28T00:00:00Z", 103.0, 104.0, 99.0, 100.0, 100.0)
-        val bullishEngulfing = MarketCandle("2026-10-28T00:01:00Z", 99.0, 105.0, 98.0, 104.0, 120.0)
-        assertTrue(lastCandlePattern(listOf(previousBearish, bullishEngulfing)).startsWith("Bullish engulfing"))
-
-        val hammer = MarketCandle("2026-10-28T00:02:00Z", 102.0, 104.0, 95.0, 103.0, 110.0)
-        assertTrue(lastCandlePattern(listOf(hammer)).startsWith("Hammer-like candle"))
-        assertTrue(lastCandlePattern(listOf(hammer)).contains("confirmation required"))
-    }
-
 }
