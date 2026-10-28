@@ -919,7 +919,7 @@ private fun AnalysisScreen() {
                 val bearish = timeframeSnapshots.count { it.bias == "BEARISH" }
                 AnalysisValue(
                     "History coverage",
-                    "\${usableIntervals} / \${timeframeSnapshots.size} intervals have 50+ closed candles",
+                    "${usableIntervals} / ${timeframeSnapshots.size} intervals have 50+ closed candles",
                     Muted
                 )
                 AnalysisValue(
