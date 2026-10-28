@@ -37,6 +37,8 @@ on:
       - "extracted-source/ai-auto-trader-v4-assembly/tests/test_risk_guardian_malformed_inputs.py"
       - "extracted-source/ai-auto-trader-v4-assembly/tests/test_orchestrator.py"
       - "extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/app/engines/postgres_ssl.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/app/engines/postgres_paper_ledger.py"
       - "extracted-source/ai-auto-trader-v4-assembly/backend/timeframe_aggregation.py"
       - "extracted-source/ai-auto-trader-v4-assembly/backend/backtesting.py"
 
