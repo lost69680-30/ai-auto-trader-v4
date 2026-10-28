@@ -10,9 +10,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import java.util.Locale
+import java.time.Duration
+import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +30,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -46,7 +52,7 @@ private val White: Color get() = if (lightTheme) Color(0xFF202630) else Color(0x
 private val Grid: Color get() = if (lightTheme) Color(0xFFD4CEC2) else Color(0xFF2A3544)
 
 
-private data class MarketCandle(
+internal data class MarketCandle(
     val openTime: String,
     val open: Double,
     val high: Double,
@@ -84,6 +90,8 @@ private object BackendSession {
     val marketItems = mutableStateOf<List<MarketInstrument>>(emptyList())
     val marketLoading = mutableStateOf(false)
     val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+    // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
+    val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
 }
 
 private fun normalizeSymbol(value: String): String = value.uppercase(Locale.ROOT).filter { it.isLetterOrDigit() }
@@ -136,20 +144,34 @@ private data class TimeframeSnapshot(
     val bias: String,
 )
 
-private val supportedTimeframes = listOf("1m", "5m", "15m", "1h", "4h", "1D")
+// 1Y bars are derived in the backend only from twelve complete, closed monthly bars.
+private val supportedTimeframes = listOf("1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M", "1Y")
 private fun timeframeBias(analysis: TechnicalSnapshot?): String {
-    if (analysis == null || !analysis.enoughData) return "INSUFFICIENT DATA"
-    val up = analysis.trend.startsWith("Uptrend") && analysis.momentum.startsWith("Positive")
-    val down = analysis.trend.startsWith("Downtrend") && analysis.momentum.startsWith("Negative")
+    if (analysis == null) return "INSUFFICIENT DATA"
+    return classifyTimeframeBias(analysis.trend, analysis.momentum, analysis.directionalReady)
+}
+
+internal fun classifyTimeframeBias(
+    trend: String,
+    momentum: String,
+    directionalReady: Boolean,
+): String {
+    if (!directionalReady) return "INSUFFICIENT DATA"
+    val up = (trend.startsWith("Uptrend") || trend.startsWith("Above EMA20")) &&
+        momentum.startsWith("Positive")
+    val down = (trend.startsWith("Downtrend") || trend.startsWith("Below EMA20")) &&
+        momentum.startsWith("Negative")
     return when { up -> "BULLISH"; down -> "BEARISH"; else -> "NEUTRAL / MIXED" }
 }
 
 private fun buildTimeframeSnapshots(candlesByTimeframe: Map<String, List<MarketCandle>>): List<TimeframeSnapshot> =
     supportedTimeframes.map { timeframe ->
         val candles = candlesByTimeframe[timeframe].orEmpty().takeLast(200)
-        val analysis = if (candles.size >= 20) analyzeCandles(candles) else null
+        val qualityIssue = candleSeriesIssue(timeframe, candles)
+        val analysis = if (qualityIssue == null && candles.size >= 20) analyzeCandles(candles) else null
         val status = when {
             candles.isEmpty() -> "Unavailable · backend returned no closed candles for this interval"
+            qualityIssue != null -> "Data quality blocked · $qualityIssue"
             candles.size < 20 -> "Insufficient history · ${candles.size} complete candles; 20 required"
             candles.size < 50 -> "Limited history · ${candles.size} complete candles"
             else -> "Ready · ${candles.size} complete candles"
@@ -170,7 +192,11 @@ private data class TechnicalSnapshot(
     val momentum: String,
     val volatility: String,
     val volume: String,
+    val candlePattern: String,
+    val priceActionStructure: String,
+    val riskFlags: List<String>,
     val enoughData: Boolean,
+    val directionalReady: Boolean,
 )
 
 private fun fmtIndicator(value: Double, digits: Int = 2): String =
@@ -184,12 +210,285 @@ private fun ema(values: List<Double>, period: Int): Double? {
     return current.takeIf { it.isFinite() }
 }
 
+/**
+ * Return an issue string when an interval's candle history cannot be trusted.
+ * The check is intentionally stricter than indicator math: a missing bar, future
+ * or stale last bar, duplicate timestamp, or malformed OHLCV blocks that interval's
+ * directional summary. It never fills or interpolates missing market data.
+ */
+internal fun candleSeriesIssue(
+    timeframe: String,
+    candles: List<MarketCandle>,
+    now: Instant = Instant.now(),
+): String? {
+    if (candles.isEmpty()) return null
+
+    if (candles.any { candle ->
+        val values = listOf(candle.open, candle.high, candle.low, candle.close, candle.volume)
+        !values.all { it.isFinite() } ||
+            minOf(candle.open, candle.high, candle.low, candle.close) <= 0.0 ||
+            candle.high < maxOf(candle.open, candle.close, candle.low) ||
+            candle.low > minOf(candle.open, candle.close) ||
+            candle.volume < 0.0
+    }) {
+        return "invalid OHLCV values"
+    }
+
+    val opens = mutableListOf<OffsetDateTime>()
+    for (candle in candles) {
+        val parsed = try {
+            OffsetDateTime.parse(candle.openTime).withOffsetSameInstant(ZoneOffset.UTC)
+        } catch (_: Exception) {
+            return "invalid candle timestamp"
+        }
+        opens += parsed
+    }
+
+    for (index in 1 until opens.size) {
+        if (!opens[index].toInstant().isAfter(opens[index - 1].toInstant())) {
+            return "duplicate or out-of-order timestamps"
+        }
+    }
+
+    if (timeframe == "1M" || timeframe == "1Y") {
+        if (opens.any { opened ->
+            opened.dayOfMonth != 1 || opened.hour != 0 || opened.minute != 0 ||
+                opened.second != 0 || opened.nano != 0 ||
+                (timeframe == "1Y" && opened.monthValue != 1)
+        }) {
+            return "calendar candle timestamps are not aligned"
+        }
+        val requiredMonthStep = if (timeframe == "1M") 1 else 12
+        for (index in 1 until opens.size) {
+            val previous = opens[index - 1]
+            val current = opens[index]
+            val monthStep = (current.year - previous.year) * 12 +
+                current.monthValue - previous.monthValue
+            if (monthStep != requiredMonthStep) {
+                return "gap or irregular calendar candles"
+            }
+        }
+    } else {
+        val intervalMillis = when (timeframe) {
+            "1m" -> 60_000L
+            "5m" -> 300_000L
+            "15m" -> 900_000L
+            "1h" -> 3_600_000L
+            "4h" -> 14_400_000L
+            "1D" -> 86_400_000L
+            "1W" -> 604_800_000L
+            else -> return "unsupported timeframe"
+        }
+        for (index in 1 until opens.size) {
+            val elapsed = Duration.between(
+                opens[index - 1].toInstant(),
+                opens[index].toInstant()
+            ).toMillis()
+            if (elapsed != intervalMillis) {
+                return "gap or irregular timestamps for $timeframe candles"
+            }
+        }
+    }
+
+    val latestOpen = opens.last()
+    val expectedClose = when (timeframe) {
+        "1M" -> latestOpen.plusMonths(1).minusNanos(1_000_000)
+        "1Y" -> latestOpen.plusYears(1).minusNanos(1_000_000)
+        else -> {
+            val intervalMillis = when (timeframe) {
+                "1m" -> 60_000L
+                "5m" -> 300_000L
+                "15m" -> 900_000L
+                "1h" -> 3_600_000L
+                "4h" -> 14_400_000L
+                "1D" -> 86_400_000L
+                "1W" -> 604_800_000L
+                else -> return "unsupported timeframe"
+            }
+            latestOpen.plus(Duration.ofMillis(intervalMillis)).minusNanos(1_000_000)
+        }
+    }.toInstant()
+
+    if (expectedClose.isAfter(now)) return "latest candle is not yet closed"
+    val maximumAgeMillis = when (timeframe) {
+        "1m" -> 180_000L
+        "5m" -> 900_000L
+        "15m" -> 2_700_000L
+        "1h" -> 10_800_000L
+        "4h" -> 43_200_000L
+        "1D" -> 259_200_000L
+        "1W" -> 864_000_000L
+        "1M" -> 3_888_000_000L
+        "1Y" -> 34_560_000_000L
+        else -> return "unsupported timeframe"
+    }
+    if (Duration.between(expectedClose, now).toMillis() > maximumAgeMillis) {
+        return "latest candle is stale"
+    }
+    return null
+}
+
+/** Compare the newest closed bar with the preceding 20 bars, excluding itself. */
+internal fun relativeVolumeRatio(candles: List<MarketCandle>): Double? {
+    if (candles.size < 21) return null
+    val priorVolumes = candles.dropLast(1).takeLast(20).map { it.volume }
+    if (priorVolumes.size != 20 || priorVolumes.any { !it.isFinite() || it < 0.0 }) return null
+    val baseline = priorVolumes.average()
+    val currentVolume = candles.last().volume
+    if (!baseline.isFinite() || baseline <= 0.0 || !currentVolume.isFinite() || currentVolume < 0.0) return null
+    return (currentVolume / baseline).takeIf { it.isFinite() }
+}
+
+/**
+ * Transparent market-condition checks for the selected candle interval.
+ * These are rule-based observations, not a calibrated risk score or trade signal.
+ * Missing inputs are explicitly reported; they are never interpreted as low risk.
+ */
+internal fun marketRiskFlags(
+    atrPercent: Double?,
+    rsi: Double?,
+    relativeVolume: Double?,
+    trend: String,
+): List<String> {
+    val flags = mutableListOf<String>()
+    if (atrPercent == null || !atrPercent.isFinite() || atrPercent < 0.0) {
+        flags += "ATR check unavailable; elevated candle ranges are not ruled out"
+    } else if (atrPercent >= 2.5) {
+        flags += "ATR14 ≥ 2.5% of close for this interval; large observed ranges (heuristic, not timeframe-calibrated)"
+    }
+
+    if (rsi == null || !rsi.isFinite() || rsi !in 0.0..100.0) {
+        flags += "RSI check unavailable; momentum stretch is not assessed"
+    } else if (rsi >= 70.0) {
+        flags += "RSI ≥ 70; upside momentum is stretched and may reverse"
+    } else if (rsi <= 30.0) {
+        flags += "RSI ≤ 30; downside momentum is stretched and may reverse"
+    }
+
+    if (relativeVolume == null || !relativeVolume.isFinite() || relativeVolume < 0.0) {
+        flags += "Relative-volume check unavailable; need 21 candles and a positive prior-volume baseline"
+    } else if (relativeVolume >= 2.0) {
+        flags += "Relative volume ≥ 2.0× the prior 20-candle average; spike may reflect continuation or exhaustion"
+    }
+
+    if (rsi != null && rsi.isFinite() && rsi in 0.0..100.0 &&
+        ((trend.startsWith("Uptrend") && rsi <= 45.0) ||
+         (trend.startsWith("Downtrend") && rsi >= 55.0))) {
+        flags += "Trend and RSI disagree; directional evidence is mixed"
+    }
+    return flags
+}
+
+/**
+ * Detect confirmed swing structure using two candles on each side of a pivot.
+ * Both the last two swing highs and lows must agree before a directional label
+ * is shown. This is descriptive price-action context, not a prediction or signal.
+ */
+internal fun priceActionStructure(candles: List<MarketCandle>): String {
+    if (candles.size < 9) return "Insufficient history for confirmed swings"
+    val start = maxOf(2, candles.size - 60)
+    val swingHighs = mutableListOf<Double>()
+    val swingLows = mutableListOf<Double>()
+
+    for (i in start until candles.size - 2) {
+        val current = candles[i]
+        val priorHighs = maxOf(candles[i - 2].high, candles[i - 1].high)
+        val nextHighs = maxOf(candles[i + 1].high, candles[i + 2].high)
+        if (current.high > priorHighs && current.high >= nextHighs) {
+            swingHighs += current.high
+        }
+        val priorLows = minOf(candles[i - 2].low, candles[i - 1].low)
+        val nextLows = minOf(candles[i + 1].low, candles[i + 2].low)
+        if (current.low < priorLows && current.low <= nextLows) {
+            swingLows += current.low
+        }
+    }
+
+    if (swingHighs.size < 2 || swingLows.size < 2) {
+        return "Insufficient confirmed swing highs/lows"
+    }
+    val previousHigh = swingHighs[swingHighs.lastIndex - 1]
+    val latestHigh = swingHighs.last()
+    val previousLow = swingLows[swingLows.lastIndex - 1]
+    val latestLow = swingLows.last()
+
+    return when {
+        latestHigh > previousHigh && latestLow > previousLow ->
+            "Bullish swing structure · higher highs + higher lows"
+        latestHigh < previousHigh && latestLow < previousLow ->
+            "Bearish swing structure · lower highs + lower lows"
+        else -> "Mixed / range-bound swings · no clear structure"
+    }
+}
+
+/**
+ * Names a small set of recent candle shapes for research context only.
+ * Pattern candidates do not predict direction by themselves and never authorize orders.
+ */
+internal fun detectRecentCandlestickPattern(candles: List<MarketCandle>): String {
+    if (candles.size < 2) return "Insufficient history · 2 candles required"
+    val recent = candles.takeLast(2)
+    if (recent.any { candle ->
+        val values = listOf(candle.open, candle.high, candle.low, candle.close, candle.volume)
+        !values.all { it.isFinite() } || minOf(candle.open, candle.high, candle.low, candle.close) <= 0.0 ||
+            candle.high < maxOf(candle.open, candle.close, candle.low) ||
+            candle.low > minOf(candle.open, candle.close) || candle.volume < 0.0
+    }) return "Blocked · invalid candle data"
+
+    val previous = recent[0]
+    val current = recent[1]
+    val previousBodyHigh = maxOf(previous.open, previous.close)
+    val previousBodyLow = minOf(previous.open, previous.close)
+    val currentBodyHigh = maxOf(current.open, current.close)
+    val currentBodyLow = minOf(current.open, current.close)
+    val currentBody = kotlin.math.abs(current.close - current.open)
+    val currentRange = current.high - current.low
+    if (currentRange <= 0.0) return "No pattern · zero-range candle"
+
+    if (previous.close < previous.open && current.close > current.open &&
+        current.open <= previous.close && current.close >= previous.open &&
+        previousBodyHigh > previousBodyLow && currentBody > 0.0) {
+        return "Bullish engulfing candidate · context required"
+    }
+    if (previous.close > previous.open && current.close < current.open &&
+        current.open >= previous.close && current.close <= previous.open &&
+        previousBodyHigh > previousBodyLow && currentBody > 0.0) {
+        return "Bearish engulfing candidate · context required"
+    }
+
+    val bodyRatio = currentBody / currentRange
+    val upperShadow = current.high - currentBodyHigh
+    val lowerShadow = currentBodyLow - current.low
+    if (bodyRatio <= 0.10) return "Doji-like candle · direction unconfirmed"
+    if (bodyRatio <= 0.35 && lowerShadow >= 2.0 * currentBody && upperShadow <= currentBody) {
+        return "Hammer-like candle · context required"
+    }
+    if (bodyRatio <= 0.35 && upperShadow >= 2.0 * currentBody && lowerShadow <= currentBody) {
+        return "Shooting-star-like candle · context required"
+    }
+    return "No defined 2-candle pattern detected"
+}
+
 // Read-only indicator calculations from validated, closed backend candles. These never authorize orders.
 private fun analyzeCandles(candles: List<MarketCandle>): TechnicalSnapshot {
-    val c = candles.filter { it.open.isFinite() && it.high.isFinite() && it.low.isFinite() && it.close.isFinite() && it.volume.isFinite() && it.close > 0 && it.low > 0 && it.high >= it.low && it.volume >= 0 }
+    val c = candles
+    if (c.any { candle ->
+        val values = listOf(candle.open, candle.high, candle.low, candle.close, candle.volume)
+        !values.all { it.isFinite() } || minOf(candle.open, candle.high, candle.low, candle.close) <= 0.0 ||
+            candle.high < maxOf(candle.open, candle.close, candle.low) ||
+            candle.low > minOf(candle.open, candle.close) || candle.volume < 0.0
+    }) {
+        return TechnicalSnapshot(
+            "Rejected · invalid OHLCV", "Rejected · invalid OHLCV", "Rejected · invalid OHLCV",
+            "Unavailable", "Unavailable", "Unavailable", "Unavailable", "Unavailable",
+            "Blocked · invalid candles", "Blocked · invalid candles", "Blocked · invalid candles",
+            "Blocked · invalid candle data", "Unavailable · invalid swing history",
+            listOf("Risk checks blocked · invalid OHLCV"), false, false
+        )
+    }
     val closes = c.map { it.close }
     val enough = c.size >= 50
-    if (c.size < 20) return TechnicalSnapshot("Need 20+ candles", "Need 50+ candles", "Need 15+ candles", "Need 35+ candles", "Need 20+ candles", "Need 15+ candles", "Need positive volume", "Need 20+ candles", "Unavailable", "Unavailable", "Unavailable", "Insufficient data", false)
+    if (c.size < 20) return TechnicalSnapshot("Need 20+ candles", "Need 50+ candles", "Need 15+ candles", "Need 35+ candles", "Need 20+ candles", "Need 15+ candles", "Need positive volume", "Need 20+ candles", "Unavailable", "Unavailable", "Unavailable", "Insufficient data", "Need 2+ candles", "Need 9+ candles for confirmed swings", listOf("Risk checks unavailable · insufficient validated candle history"), false, false)
     val e20 = ema(closes, 20)
     val e50 = ema(closes, 50)
     val rsi = if (closes.size >= 15) {
@@ -226,25 +525,32 @@ private fun analyzeCandles(candles: List<MarketCandle>): TechnicalSnapshot {
     val recent = c.takeLast(20)
     val support = recent.minOfOrNull { it.low }
     val resistance = recent.maxOfOrNull { it.high }
-    val avgVol = if (c.size >= 20) c.takeLast(20).map { it.volume }.average() else 0.0
-    val volRatio = if (avgVol > 0) c.last().volume / avgVol else null
+    val volRatio = relativeVolumeRatio(c)
     val trend = when {
         e20 != null && e50 != null && closes.last() > e20 && e20 > e50 -> "Uptrend · price > EMA20 > EMA50"
         e20 != null && e50 != null && closes.last() < e20 && e20 < e50 -> "Downtrend · price < EMA20 < EMA50"
+        e20 != null && e50 == null && closes.last() > e20 -> "Above EMA20 · EMA50 unavailable"
+        e20 != null && e50 == null && closes.last() < e20 -> "Below EMA20 · EMA50 unavailable"
         e20 != null && closes.last() > e20 -> "Above EMA20 · mixed trend"
         e20 != null && closes.last() < e20 -> "Below EMA20 · mixed trend"
         else -> "Unavailable"
     }
     val momentum = when { rsi == null -> "Insufficient candles"; rsi >= 70 -> "RSI overbought (${fmtIndicator(rsi, 1)})"; rsi <= 30 -> "RSI oversold (${fmtIndicator(rsi, 1)})"; rsi > 55 -> "Positive (${fmtIndicator(rsi, 1)})"; rsi < 45 -> "Negative (${fmtIndicator(rsi, 1)})"; else -> "Neutral (${fmtIndicator(rsi, 1)})" }
     val volatility = if (atr != null && closes.last() > 0) "ATR ${fmtIndicator(atr)} (${fmtIndicator(100 * atr / closes.last(), 2)}% of price)" else "Need 15+ candles"
+    val atrPercent = atr?.let { 100.0 * it / closes.last() }
+    val riskFlags = marketRiskFlags(atrPercent, rsi, volRatio, trend)
     return TechnicalSnapshot(
         e20?.let { fmtIndicator(it) } ?: "Need 20+ candles", e50?.let { fmtIndicator(it) } ?: "Need 50+ candles",
         rsi?.let { fmtIndicator(it, 1) } ?: "Need 15+ candles", macd, bb,
         atr?.let { fmtIndicator(it) } ?: "Need 15+ candles", vwap?.let { fmtIndicator(it) } ?: "Unavailable",
         if (support != null && resistance != null) "S ${fmtIndicator(support)} · R ${fmtIndicator(resistance)}" else "Unavailable",
         trend, momentum, volatility,
-        if (volRatio != null) "Last / 20-candle avg: ${fmtIndicator(volRatio, 2)}×" else "Unavailable · zero/insufficient volume",
-        enough
+        if (volRatio != null) "Last / prior 20-candle average: ${fmtIndicator(volRatio, 2)}×" else "Unavailable · need 21 candles and non-zero baseline",
+        detectRecentCandlestickPattern(c),
+        priceActionStructure(c),
+        riskFlags,
+        enough,
+        e20 != null && rsi != null
     )
 }
 
@@ -332,7 +638,13 @@ private fun fetchCandleHistory(token: String, symbol: String): Map<String, List<
         val grouped = root.optJSONObject("candles_by_interval") ?: return emptyMap()
         val result = mutableMapOf<String, List<MarketCandle>>()
         for (timeframe in supportedTimeframes) {
-            val apiInterval = if (timeframe == "1D") "1d" else timeframe
+            val apiInterval = when (timeframe) {
+                "1D" -> "1d"
+                "1W" -> "1w"
+                "1M" -> "1M"
+                "1Y" -> "1y"
+                else -> timeframe
+            }
             val rows = grouped.optJSONArray(apiInterval) ?: JSONArray()
             val candles = mutableListOf<MarketCandle>()
             for (i in 0 until rows.length()) {
@@ -378,8 +690,17 @@ private fun TraderApp() {
     Column(Modifier.fillMaxSize().background(Background)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column {
-                Text("AI AUTO TRADER", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                Text(screen, color = White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_solo_logo),
+                        contentDescription = "Solo logo",
+                        modifier = Modifier.size(34.dp)
+                    )
+                    Column {
+                        Text("SOLO", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.4.sp)
+                        Text(screen, color = White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text("v4", color = Muted, fontWeight = FontWeight.SemiBold)
@@ -758,9 +1079,10 @@ private fun AnalysisScreen() {
                 } else {
                     response.reason
                 }
-                if (!response.backendConnected || !response.safeResponse || response.feedStatus != "HEALTHY" || response.items.isEmpty()) {
-                    BackendSession.marketItems.value = emptyList()
-                } else {
+                // Retain the last validated snapshot while the feed reconnects.
+                // Its feed status above still reports outages; the snapshot grants no order authority.
+                if (response.backendConnected && response.safeResponse &&
+                    response.feedStatus == "HEALTHY" && response.items.isNotEmpty()) {
                     BackendSession.marketItems.value = response.items
                 }
                 BackendSession.marketLoading.value = false
@@ -770,17 +1092,27 @@ private fun AnalysisScreen() {
     }
     val loadedMarkets = BackendSession.marketItems.value
     val selectedMarket = loadedMarkets.firstOrNull { normalizeSymbol(it.symbol) == normalizeSymbol(symbol) }
-    var candleHistoryByTimeframe by remember { mutableStateOf<Map<String, List<MarketCandle>>>(emptyMap()) }
+    val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol ?: symbol)
+    val candleHistoryByTimeframe = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
     var candleHistoryLoading by remember { mutableStateOf(false) }
-    LaunchedEffect(sessionToken, selectedMarket?.symbol) {
-        candleHistoryByTimeframe = emptyMap()
-        if (sessionToken.length >= 32 && selectedMarket != null) {
+    LaunchedEffect(sessionToken, selectedMarket?.symbol, candleSymbolKey) {
+        if (sessionToken.length >= 32 && selectedMarket != null && candleSymbolKey.isNotBlank()) {
             while (true) {
                 candleHistoryLoading = true
                 val history = withContext(Dispatchers.IO) {
                     try { fetchCandleHistory(sessionToken, selectedMarket.symbol) } catch (_: Exception) { emptyMap() }
                 }
-                candleHistoryByTimeframe = history
+                // Update only intervals with usable candles so an empty/failed refresh cannot
+                // erase a previously validated chart for the same symbol.
+                if (history.isNotEmpty()) {
+                    val nonEmptyHistory = history.filterValues { it.isNotEmpty() }
+                    if (nonEmptyHistory.isNotEmpty()) {
+                        val previous = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
+                        BackendSession.candleHistoryBySymbol.value =
+                            BackendSession.candleHistoryBySymbol.value +
+                                (candleSymbolKey to (previous + nonEmptyHistory))
+                    }
+                }
                 candleHistoryLoading = false
                 delay(60_000)
             }
@@ -809,8 +1141,12 @@ private fun AnalysisScreen() {
                         Text("Mark price: ${formatMarketPrice(selectedMarket.markPrice)}", color = Green, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
-                Tag(if (selectedMarket != null) "VALIDATED FEED" else if (BackendSession.marketLoading.value) "LOADING" else "NO LIVE DATA",
-                    if (selectedMarket != null) Green else Color(0xFFFFC857))
+                Tag(
+                    if (selectedMarket != null && BackendSession.feedStatus.value == "HEALTHY") "VALIDATED FEED"
+                    else if (selectedMarket != null) "LAST GOOD SNAPSHOT"
+                    else if (BackendSession.marketLoading.value) "LOADING" else "NO LIVE DATA",
+                    if (selectedMarket != null && BackendSession.feedStatus.value == "HEALTHY") Green else Color(0xFFFFC857)
+                )
             }
             val visibleSymbols = if (loadedMarkets.isNotEmpty()) loadedMarkets.map { displaySymbol(it.symbol) }.distinct() else listOf("BTC/USDT", "ETH/USDT", "EUR/USD", "GBP/USD")
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -852,6 +1188,8 @@ private fun AnalysisScreen() {
                 IndicatorRow("ATR 14 · volatility", technical?.atr14 ?: "Unavailable · no validated candles")
                 IndicatorRow("VWAP", technical?.vwap ?: "Unavailable · no validated candles")
                 IndicatorRow("Support / resistance · 20 candles", technical?.supportResistance ?: "Unavailable · no validated candles")
+                IndicatorRow("Recent candle pattern", technical?.candlePattern ?: "Unavailable · no validated candles")
+                IndicatorRow("Swing structure", technical?.priceActionStructure ?: "Unavailable · no validated candles")
                 IndicatorRow("Volume analysis", technical?.volume ?: "Unavailable · no validated candles")
                 IndicatorRow("Selected timeframe", "$timeframe · ${selectedTimeframe?.status ?: "Unavailable"}")
             }
@@ -879,6 +1217,41 @@ private fun AnalysisScreen() {
                 }
                 Text(summary, color = Gold, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
+            SectionTitle("EVIDENCE & UNCERTAINTY")
+            CardPanel {
+                val coreReadyIntervals = timeframeSnapshots.count { it.analysis?.directionalReady == true }
+                val fullHistoryIntervals = timeframeSnapshots.count { it.analysis?.enoughData == true }
+                val blockedIntervals = timeframeSnapshots.count { it.status.startsWith("Data quality blocked") }
+                val bullish = timeframeSnapshots.count { it.bias == "BULLISH" }
+                val bearish = timeframeSnapshots.count { it.bias == "BEARISH" }
+                AnalysisValue(
+                    "History coverage",
+                    "${coreReadyIntervals} / ${timeframeSnapshots.size} intervals have 20+ candles for core trend/momentum; ${fullHistoryIntervals} have 50+ for EMA50",
+                    Muted
+                )
+                AnalysisValue(
+                    "Signal confidence",
+                    "NOT CALIBRATED · no validated out-of-sample confidence model",
+                    Gold
+                )
+                AnalysisValue(
+                    "Evidence uncertainty",
+                    when {
+                        coreReadyIntervals == 0 -> "HIGH · no interval has sufficient, integrity-checked core history"
+                        blockedIntervals > 0 -> "HIGH · $blockedIntervals interval(s) blocked by gaps, stale bars or invalid data"
+                        bullish > 0 && bearish > 0 -> "HIGH · timeframes conflict"
+                        coreReadyIntervals < timeframeSnapshots.size -> "ELEVATED · some intervals lack 20+ candles"
+                        fullHistoryIntervals < coreReadyIntervals -> "ELEVATED · some intervals lack EMA50 history and use EMA20/momentum only"
+                        else -> "UNQUANTIFIED · indicator agreement is not a probability"
+                    },
+                    if (coreReadyIntervals == 0 || (bullish > 0 && bearish > 0)) Red else Gold
+                )
+                AnalysisValue("Order authorization", "DISABLED · read-only market analysis", Red)
+                Text(
+                    "A bullish/bearish label describes the observed candle history only. It is not a win probability, a verified strategy signal, or permission to place an order.",
+                    color = Muted, fontSize = 11.sp, lineHeight = 16.sp
+                )
+            }
             SectionTitle("AI MARKET ANALYSIS")
             CardPanel {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -888,10 +1261,39 @@ private fun AnalysisScreen() {
                 AnalysisValue("Trend", technical?.trend ?: "Unavailable · no validated candles", Muted)
                 AnalysisValue("Momentum", technical?.momentum ?: "Unavailable · no validated candles", Muted)
                 AnalysisValue("Volatility", technical?.volatility ?: "Unavailable · no validated candles", Muted)
-                AnalysisValue("Review readiness", if (technical?.enoughData == true) "Indicators calculated · review only" else "Insufficient candles for full EMA20/50 review", Gold)
+                AnalysisValue(
+                    "Review readiness",
+                    when {
+                        selectedTimeframe?.status?.startsWith("Data quality blocked") == true -> "BLOCKED · invalid or stale candle history"
+                        technical?.directionalReady == true && technical.enoughData -> "Full EMA20/50 indicators calculated · review only"
+                        technical?.directionalReady == true -> "Core EMA20/RSI calculated; EMA50 unavailable · review only"
+                        else -> "Insufficient candles for core trend/momentum review"
+                    },
+                    Gold
+                )
                 AnalysisValue("AI signal", "HOLD · no approved strategy signal", Gold)
                 AnalysisValue("Risk check", "BLOCKED · authorization not verified in this check", Red)
-                Text("Indicators are calculated locally from validated, closed backend candles and are advisory only. They do not constitute a validated strategy signal, do not authorize orders, and do not guarantee profitability. Missing, stale or insufficient data must never be used to infer a trade.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+                Text("Indicators and swing structure are calculated locally from validated, closed backend candles and are advisory only. They do not constitute a validated strategy signal, do not authorize orders, and do not guarantee profitability. Missing, stale or insufficient data must never be used to infer a trade.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+            }
+            SectionTitle("RISK & MARKET CONDITIONS")
+            CardPanel {
+                Text("Rule-based observations · not a calibrated risk score", color = Muted, fontSize = 11.sp)
+                val riskFlags = technical?.riskFlags.orEmpty()
+                if (riskFlags.isEmpty()) {
+                    Text(
+                        if (technical == null) "Unavailable · risk conditions were not assessed because validated candle analysis is unavailable."
+                        else "No configured flags detected · this does not mean risk is low or absent.",
+                        color = Gold, fontSize = 12.sp, lineHeight = 17.sp
+                    )
+                } else {
+                    riskFlags.forEach { flag ->
+                        Text("• $flag", color = Color(0xFFFFC857), fontSize = 11.sp, lineHeight = 16.sp)
+                    }
+                }
+                Text(
+                    "Thresholds are screening heuristics and are not calibrated across instruments or timeframes. This panel does not estimate loss probability, forecast profit, or authorize orders.",
+                    color = Muted, fontSize = 11.sp, lineHeight = 16.sp
+                )
             }
         } else {
             SectionTitle("PERFORMANCE ANALYTICS")
