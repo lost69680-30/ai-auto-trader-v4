@@ -95,6 +95,7 @@ jobs:
           cmp android/app/src/test/java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt
           cmp android/app/src/test/java/com/aiautotrader/v4/CandlestickPatternTest.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/CandlestickPatternTest.kt
           cmp android/app/src/test/java/com/aiautotrader/v4/TimeframeBiasTest.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/TimeframeBiasTest.kt
+          cmp android/app/src/test/java/com/aiautotrader/v4/TestnetAccountDiagnosticTest.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/TestnetAccountDiagnosticTest.kt
           cmp tests/test_android_technical_analysis_contract.py extracted-source/ai-auto-trader-v4-assembly/tests/test_android_technical_analysis_contract.py
           cmp tests/test_read_only_api.py extracted-source/ai-auto-trader-v4-assembly/tests/test_read_only_api.py
           cmp tests/test_paper_ledger.py extracted-source/ai-auto-trader-v4-assembly/tests/test_paper_ledger.py

@@ -68,6 +68,117 @@ private data class MarketInstrument(
     val candles: List<MarketCandle>,
 )
 
+internal data class TestnetAccountDiagnostic(
+    val status: String,
+    val details: String,
+)
+
+internal fun classifyTestnetAccountResponse(
+    httpCode: Int,
+    mode: String,
+    connected: Boolean,
+    ordersAuthorized: Boolean,
+    upstreamStatus: String,
+    balanceCount: Int,
+): TestnetAccountDiagnostic {
+    if (mode != "BINANCE_SPOT_TESTNET_READ_ONLY" || ordersAuthorized) {
+        return TestnetAccountDiagnostic(
+            "BLOCKED",
+            "Account response was rejected because it did not confirm read-only Testnet mode and disabled order authorization.",
+        )
+    }
+
+    val normalizedStatus = upstreamStatus.trim().uppercase(Locale.ROOT)
+    if (httpCode in 200..299 && connected && normalizedStatus == "CONNECTED") {
+        val safeBalanceCount = balanceCount.coerceAtLeast(0)
+        return TestnetAccountDiagnostic(
+            "CONNECTED",
+            "Binance Spot Testnet account verified; $safeBalanceCount balance rows returned. Exchange order placement remains disabled.",
+        )
+    }
+
+    return when (normalizedStatus) {
+        "NOT_CONFIGURED" -> TestnetAccountDiagnostic(
+            "NOT CONFIGURED",
+            "Backend Binance Spot Testnet credentials are not configured. Exchange order placement remains disabled.",
+        )
+        "NETWORK_ERROR" -> TestnetAccountDiagnostic(
+            "NETWORK ERROR",
+            "Binance Spot Testnet could not be reached from the backend. Backend connectivity is reported separately.",
+        )
+        "INVALID_RESPONSE" -> TestnetAccountDiagnostic(
+            "INVALID RESPONSE",
+            "Binance Spot Testnet returned an invalid account response. Exchange order placement remains disabled.",
+        )
+        else -> {
+            val upstreamHttp = Regex("BINANCE_HTTP_(\\d{3})").matchEntire(normalizedStatus)?.groupValues?.getOrNull(1)
+            val explanation = if (upstreamHttp != null) {
+                "Binance Spot Testnet returned HTTP $upstreamHttp; account connection is unavailable."
+            } else {
+                "Binance Spot Testnet account is unavailable (HTTP $httpCode)."
+            }
+            TestnetAccountDiagnostic(
+                "UNAVAILABLE",
+                "$explanation Exchange order placement remains disabled.".take(180),
+            )
+        }
+    }
+}
+
+private fun fetchTestnetAccountDiagnostic(token: String): TestnetAccountDiagnostic {
+    val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
+    if (!base.startsWith("https://") || token.length < 32) {
+        return TestnetAccountDiagnostic(
+            "NOT CHECKED",
+            "Connect the authenticated HTTPS backend before checking the Binance Spot Testnet account.",
+        )
+    }
+
+    val connection = try {
+        URL("$base/api/v1/binance-spot-testnet/account").openConnection() as HttpURLConnection
+    } catch (e: Exception) {
+        return TestnetAccountDiagnostic(
+            "NETWORK ERROR",
+            "Backend account-status request could not be opened (${e.javaClass.simpleName}); backend status remains separate.",
+        )
+    }
+
+    return try {
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 20000
+        connection.readTimeout = 20000
+        connection.setRequestProperty("Authorization", "Bearer $token")
+        connection.setRequestProperty("Accept", "application/json")
+        connection.useCaches = false
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        val json = try {
+            JSONObject(body)
+        } catch (_: Exception) {
+            return TestnetAccountDiagnostic(
+                "INVALID RESPONSE",
+                "The backend account-status endpoint returned unreadable JSON; backend status remains separate.",
+            )
+        }
+        classifyTestnetAccountResponse(
+            httpCode = code,
+            mode = json.optString("mode"),
+            connected = json.optBoolean("connected", false),
+            ordersAuthorized = json.optBoolean("orders_authorized", true),
+            upstreamStatus = json.optString("status", "UNKNOWN"),
+            balanceCount = json.optJSONArray("balances")?.length() ?: 0,
+        )
+    } catch (e: Exception) {
+        TestnetAccountDiagnostic(
+            "NETWORK ERROR",
+            "Binance Spot Testnet account status could not be loaded (${e.javaClass.simpleName}); backend status remains separate.",
+        )
+    } finally {
+        connection.disconnect()
+    }
+}
+
 private data class MarketFetchResult(
     val httpCode: Int,
     val backendConnected: Boolean,
@@ -87,6 +198,8 @@ private object BackendSession {
     val openPositions = mutableStateOf("—")
     val emergencyStop = mutableStateOf("UNKNOWN")
     val feedStatus = mutableStateOf("UNKNOWN")
+    val testnetAccountStatus = mutableStateOf("NOT CHECKED")
+    val testnetAccountDetails = mutableStateOf("Connect the authenticated backend to check Binance Spot Testnet account access.")
     val marketItems = mutableStateOf<List<MarketInstrument>>(emptyList())
     val marketLoading = mutableStateOf(false)
     val marketMessage = mutableStateOf("Market data has not been loaded yet.")
@@ -886,6 +999,8 @@ private fun ReadOnlyBackendConnectionCard() {
     var openPositions by BackendSession.openPositions
     var emergencyStop by BackendSession.emergencyStop
     var feedStatus by BackendSession.feedStatus
+    var testnetAccountStatus by BackendSession.testnetAccountStatus
+    var testnetAccountDetails by BackendSession.testnetAccountDetails
     val scope = rememberCoroutineScope()
 
     CardPanel {
@@ -963,6 +1078,18 @@ private fun ReadOnlyBackendConnectionCard() {
                     }
                     status = result.first
                     details = result.second
+                    if (result.first.startsWith("CONNECTED")) {
+                        testnetAccountStatus = "CHECKING"
+                        testnetAccountDetails = "Checking the separate read-only Binance Spot Testnet account endpoint."
+                        val accountDiagnostic = withContext(Dispatchers.IO) {
+                            fetchTestnetAccountDiagnostic(normalizedToken)
+                        }
+                        testnetAccountStatus = accountDiagnostic.status
+                        testnetAccountDetails = accountDiagnostic.details
+                    } else {
+                        testnetAccountStatus = "NOT CHECKED"
+                        testnetAccountDetails = "Backend connection must succeed before the Testnet account can be checked."
+                    }
                     result.third?.let { summary ->
                         openPositions = summary.first
                         emergencyStop = summary.second
@@ -979,7 +1106,9 @@ private fun ReadOnlyBackendConnectionCard() {
             Divider(color = Grid)
             IndicatorRow("Positions API", openPositions)
             IndicatorRow("Emergency stop", emergencyStop)
-            IndicatorRow("Market feed", feedStatus)
+            IndicatorRow("Public market feed", feedStatus)
+            IndicatorRow("Binance Spot Testnet account", testnetAccountStatus)
+            Text(testnetAccountDetails, color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
             Button(
                 enabled = !loading && emergencyStop != "ACTIVE",
                 onClick = {
@@ -1031,6 +1160,8 @@ private fun ReadOnlyBackendConnectionCard() {
                 openPositions = "—"
                 emergencyStop = "UNKNOWN"
                 feedStatus = "UNKNOWN"
+                testnetAccountStatus = "NOT CHECKED"
+                testnetAccountDetails = "Connect the authenticated backend to check Binance Spot Testnet account access."
                 BackendSession.marketItems.value = emptyList()
                 BackendSession.marketMessage.value = "Backend token cleared; no authenticated market request will be made."
             },
