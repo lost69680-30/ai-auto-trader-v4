@@ -47,6 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           cmp app/engines/read_only_api.py extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py
+          cmp app/engines/paper_runtime.py extracted-source/ai-auto-trader-v4-assembly/app/engines/paper_runtime.py
           cmp backend/timeframe_aggregation.py extracted-source/ai-auto-trader-v4-assembly/backend/timeframe_aggregation.py
           echo "PASS: Render package and tested backend candle API are identical."
 

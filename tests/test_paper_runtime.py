@@ -245,3 +245,63 @@ def test_runtime_rejects_candle_that_closes_after_its_mark_observation(tmp_path)
     assert report.healthy_symbols == ()
     assert report.unhealthy_symbols == ("BTCUSDT",)
     ledger.close()
+
+
+
+def test_runtime_rejects_gapped_candle_history_before_analysis_fill_or_protection(tmp_path):
+    from app.engines.orchestrator import PaperOrderIntent
+
+    ledger = SQLitePaperLedger(tmp_path / "gapped-runtime.db")
+    intent = PaperOrderIntent(
+        proposal_id="gap-proposal", signal_id="gap-signal", symbol="BTCUSDT",
+        side="LONG", quantity=1, entry_price=100, stop_loss=95, take_profit=110,
+        recorded_at=NOW.timestamp() - 30,
+    )
+    assert ledger.record_intent(intent) == "RECORDED"
+
+    first_open = NOW - timedelta(seconds=180)
+    second_open = NOW - timedelta(seconds=60)
+    gapped_candles = (
+        MarketCandle(
+            "BTCUSDT", first_open, first_open + timedelta(seconds=59),
+            99.0, 101.0, 98.0, 100.0, 10.0, 1000.0, 2, True,
+        ),
+        MarketCandle(
+            "BTCUSDT", second_open, NOW - timedelta(seconds=1),
+            99.0, 101.0, 98.0, 100.0, 10.0, 1000.0, 2, True,
+        ),
+    )
+    gapped_frame = MarketFrame(
+        "BTCUSDT", FeedStatus.HEALTHY, NOW, 100.0, NOW,
+        gapped_candles, (), 0, orders_authorized=False,
+    )
+    analysis_calls = []
+    protection = PaperProtectionEngine(ledger, fee_rate=0, slippage_bps=0)
+    protection_calls = []
+    original_update = protection.process_market_update
+
+    def capture_update(prices, *, observed_at):
+        protection_calls.append((prices, observed_at))
+        return original_update(prices, observed_at=observed_at)
+
+    protection.process_market_update = capture_update
+    runtime = PaperRuntime(
+        ledger=ledger, protection=protection,
+        analysis_handler=lambda poll: analysis_calls.append(poll) or "ANALYZED",
+        fee_rate=0, slippage_bps=0,
+    )
+
+    report = runtime.process_poll(
+        MarketPollResult(NOW, (gapped_frame,), orders_authorized=False),
+        now=NOW.timestamp(),
+    )
+
+    assert analysis_calls == []
+    assert report.healthy_symbols == ()
+    assert report.unhealthy_symbols == ("BTCUSDT",)
+    assert report.fill_statuses == ()
+    assert protection_calls == []
+    assert ledger.fills == ()
+    assert ledger.orders[0].status == "PENDING_PAPER_SIMULATION"
+    assert ledger.orders_authorized is False
+    ledger.close()

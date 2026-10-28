@@ -289,3 +289,40 @@ def test_service_startup_cancels_pending_intents_from_prior_process(tmp_path):
         assert app.ledger.orders_authorized is False
     finally:
         app.close()
+
+
+
+def test_service_stale_first_market_frame_fails_closed_end_to_end(tmp_path):
+    class StaleFirstMarkSource(FakeSource):
+        def fetch_mark_price(self, symbol):
+            return MarkPriceSnapshot(
+                symbol, self.current_price, self.current_price, 0.0001,
+                NOW + timedelta(hours=8), NOW - timedelta(minutes=3),
+                orders_authorized=False,
+            )
+
+    app = PaperServiceApplication.create(
+        source=StaleFirstMarkSource(),
+        config=config(tmp_path),
+        clock=lambda: NOW,
+    )
+    try:
+        first_poll = app.worker.poll_once(now=NOW)
+        assert first_poll.orders_authorized is False
+        assert len(first_poll.frames) == 1
+        assert first_poll.frames[0].status.value == "STALE"
+        assert first_poll.frames[0].closed_candles == ()
+
+        report = app.process_poll(first_poll, now=NOW.timestamp())
+
+        assert report.analysis_status == "SKIPPED_UNHEALTHY_MARKET_DATA"
+        assert report.analysis_result is None
+        assert report.healthy_symbols == ()
+        assert report.unhealthy_symbols == ("BTCUSDT",)
+        assert report.fill_statuses == ()
+        assert report.open_positions == 0
+        assert app.ledger.orders == ()
+        assert app.ledger.fills == ()
+        assert app.ledger.orders_authorized is False
+    finally:
+        app.close()
