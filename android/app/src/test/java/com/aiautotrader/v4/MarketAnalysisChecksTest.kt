@@ -72,4 +72,33 @@ class MarketAnalysisChecksTest {
         val zeroVolume = List(21) { index -> candle(Instant.parse("2026-10-28T08:00:00Z").plusSeconds(index * 60L).toString(), 0.0) }
         assertNull(relativeVolumeRatio(zeroVolume))
     }
+
+    @Test
+    fun marketRiskFlagsSurfaceRangeStretchVolumeAndTrendDisagreement() {
+        val flags = marketRiskFlags(
+            atrPercent = 3.1,
+            rsi = 75.0,
+            relativeVolume = 2.4,
+            trend = "Downtrend · price < EMA20 < EMA50"
+        )
+        assertTrue(flags.any { it.contains("ATR14") })
+        assertTrue(flags.any { it.contains("RSI") && it.contains("70") })
+        assertTrue(flags.any { it.contains("volume") && it.contains("2.0") })
+        assertTrue(flags.any { it.contains("trend", ignoreCase = true) && it.contains("disagree") })
+    }
+
+    @Test
+    fun marketRiskFlagsReportUnavailableChecksInsteadOfImplyingLowRisk() {
+        val flags = marketRiskFlags(
+            atrPercent = null,
+            rsi = null,
+            relativeVolume = null,
+            trend = "Unavailable"
+        )
+        assertTrue(flags.any { it.contains("ATR check unavailable") })
+        assertTrue(flags.any { it.contains("RSI check unavailable") })
+        assertTrue(flags.any { it.contains("volume check unavailable") })
+        assertTrue(flags.none { it.contains("LOW RISK") })
+    }
+
 }
