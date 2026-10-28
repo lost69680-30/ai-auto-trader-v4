@@ -1,0 +1,443 @@
+{
+  "project": "AI Auto Trader v4 compact source assembly",
+  "generated_on": "2026-10-10",
+  "manifest_excludes_itself": true,
+  "file_count": 87,
+  "files": [
+    {
+      "path": ".env.paper.example",
+      "size_bytes": 875,
+      "sha256": "a441572ae485abc38e0063651c93a8481d4f1d590b1deeaa9b42bedbe5080116"
+    },
+    {
+      "path": ".github/workflows/android-apk.yml",
+      "size_bytes": 993,
+      "sha256": "7dc63011a9fae5cf5146e9fef2f124d1f31eee5ff50a004912397c543a27223e"
+    },
+    {
+      "path": ".github/workflows/backend-tests.yml",
+      "size_bytes": 292,
+      "sha256": "e0071274691e25a4f75a4a6478a644fec5b835bae0e5b754a6ad9762476b470d"
+    },
+    {
+      "path": ".gitignore",
+      "size_bytes": 144,
+      "sha256": "3562dde746bd9973a0686550dfd9e53bc1ad14915643bf11d625c3157e0d16e5"
+    },
+    {
+      "path": "PROJECT_COMPLETENESS_AUDIT.md",
+      "size_bytes": 10467,
+      "sha256": "ce0761e790dde49d38cc35b9f775858d386441f44d6e9f76f91fefbbe1b33d3d"
+    },
+    {
+      "path": "README.md",
+      "size_bytes": 7475,
+      "sha256": "c30ffc415295f1f54f7c21e1983d8d80d6dc6fa2aa8ea5e5b97a96845fea4920"
+    },
+    {
+      "path": "android/app/build.gradle.kts",
+      "size_bytes": 1030,
+      "sha256": "6b73b8ae97d51d6e0a66f663810f91ab15fd482bcfd1d484d77b61fad7dead7c"
+    },
+    {
+      "path": "android/app/src/main/AndroidManifest.xml",
+      "size_bytes": 601,
+      "sha256": "da218f528a53347ca14c6afdbbb58d525ce607a20aff62cbc8f943fbfadbb85f"
+    },
+    {
+      "path": "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt",
+      "size_bytes": 5949,
+      "sha256": "105f41989f0231b2d88a941d1445e292047cec50c7322cf193a584c22bfe5684"
+    },
+    {
+      "path": "android/app/src/main/res/values/styles.xml",
+      "size_bytes": 424,
+      "sha256": "2ff7088d129e50458b0ee0710222a75e6f6664a6457b59004af9f38215dd712a"
+    },
+    {
+      "path": "app/__init__.py",
+      "size_bytes": 45,
+      "sha256": "47a17d2537e650429432b5b9f91ac91ec2b861cc006d237f72ea2a2111dc0a5b"
+    },
+    {
+      "path": "app/core/__init__.py",
+      "size_bytes": 49,
+      "sha256": "c74b91aaf99027e1c6c2cab81dcb43c37b9c15afcc02a93d809537cdab4855b0"
+    },
+    {
+      "path": "app/core/models.py",
+      "size_bytes": 869,
+      "sha256": "7883d2382c428136a54f3d37086ecbac0c5195d5574f42b6033b77741fd7200c"
+    },
+    {
+      "path": "app/core/risk_guardian.py",
+      "size_bytes": 6436,
+      "sha256": "4c3588cde47ae7b1f58b0af942c2c26372d2e57912345a962cce850f7a612f0f"
+    },
+    {
+      "path": "app/engines/__init__.py",
+      "size_bytes": 119,
+      "sha256": "97df592d5f651e54d2fc1bc881d05cbd6891613b7bdceddf7dc314d6ff990ecc"
+    },
+    {
+      "path": "app/engines/complete_analysis_pipeline.py",
+      "size_bytes": 6110,
+      "sha256": "de741470843be915770b5e6766bf81de7b10e5607363857daec37872ee058f15"
+    },
+    {
+      "path": "app/engines/contracts.py",
+      "size_bytes": 571,
+      "sha256": "153ebdd197fd60868f2e2e17001b17b889f6e31c24d2a864189924e0b32adb24"
+    },
+    {
+      "path": "app/engines/market_paper_gate.py",
+      "size_bytes": 4516,
+      "sha256": "6877fadcd7484e5dcfa562b286b4a82eae558d53ddba7a3689e19a6feb74763e"
+    },
+    {
+      "path": "app/engines/orchestrator.py",
+      "size_bytes": 7845,
+      "sha256": "1b0253350cb28d3c8dbc95ce9fef3f556baf2db606b8f8315a5a034617dfcb6e"
+    },
+    {
+      "path": "app/engines/paper_ledger.py",
+      "size_bytes": 43345,
+      "sha256": "4b59878fb4606d751e516e573b58f7d5c0747d16beee45a3350a4ce5476be794"
+    },
+    {
+      "path": "app/engines/paper_replay.py",
+      "size_bytes": 8406,
+      "sha256": "8b66a70d2933edc49447ef99129e9ac622565e36229548fa4657050abc4759b1"
+    },
+    {
+      "path": "app/engines/paper_runtime.py",
+      "size_bytes": 12234,
+      "sha256": "a7750a0d37cfb59e34b98ccf80a92fc1924ff3bc4863784fcd79efd1fc2f5e27"
+    },
+    {
+      "path": "app/engines/paper_service_app.py",
+      "size_bytes": 34984,
+      "sha256": "cc824b33fe584a95903915c70c3a41fabb4f67705b7b4eb56e10de69eec0956a"
+    },
+    {
+      "path": "app/engines/paper_signal_cycle.py",
+      "size_bytes": 5532,
+      "sha256": "9898e131da4d9bdb35c343ccea300a3602ed8271b4af40f5bab7cdfe43b1aea7"
+    },
+    {
+      "path": "app/engines/paper_sizing.py",
+      "size_bytes": 5837,
+      "sha256": "92a1f3591cb235329fc92a83b79f3f43c0bb9cd7e8b7cd9d83b627d118602246"
+    },
+    {
+      "path": "app/engines/paper_soak.py",
+      "size_bytes": 7956,
+      "sha256": "f83feb374d52994e01deff42288c840ed6fbcfbf4f1cf71b68cefcfc01d49a08"
+    },
+    {
+      "path": "app/engines/paper_trading_service.py",
+      "size_bytes": 3774,
+      "sha256": "3191f1b51ddfa57d44566e18ef7bb7205bbaf197a3531f5ae0bfb400a1b117f0"
+    },
+    {
+      "path": "app/engines/price_planner.py",
+      "size_bytes": 11207,
+      "sha256": "fb0852dce68930fbe2ef1be51b5416e43a4e2186ca6ed1f6322a937ced78bb7d"
+    },
+    {
+      "path": "app/engines/protection.py",
+      "size_bytes": 11338,
+      "sha256": "6368f048988c7509ca4ee286d226e884b5d922130345db04e9926e07354da2fb"
+    },
+    {
+      "path": "app/engines/research_pipeline.py",
+      "size_bytes": 6428,
+      "sha256": "b5f8fdaa580bb1fa2f48a6defcd5431957f37e56829079d4be8ad219e1280b3b"
+    },
+    {
+      "path": "app/engines/signal_handoff.py",
+      "size_bytes": 4989,
+      "sha256": "e69b8a8640d226d196034c75b310406347c08f433c5291c254c5ecbb39e42aec"
+    },
+    {
+      "path": "backend/__init__.py",
+      "size_bytes": 65,
+      "sha256": "39279eef31daf4a5bbfd1fb92b8724b277cc21ee7b3957e43ad6e691f012c943"
+    },
+    {
+      "path": "backend/backtesting.py",
+      "size_bytes": 7700,
+      "sha256": "00054ae408769fd41e1ddad671e6a59a253640d214de8d63ae649bdf0393f311"
+    },
+    {
+      "path": "backend/liquidity_structure.py",
+      "size_bytes": 10315,
+      "sha256": "04beea7ae799ab233ec5fb3e39a699d95bdc68ecd27ccbb839b17ab2ff44f85c"
+    },
+    {
+      "path": "backend/market_connectivity_check.py",
+      "size_bytes": 8451,
+      "sha256": "b1a2ab9a96c84ffd770641837cbf479feb7d7502ed0e4c1dd3400037ccc693c3"
+    },
+    {
+      "path": "backend/market_data_adapter.py",
+      "size_bytes": 16666,
+      "sha256": "d97d81a353a956ed376898f5ee70f6396d13ae5ad41db45f9d1a9b477f178853"
+    },
+    {
+      "path": "backend/market_worker.py",
+      "size_bytes": 10925,
+      "sha256": "b45b040e5de2cd314d9145858664ea0823458a8b3de10cd228ba48dc44f08aad"
+    },
+    {
+      "path": "backend/opportunity_intelligence.py",
+      "size_bytes": 8347,
+      "sha256": "b1925955796602b4dac9714e1a9a92a9c8be8cd5fc77558921f6107d7359cb47"
+    },
+    {
+      "path": "backend/scanner.py",
+      "size_bytes": 8308,
+      "sha256": "ac599349dde80e7c9fcc9020dbfcd650e3eb62a88c6c3777987c4f65c14d6f03"
+    },
+    {
+      "path": "backend/signal_validation.py",
+      "size_bytes": 8967,
+      "sha256": "ab330f950ad11b964b8b059f24cf5d1c31ada6019b7fedae9d0fe33abb363233"
+    },
+    {
+      "path": "backend/signal_watcher.py",
+      "size_bytes": 9055,
+      "sha256": "9c22eb5719945450dd36935a0fff3732e7c4bf25484a8c31d62559358a73a74b"
+    },
+    {
+      "path": "backend/strategy_research.py",
+      "size_bytes": 10149,
+      "sha256": "164ad89a6816059e2564663eb88f0d02952c16a32ef05edf7eba8c92a85cae52"
+    },
+    {
+      "path": "backend/tests/test_backtesting.py",
+      "size_bytes": 2667,
+      "sha256": "381a552e9c03ad76a043ef56a7c17101c735e2f867ddda2c3175079c3f40e25a"
+    },
+    {
+      "path": "backend/tests/test_liquidity_structure.py",
+      "size_bytes": 4862,
+      "sha256": "4bf42b9da10297841e44dcf0ba943268d78a26e54f799134452919d4528a7189"
+    },
+    {
+      "path": "backend/tests/test_opportunity_intelligence.py",
+      "size_bytes": 1998,
+      "sha256": "57408fa57de27f84c565132af53afffeb167473e0f3664bbd9188ea3614eb5e8"
+    },
+    {
+      "path": "backend/tests/test_scanner.py",
+      "size_bytes": 3510,
+      "sha256": "95dac2344a048ccfdd048c273c890c90cffc6b96399976126be1870ca5600a30"
+    },
+    {
+      "path": "backend/tests/test_signal_validation.py",
+      "size_bytes": 3733,
+      "sha256": "13aae052f72b2b369d9e23c9b75f515c1e2a161a3acdc54d16c303a1ca2b42c2"
+    },
+    {
+      "path": "backend/tests/test_signal_watcher.py",
+      "size_bytes": 4129,
+      "sha256": "01ee8fde5724386435884e0558100ac656a69b6521f445cc4251fdfdd1f42741"
+    },
+    {
+      "path": "backend/tests/test_strategy_research.py",
+      "size_bytes": 3329,
+      "sha256": "253f135a10a8bff27d0feef98f9e5a4b5af4e55c6f98d6d8eb903499828b8d73"
+    },
+    {
+      "path": "build.gradle.kts",
+      "size_bytes": 217,
+      "sha256": "61cd8e15a65a3ded440013250aa5c2bbc875158d0cf2db2e8fc5185ec3c69105"
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "size_bytes": 5716,
+      "sha256": "d9cc27d3468b9b675d9240e02241c0ec90d7c2479bc0949731c5cdf599980cc1"
+    },
+    {
+      "path": "docs/ASSEMBLY_STATUS.md",
+      "size_bytes": 2986,
+      "sha256": "3df23a5f2db7620605aafc67245ed6c9f28ef81e723ee57e6028d39efd209db9"
+    },
+    {
+      "path": "docs/COMPLETE_ANALYSIS_PIPELINE.md",
+      "size_bytes": 2465,
+      "sha256": "cb73751156870c18942143fdcd982fb584b41be96687550df810e4577c914362"
+    },
+    {
+      "path": "docs/MARKET_DATA_AND_PRICE_PLANNING.md",
+      "size_bytes": 6153,
+      "sha256": "e9e2b3b11ee1723700126f229ae58543445d38f3315b930e7452b34e70c769b3"
+    },
+    {
+      "path": "docs/MARKET_PAPER_GATE.md",
+      "size_bytes": 1408,
+      "sha256": "7bf675b14a38d967a2f6834c5ae90295315b954540072077f7228897931afc84"
+    },
+    {
+      "path": "docs/MARKET_WORKER.md",
+      "size_bytes": 3136,
+      "sha256": "7d08a765c87422e59db0a7508cfa8ca625a09f1413837894fa6416a222cd5a49"
+    },
+    {
+      "path": "docs/PAPER_POSITION_SIZING.md",
+      "size_bytes": 1686,
+      "sha256": "8a2755495bb0e05905b3243245f2598df094539fe6763df3d62bf0da5b6752e7"
+    },
+    {
+      "path": "docs/PAPER_REPLAY.md",
+      "size_bytes": 2916,
+      "sha256": "160b0574b7ebd6f25d242a89c379638550502a213057fac1e219ad4c668fef81"
+    },
+    {
+      "path": "docs/PAPER_RUNTIME.md",
+      "size_bytes": 2472,
+      "sha256": "e7a30bad46fd9410264712433e50d6392d62ef824791ab41280b109a1d916403"
+    },
+    {
+      "path": "docs/PAPER_SERVICE.md",
+      "size_bytes": 5984,
+      "sha256": "6be2559a6cf5de2d3e7f8ad6e52b2c53ab606957009b08c3d89f74fede9fcdc1"
+    },
+    {
+      "path": "docs/PAPER_SIGNAL_CYCLE.md",
+      "size_bytes": 1537,
+      "sha256": "cb6ca745dcb13307ba461ece9dbdead718c59930af1545a524851573dfc73061"
+    },
+    {
+      "path": "docs/PAPER_TRADING.md",
+      "size_bytes": 3953,
+      "sha256": "ade95378cc90504cbe01ff38e016a458aa30c05953621775afe47c82af9fa732"
+    },
+    {
+      "path": "docs/PAPER_TRADING_SERVICE.md",
+      "size_bytes": 1567,
+      "sha256": "6ad9ba31e552e3991609ac05d55c78cb0da98b18910eeb0b758acc27a443d949"
+    },
+    {
+      "path": "docs/PROTECTION_ENGINE.md",
+      "size_bytes": 4053,
+      "sha256": "349cba3c97404bd2e05e7417715a2a829576f321046ff0479f6d5f5a4a89ffd1"
+    },
+    {
+      "path": "pyproject.toml",
+      "size_bytes": 503,
+      "sha256": "816f613303ed9346805e4ee91c8fadce98470d80a7a9ac2ddb6045c1526472d8"
+    },
+    {
+      "path": "settings.gradle.kts",
+      "size_bytes": 343,
+      "sha256": "61b55bad387c934cc800cb89662c00571789b01f04d8107f63c99c15f3272341"
+    },
+    {
+      "path": "tests/test_complete_analysis_pipeline.py",
+      "size_bytes": 3137,
+      "sha256": "2902b26b4d212aae85a3299d1ff313a86308bc73b6406a2e9e57c482187862af"
+    },
+    {
+      "path": "tests/test_market_connectivity_check.py",
+      "size_bytes": 3638,
+      "sha256": "cdbf5c8b2aebdb02e9c1c86650e79397dc49e5476220360caf7a203bd876399e"
+    },
+    {
+      "path": "tests/test_market_data_adapter.py",
+      "size_bytes": 10052,
+      "sha256": "a6f8188f7e58a322b2af3f6d972c9105f97dafc28128d94f9c9ccf0f2092681d"
+    },
+    {
+      "path": "tests/test_market_paper_gate.py",
+      "size_bytes": 2282,
+      "sha256": "dc05e0f24ae2f92058fc627aebc43b7e35e192963c0512f7172f630590635e3f"
+    },
+    {
+      "path": "tests/test_market_worker.py",
+      "size_bytes": 6536,
+      "sha256": "b822c6778db7b49a3cadaf251464f5d60134b3fae71fa4aa4d3aedd1e7e383da"
+    },
+    {
+      "path": "tests/test_orchestrator.py",
+      "size_bytes": 9663,
+      "sha256": "0013988388e1d0797ce38969604b6d1958c6d540e50e197edcaf8d5821c39da1"
+    },
+    {
+      "path": "tests/test_paper_ledger.py",
+      "size_bytes": 10174,
+      "sha256": "c16c5da684c446c964bf444d4c65acab3a0227a988aed4252f4c4e1235669333"
+    },
+    {
+      "path": "tests/test_paper_replay.py",
+      "size_bytes": 4002,
+      "sha256": "813d53617cd6908c8682be1f3d2a42b9c75d488fbb877c08d0fd3e38dc5f258a"
+    },
+    {
+      "path": "tests/test_paper_runtime.py",
+      "size_bytes": 9897,
+      "sha256": "fa8c5b8721f348ec922c8aefd7c1faf4516f08130dd42dd9063416d4e5980190"
+    },
+    {
+      "path": "tests/test_paper_service_app.py",
+      "size_bytes": 11362,
+      "sha256": "8f0c9a6ea8e30957c8af54c65b0db18640d700d321ddc1254709cb9e67c7e242"
+    },
+    {
+      "path": "tests/test_paper_signal_cycle.py",
+      "size_bytes": 3060,
+      "sha256": "92c5e9a85eeaa18aafae0d10b9f554c440335ca0dac338c258d4c205450feab0"
+    },
+    {
+      "path": "tests/test_paper_sizing.py",
+      "size_bytes": 4165,
+      "sha256": "9dc7e54f3f83a45ab067164c4ba3e33839fe8d4b4773d8497e5f696866058d00"
+    },
+    {
+      "path": "tests/test_paper_soak.py",
+      "size_bytes": 1565,
+      "sha256": "193502f675b068e21ae7be3e13f069c05cb3dfc9f0c2a43b42f3bd7d04a168fc"
+    },
+    {
+      "path": "tests/test_paper_trading_service.py",
+      "size_bytes": 4359,
+      "sha256": "cedd4a018b746b0f182d3178270cd26fd171e1f9560ba0ef1854eb31a13d8463"
+    },
+    {
+      "path": "tests/test_price_planner.py",
+      "size_bytes": 6031,
+      "sha256": "e10b61d67beb398324c0730fbe1a83a644214366ed3b336198c42c14535f6a96"
+    },
+    {
+      "path": "tests/test_protection_engine.py",
+      "size_bytes": 11975,
+      "sha256": "72b3a62f8649874ba9515853029a32a39e5a4088c75dc5c7fdffd32e4a0a06b0"
+    },
+    {
+      "path": "tests/test_research_pipeline.py",
+      "size_bytes": 2483,
+      "sha256": "0d43f8b951479a62f6591f98b1777ce2f8dc4f7bb1e98a04ff34a85a788ad49f"
+    },
+    {
+      "path": "tests/test_risk_guardian.py",
+      "size_bytes": 2579,
+      "sha256": "46bbf0cf9cb868870ac406cdfc8b7848857704dde31e2fa87cf06bd8691257e7"
+    },
+    {
+      "path": "tests/test_risk_guardian_additional.py",
+      "size_bytes": 1776,
+      "sha256": "9d2fd1fab2492e3f49660239443e384cac23b0a87736de68e2c9d870092da90e"
+    },
+    {
+      "path": "tests/test_risk_guardian_malformed_inputs.py",
+      "size_bytes": 3166,
+      "sha256": "0b18aa8c3fef9a55d18cf5ad06ba9a7bab03cb20fdd08241d3d394e6b77c7247"
+    },
+    {
+      "path": "tests/test_signal_handoff.py",
+      "size_bytes": 4196,
+      "sha256": "44024ebfbad8ad661d2f4ea03d62437bc35659290f1995c6f2305cc3093050da"
+    }
+  ]
+}

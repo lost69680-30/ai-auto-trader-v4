@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+.env.*
+!.env.paper.example
+*.sqlite3
+*.db
+/build/
+/android/.gradle/
+/android/app/build/

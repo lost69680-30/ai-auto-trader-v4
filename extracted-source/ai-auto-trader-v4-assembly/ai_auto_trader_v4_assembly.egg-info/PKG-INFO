@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: ai-auto-trader-v4-assembly
+Version: 0.1.0
+Summary: AI Auto Trader v4 research engines and safety-first assembly baseline
+Requires-Python: >=3.11
+Provides-Extra: test
+Requires-Dist: pytest>=8.0; extra == "test"
