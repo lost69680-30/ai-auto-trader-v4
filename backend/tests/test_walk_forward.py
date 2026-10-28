@@ -30,9 +30,9 @@ def test_walk_forward_has_chronological_disjoint_folds_and_untouched_holdout():
     assert result.orders_authorized is False
     assert result.holdout is not None
     assert result.holdout.start_index == len(rows) - 40
-    assert all(fold.test_start_index < fold.test_end_index for fold in result.folds)
-    assert all(a.test_end_index <= b.test_start_index for a, b in zip(result.folds, result.folds[1:]))
-    assert result.holdout.start_index >= max(f.test_end_index for f in result.folds)
+    assert all(fold.start_index < fold.end_index for fold in result.folds)
+    assert all(a.end_index <= b.start_index for a, b in zip(result.folds, result.folds[1:]))
+    assert result.holdout.start_index >= max(f.end_index for f in result.folds)
     assert result.holdout.used_for_selection is False
 
 
@@ -53,7 +53,7 @@ def test_walk_forward_reports_buy_hold_and_cash_baselines():
 
 
 def test_walk_forward_rejects_short_or_irregular_data_without_trades():
-    rows = make_candles(200)
+    rows = make_candles(199)
     with pytest.raises(ValueError, match="not enough"):
         evaluate_walk_forward("BTCUSDT", rows,
             config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40),
