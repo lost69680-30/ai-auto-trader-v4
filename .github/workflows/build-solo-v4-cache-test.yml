@@ -29,6 +29,77 @@ jobs:
           test -f settings.gradle.kts
           test -f android/app/build.gradle.kts
           test -f android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt
+      - name: Cache validated candles across screen navigation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt")
+          text = path.read_text(encoding="utf-8")
+          old_state = '''    val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+}'''
+          new_state = '''    val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+    // Retain validated closed candle history across screen navigation.
+    val candleHistoryBySymbol =
+        mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
+}'''
+          if "val candleHistoryBySymbol =" not in text:
+              if old_state not in text:
+                  raise SystemExit("STOP: session state insertion point not found.")
+              text = text.replace(old_state, new_state, 1)
+
+          old_block = '''    var candleHistoryByTimeframe by remember { mutableStateOf<Map<String, List<MarketCandle>>>(emptyMap()) }
+    var candleHistoryLoading by remember { mutableStateOf(false) }
+    LaunchedEffect(sessionToken, selectedMarket?.symbol) {
+        candleHistoryByTimeframe = emptyMap()
+        if (sessionToken.length >= 32 && selectedMarket != null) {
+            while (true) {
+                candleHistoryLoading = true
+                val history = withContext(Dispatchers.IO) {
+                    try { fetchCandleHistory(sessionToken, selectedMarket.symbol) } catch (_: Exception) { emptyMap() }
+                }
+                candleHistoryByTimeframe = history
+                candleHistoryLoading = false
+                delay(60_000)
+            }
+        } else {
+            candleHistoryLoading = false
+        }
+    }'''
+          new_block = '''    val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol.orEmpty())
+    val candleHistoryByTimeframe =
+        BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
+    var candleHistoryLoading by remember { mutableStateOf(false) }
+    LaunchedEffect(sessionToken, selectedMarket?.symbol) {
+        if (sessionToken.length >= 32 && selectedMarket != null) {
+            while (true) {
+                candleHistoryLoading = true
+                val history = withContext(Dispatchers.IO) {
+                    try { fetchCandleHistory(sessionToken, selectedMarket.symbol) } catch (_: Exception) { emptyMap() }
+                }
+                // Keep the last usable chart if a refresh fails or returns empty data.
+                if (history.isNotEmpty()) {
+                    BackendSession.candleHistoryBySymbol.value =
+                        BackendSession.candleHistoryBySymbol.value + (candleSymbolKey to history)
+                }
+                candleHistoryLoading = false
+                delay(60_000)
+            }
+        } else {
+            candleHistoryLoading = false
+        }
+    }'''
+          if old_block in text:
+              text = text.replace(old_block, new_block, 1)
+          elif "val candleHistoryByTimeframe =" not in text:
+              raise SystemExit("STOP: candle history block did not match expected source.")
+          if "val candleHistoryBySymbol =" not in text or "Keep the last usable chart" not in text:
+              raise SystemExit("STOP: cache source checks failed.")
+          path.write_text(text, encoding="utf-8")
+          print("PASS: validated candle cache patch.")
+          PY
       - name: Build debug APK
         run: |
           set -euo pipefail
