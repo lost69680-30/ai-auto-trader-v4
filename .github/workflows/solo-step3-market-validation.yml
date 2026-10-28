@@ -71,7 +71,7 @@ jobs:
           adapter = paths[0].read_text(encoding="utf-8")
           checker = paths[1].read_text(encoding="utf-8")
           assert "orders_authorized: bool = False" in adapter
-          assert "orders_authorized=False" in checker
+          assert "orders_authorized: bool = False" in checker
           tree = ast.parse(adapter, filename="backend/market_data_adapter.py")
           function_names = {
               node.name for node in ast.walk(tree)
