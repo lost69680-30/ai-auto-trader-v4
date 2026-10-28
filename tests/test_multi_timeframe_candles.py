@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from backend.market_data_adapter import MarketCandle
-from backend.market_timeframes import aggregate_complete_yearly_candles
+from backend.timeframe_aggregation import aggregate_complete_yearly_candles
 
 
 def monthly_candles(year: int, months=range(1, 13), *, open_months=()):
