@@ -32,7 +32,7 @@ def test_walk_forward_has_chronological_disjoint_folds_and_untouched_holdout():
     assert result.holdout.start_index == len(rows) - 40
     assert all(fold.test_start_index < fold.test_end_index for fold in result.folds)
     assert all(a.test_end_index <= b.test_start_index for a, b in zip(result.folds, result.folds[1:]))
-    assert result.holdout.start_index > max(f.test_end_index for f in result.folds)
+    assert result.holdout.start_index >= max(f.test_end_index for f in result.folds)
     assert result.holdout.used_for_selection is False
 
 
