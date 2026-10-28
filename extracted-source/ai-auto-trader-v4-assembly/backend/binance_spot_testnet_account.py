@@ -59,11 +59,25 @@ class BinanceSpotTestnetAccountClient:
                 "balances": safe_balances,
                 "orders_authorized": False,
             }
-        except (HTTPError, URLError, OSError, ValueError, TypeError, json.JSONDecodeError):
+        except HTTPError as exc:
+            # Return only a numeric status; never expose Binance response bodies or credentials.
             return {
                 "connected": False,
                 "mode": "BINANCE_SPOT_TESTNET_READ_ONLY",
-                "status": "UNAVAILABLE",
+                "status": f"BINANCE_HTTP_{exc.code}" if 400 <= exc.code <= 599 else "BINANCE_HTTP_ERROR",
                 "balances": [],
                 "orders_authorized": False,
             }
+        except (URLError, OSError):
+            safe_status = "NETWORK_ERROR"
+        except (ValueError, TypeError, json.JSONDecodeError):
+            safe_status = "INVALID_RESPONSE"
+        except Exception:
+            safe_status = "UNEXPECTED_ERROR"
+        return {
+            "connected": False,
+            "mode": "BINANCE_SPOT_TESTNET_READ_ONLY",
+            "status": safe_status,
+            "balances": [],
+            "orders_authorized": False,
+        }
