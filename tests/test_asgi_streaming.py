@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime, timezone
 
 from backend.asgi_streaming import create_streaming_asgi_app
 
@@ -48,7 +49,7 @@ def test_websocket_emits_only_validated_read_only_snapshots():
     snapshot = {
         "symbol": "BTCUSDT",
         "mark_price": 65000.0,
-        "mark_observed_at": "2026-10-29T12:00:00+00:00",
+        "mark_observed_at": datetime.now(timezone.utc).isoformat(),
         "status": "HEALTHY",
         "orders_authorized": False,
     }
