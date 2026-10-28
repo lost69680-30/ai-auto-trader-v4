@@ -101,6 +101,15 @@ class _CompatCursor:
     def fetchall(self) -> list[_CompatRow]:
         return [_CompatRow(self._names, tuple(row)) for row in self._cursor.fetchall()]
 
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> _CompatRow:
+        row = self.fetchone()
+        if row is None:
+            raise StopIteration
+        return row
+
 
 class _PostgresConnection:
     """Translate only the narrow SQLite SQL subset used by paper_ledger.py."""
