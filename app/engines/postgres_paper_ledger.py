@@ -28,6 +28,17 @@ from app.engines.paper_ledger import SQLitePaperLedger
 from app.engines.postgres_ssl import postgres_connection_ssl_options
 
 
+def _safe_driver_diagnostic(exc: Exception, dsn: str) -> str:
+    """Expose useful driver text while redacting credentials and connection URIs."""
+    message = str(exc)
+    if dsn:
+        message = message.replace(dsn, "[database URI redacted]")
+    # PostgreSQL driver errors can echo password parameters separately from the DSN.
+    message = re.sub(r"(?i)(password\s*=\s*)[^\s,;\"']+", r"\1[redacted]", message)
+    # Do not leak URI user-info if a driver returns a transformed connection string.
+    message = re.sub(r"(?i)postgres(?:ql)?://[^\s,;\"']+", "[database URI redacted]", message)
+    return " ".join(message.split())[:240]
+
 SCHEMA_NAME = "paper_ledger"
 _WRITE_LOCK_KEY = 842_710_621
 
@@ -130,9 +141,10 @@ class _PostgresConnection:
                 **postgres_connection_ssl_options(dsn),
             )
         except Exception as exc:
-            # Never include a connection URL or credential in application logs.
+            # Driver text is useful for diagnosis only after URI/password redaction.
+            diagnostic = _safe_driver_diagnostic(exc, dsn)
             raise RuntimeError(
-                f"Unable to connect to the configured PostgreSQL ledger ({type(exc).__name__}); details redacted."
+                f"Unable to connect to the configured PostgreSQL ledger ({type(exc).__name__}): {diagnostic}"
             ) from None
         self.row_factory = None
 

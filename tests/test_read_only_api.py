@@ -237,3 +237,38 @@ def test_emergency_stop_response_warns_when_storage_is_ephemeral(tmp_path):
     assert body["state_storage"]["durability"] == "EPHEMERAL"
     assert body["state_storage"]["survives_restart"] is False
     assert body["orders_authorized"] is False
+
+
+def test_candle_interval_fetches_run_concurrently_and_keep_failed_interval_isolated():
+    import threading
+    from app.engines.read_only_api import _fetch_candle_intervals
+
+    barrier = threading.Barrier(2, timeout=2)
+
+    class Row:
+        open_time = datetime.fromisoformat("2026-10-28T00:00:00+00:00")
+        close_time = datetime.fromisoformat("2026-10-28T00:00:59+00:00")
+        open = 10.0
+        high = 11.0
+        low = 9.0
+        close = 10.5
+        volume = 100.0
+        is_closed = True
+
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit):
+            if interval in ("1m", "5m"):
+                barrier.wait()
+            if interval == "5m":
+                raise RuntimeError("upstream interval failure")
+            return [Row()]
+
+    payloads, statuses, rows_by_interval = _fetch_candle_intervals(
+        Source(), "BTCUSDT", ("1m", "5m", "1h"), 100
+    )
+
+    assert statuses == {"1m": "HEALTHY", "5m": "UNAVAILABLE:RuntimeError", "1h": "HEALTHY"}
+    assert len(payloads["1m"]) == 1
+    assert payloads["5m"] == []
+    assert rows_by_interval["5m"] == ()
+    assert len(payloads["1h"]) == 1
