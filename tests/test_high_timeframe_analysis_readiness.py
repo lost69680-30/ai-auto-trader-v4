@@ -30,3 +30,14 @@ def test_short_or_conflicting_history_never_forces_directional_bias():
     assert 'else -> "NEUTRAL / MIXED"' in source
     assert 'CONFLICT · bullish and bearish timeframes disagree' in source
     assert 'orders_authorized' in source
+
+def test_postgres_paper_ledger_source_and_driver_are_mirrored():
+    root_ledger = ROOT / "app/engines/postgres_paper_ledger.py"
+    package_ledger = ROOT / "extracted-source/ai-auto-trader-v4-assembly/app/engines/postgres_paper_ledger.py"
+    root_project = ROOT / "pyproject.toml"
+    package_project = ROOT / "extracted-source/ai-auto-trader-v4-assembly/pyproject.toml"
+
+    assert root_ledger.read_text(encoding="utf-8") == package_ledger.read_text(encoding="utf-8")
+    dependency = 'dependencies = ["psycopg[binary]==3.3.6"]'
+    assert dependency in root_project.read_text(encoding="utf-8")
+    assert dependency in package_project.read_text(encoding="utf-8")
