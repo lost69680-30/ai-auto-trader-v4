@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from backend.market_data_adapter import MarketCandle
 from backend.market_timeframes import aggregate_complete_yearly_candles
@@ -11,8 +11,10 @@ def monthly_candles(year: int, months=range(1, 13), *, open_months=()):
             MarketCandle(
                 symbol="BTCUSDT",
                 open_time=datetime(year, month, 1, tzinfo=timezone.utc),
-                close_time=datetime(year + (month == 12), 1 if month == 12 else month + 1, 1, tzinfo=timezone.utc)
-                if month != 12 else datetime(year + 1, 1, 1, tzinfo=timezone.utc),
+                close_time=(
+                datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+                if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc)
+            ) - timedelta(milliseconds=1),
                 open=100.0 + month,
                 high=120.0 + month,
                 low=90.0 + month,
@@ -33,7 +35,7 @@ def test_yearly_candle_aggregates_only_complete_closed_calendar_year():
     assert len(result) == 1
     candle = result[0]
     assert candle["open_time"] == "2024-01-01T00:00:00+00:00"
-    assert candle["close_time"] == "2025-01-01T00:00:00+00:00"
+    assert candle["close_time"] == "2024-12-31T23:59:59.999000+00:00"
     assert candle["open"] == 101.0
     assert candle["high"] == 132.0
     assert candle["low"] == 91.0
