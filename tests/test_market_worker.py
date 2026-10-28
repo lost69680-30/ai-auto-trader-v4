@@ -26,8 +26,8 @@ class FakeAdapter:
         self.error = error
         self.calls = []
 
-    def fetch_klines(self, symbol, *, interval, limit, now):
-        self.calls.append(("klines", symbol, interval, limit))
+    def fetch_klines(self, symbol, *, interval, limit, now=None):
+        self.calls.append(("klines", symbol, interval, limit, now))
         if self.error:
             raise self.error
         return self.candles
@@ -221,4 +221,23 @@ def test_worker_validates_receive_timestamp_against_time_after_network_fetch():
 
     assert result.frames[0].status is FeedStatus.HEALTHY
     assert result.frames[0].reasons == ()
+    assert result.orders_authorized is False
+
+
+def test_production_poll_does_not_pin_kline_validation_to_request_start_time():
+    request_started = datetime.now(timezone.utc)
+    opened = request_started - timedelta(minutes=2)
+    source = FakeAdapter(candles=(candle(opened, opened + timedelta(minutes=1)),))
+    source.mark = MarkPriceSnapshot(
+        symbol="BTCUSDT", mark_price=101, index_price=100.9,
+        last_funding_rate=0.0, next_funding_at=request_started + timedelta(hours=8),
+        observed_at=datetime.now(timezone.utc),
+    )
+    worker = MarketDataWorker(source, config())
+
+    result = worker.poll_once()
+
+    assert result.frames[0].status is FeedStatus.HEALTHY
+    kline_call = next(call for call in source.calls if call[0] == "klines")
+    assert kline_call[-1] is None
     assert result.orders_authorized is False
