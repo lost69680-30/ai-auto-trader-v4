@@ -203,3 +203,37 @@ def test_binance_spot_testnet_account_endpoint_is_read_only_and_fails_closed(tmp
     assert unsafe_status.startswith("503")
     assert unsafe_body["orders_authorized"] is False
     assert unsafe_body["balances"] == []
+
+
+def test_status_reports_ephemeral_or_unverified_paper_state_storage(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+
+    status, _, body = request(app, auth="Bearer " + TOKEN)
+
+    assert status.startswith("200")
+    storage = body["state_storage"]
+    assert storage["durability"] == "EPHEMERAL"
+    assert storage["survives_restart"] is False
+    assert "restart" in storage["warning"].lower()
+    assert body["orders_authorized"] is False
+
+
+def test_emergency_stop_response_warns_when_storage_is_ephemeral(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+    payload = json.dumps({"reason": "durability warning test"}).encode()
+
+    status, _, body = request(
+        app, path="/api/v1/emergency-stop", method="POST", auth="Bearer " + TOKEN, payload=payload,
+    )
+
+    assert status.startswith("200")
+    assert body["emergency_stop_active"] is True
+    assert body["state_storage"]["durability"] == "EPHEMERAL"
+    assert body["state_storage"]["survives_restart"] is False
+    assert body["orders_authorized"] is False

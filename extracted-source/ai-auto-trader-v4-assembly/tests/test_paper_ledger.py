@@ -1,4 +1,5 @@
 from dataclasses import replace
+import sqlite3
 
 import pytest
 
@@ -397,3 +398,14 @@ def test_concurrent_duplicate_intent_submission_across_independent_connections(t
     with SQLitePaperLedger(path) as ledger:
         assert len(ledger.orders) == 1
         assert ledger.orders_authorized is False
+
+
+def test_ledger_exposes_integrity_check_and_rejects_corrupt_database(tmp_path):
+    valid_path = tmp_path / "valid.sqlite3"
+    with SQLitePaperLedger(valid_path) as ledger:
+        assert ledger.verify_integrity() == "ok"
+
+    corrupt_path = tmp_path / "corrupt.sqlite3"
+    corrupt_path.write_bytes(b"not a valid sqlite database")
+    with pytest.raises(sqlite3.DatabaseError):
+        SQLitePaperLedger(corrupt_path)
