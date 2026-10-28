@@ -229,6 +229,18 @@ def test_sqlite_import_preserves_ledger_rows_and_emergency_stop(tmp_path):
         assert target._connection.execute(
             "SELECT COUNT(*) AS n FROM paper_equity_snapshots"
         ).fetchone()["n"] == 1
+        for table, column in (
+            ("paper_fills", "fill_id"),
+            ("paper_funding_events", "event_id"),
+            ("paper_audit_events", "event_id"),
+        ):
+            max_id = target._connection.execute(
+                f"SELECT MAX({column}) AS max_id FROM {table}"
+            ).fetchone()["max_id"]
+            next_id = target._connection.execute(
+                f"SELECT nextval(pg_get_serial_sequence('paper_ledger.{table}', '{column}')) AS next_id"
+            ).fetchone()["next_id"]
+            assert next_id == max_id + 1
 
 
 def test_sqlite_import_refuses_nonempty_postgres_destination(tmp_path):
