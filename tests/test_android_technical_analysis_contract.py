@@ -82,3 +82,14 @@ def test_relative_volume_uses_only_the_prior_twenty_candles():
     assert "candles.dropLast(1).takeLast(20)" in source
     assert "Last / prior 20-candle average" in source
     assert "need 21 candles and non-zero baseline" in source
+
+def test_market_risk_panel_exposes_explicit_heuristics_and_missing_data_uncertainty():
+    source = SOURCE.read_text(encoding="utf-8")
+    assert "internal fun marketRiskFlags(" in source
+    assert "ATR14 ≥ 2.5% of close" in source
+    assert "RSI ≥ 70" in source
+    assert "Relative volume ≥ 2.0×" in source
+    assert 'SectionTitle("RISK & MARKET CONDITIONS")' in source
+    assert "this does not mean risk is low or absent" in source
+    assert "not a calibrated risk score" in source
+    assert "does not estimate loss probability" in source
