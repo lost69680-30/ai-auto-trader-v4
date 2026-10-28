@@ -17,6 +17,7 @@ from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
 
 from app.engines.paper_ledger import SQLitePaperLedger
+from backend.timeframe_aggregation import aggregate_complete_yearly_candles
 
 
 def _json_bytes(value: object) -> bytes:
@@ -261,16 +262,20 @@ def main() -> None:
     analysis_candle_limit = int(os.environ.get("PAPER_ANALYSIS_CANDLE_LIMIT", "200"))
     if not 50 <= analysis_candle_limit <= 500:
         raise SystemExit("PAPER_ANALYSIS_CANDLE_LIMIT must be between 50 and 500")
-    analysis_intervals = ("1m", "5m", "15m", "1h", "4h", "1d")
+    # Binance supplies native weekly ("1w") and monthly ("1M") candles.
+    # Yearly candles are derived only from 12 complete, closed monthly bars.
+    analysis_intervals = ("1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M")
 
     def market_candles(symbol: str) -> dict:
         if symbol not in symbols:
             raise ValueError("symbol is not in the configured market allowlist")
         interval_payloads: dict[str, list[dict[str, object]]] = {}
         interval_status: dict[str, str] = {}
+        rows_by_interval = {}
         for requested_interval in analysis_intervals:
             try:
                 rows = source.fetch_klines(symbol, interval=requested_interval, limit=analysis_candle_limit)
+                rows_by_interval[requested_interval] = rows
                 interval_payloads[requested_interval] = [{
                     "open_time": row.open_time.isoformat(), "close_time": row.close_time.isoformat(),
                     "open": row.open, "high": row.high, "low": row.low, "close": row.close,
@@ -278,8 +283,18 @@ def main() -> None:
                 } for row in rows if row.is_closed]
                 interval_status[requested_interval] = "HEALTHY" if interval_payloads[requested_interval] else "INSUFFICIENT_HISTORY"
             except Exception as exc:
+                rows_by_interval[requested_interval] = ()
                 interval_payloads[requested_interval] = []
                 interval_status[requested_interval] = f"UNAVAILABLE:{type(exc).__name__}"
+
+        yearly = aggregate_complete_yearly_candles(rows_by_interval.get("1M", ()))
+        interval_payloads["1y"] = yearly
+        if yearly:
+            interval_status["1y"] = "HEALTHY"
+        elif interval_status.get("1M", "").startswith("UNAVAILABLE:"):
+            interval_status["1y"] = "UNAVAILABLE:MONTHLY_INTERVAL"
+        else:
+            interval_status["1y"] = "INSUFFICIENT_HISTORY"
         return {"symbol": symbol, "candles_by_interval": interval_payloads,
                 "interval_status": interval_status, "orders_authorized": False, "mode": "PAPER_ONLY"}
 
