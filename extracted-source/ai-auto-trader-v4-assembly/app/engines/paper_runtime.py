@@ -123,8 +123,15 @@ class PaperRuntime(Generic[T]):
                 return False
             if isinstance(candle.trades, bool) or not isinstance(candle.trades, int) or candle.trades < 0:
                 return False
-            if last_open is not None and (opened <= last_open or opened <= last_close):
-                return False
+            if last_open is not None:
+                if opened <= last_open or opened <= last_close:
+                    return False
+                # Runtime is a second boundary after the worker: reject large
+                # gaps even if a caller bypasses the normal poller. Permit up
+                # to one second for legacy/test candle-close conventions;
+                # real exchange kline boundaries normally differ by 1 ms.
+                if opened - last_close > 1.0:
+                    return False
             last_open, last_close = opened, closed
         return last_close is not None and 0 <= now - last_close <= self._max_market_age_seconds
 
