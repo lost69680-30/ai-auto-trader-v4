@@ -1,4 +1,5 @@
 name: Solo V4 Cached Chart APK
+# Trigger build after workflow is registered.
 
 on:
   workflow_dispatch:
