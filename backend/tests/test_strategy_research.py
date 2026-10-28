@@ -84,3 +84,30 @@ def test_result_is_deterministic_and_never_authorizes_orders():
     assert first == second
     assert not first.orders_authorized
     assert all(a.confidence_score <= 100 for a in first.assessments)
+
+
+def test_signal_activity_diagnostics_surface_strong_trend_without_authorizing_orders():
+    from backend.strategy_diagnostics import diagnose_strategy_signal_activity
+
+    rows = candles_from_closes([100 + i * 1.2 for i in range(40)])
+    report = diagnose_strategy_signal_activity(
+        "BTCUSDT", rows, signal_start_index=29, signal_end_index_exclusive=40
+    )
+
+    assert report["evaluated_signal_candles"] == 11
+    assert report["decision_counts"]["REVIEW_LONG"] > 0
+    assert report["eligible_consensus_candles"]["LONG"] > 0
+    assert report["orders_authorized"] is False
+
+
+def test_signal_activity_diagnostics_do_not_create_consensus_in_flat_market():
+    from backend.strategy_diagnostics import diagnose_strategy_signal_activity
+
+    rows = candles_from_closes([100.0] * 40)
+    report = diagnose_strategy_signal_activity(
+        "BTCUSDT", rows, signal_start_index=29, signal_end_index_exclusive=40
+    )
+
+    assert report["eligible_consensus_candles"] == {"LONG": 0, "SHORT": 0}
+    assert report["qualified_same_direction_count_distribution"]["0"] == 11
+    assert report["orders_authorized"] is False
