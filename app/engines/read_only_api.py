@@ -377,6 +377,20 @@ def main() -> None:
 
     stop = threading.Event()
 
+    # Optional audit mirror is isolated from the market poller and order authority.
+    from app.engines.supabase_audit_mirror import SupabaseAuditMirror, run_mirror_loop
+    audit_mirror = SupabaseAuditMirror.from_env()
+    audit_mirror_thread = None
+    if audit_mirror is None:
+        logging.info("Supabase audit mirror disabled; SQLite remains authoritative")
+    else:
+        audit_mirror_thread = threading.Thread(
+            target=run_mirror_loop, args=(database, audit_mirror),
+            kwargs={"stop_event": stop}, name="supabase-audit-mirror", daemon=True,
+        )
+        audit_mirror_thread.start()
+        logging.info("Supabase audit mirror enabled; orders_authorized=False")
+
     def poll_loop() -> None:
         while not stop.is_set():
             try:
@@ -410,6 +424,8 @@ def main() -> None:
     finally:
         stop.set()
         poller.join(timeout=5)
+        if audit_mirror_thread is not None:
+            audit_mirror_thread.join(timeout=5)
 
 
 if __name__ == "__main__":
