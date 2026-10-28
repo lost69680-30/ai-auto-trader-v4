@@ -97,3 +97,21 @@ def test_websocket_does_not_emit_stale_or_unhealthy_snapshots():
     )
     payloads = [message for message in sent if message["type"] == "websocket.send"]
     assert payloads == []
+
+def test_websocket_never_emits_symbols_outside_configured_allowlist():
+    snapshot = {
+        "symbol": "ETHUSDT",
+        "mark_price": 3000.0,
+        "mark_observed_at": datetime.now(timezone.utc).isoformat(),
+        "status": "HEALTHY",
+        "orders_authorized": False,
+    }
+    app = create_streaming_asgi_app(
+        http_app=lambda scope, receive, send: None,
+        snapshot_provider=lambda: [snapshot],
+        token=TOKEN,
+        allowed_symbols={"BTCUSDT"},
+        poll_interval_seconds=0.01,
+    )
+    sent = run_asgi(websocket_scope(TOKEN), [{"type": "websocket.connect"}], app)
+    assert not [message for message in sent if message["type"] == "websocket.send"]
