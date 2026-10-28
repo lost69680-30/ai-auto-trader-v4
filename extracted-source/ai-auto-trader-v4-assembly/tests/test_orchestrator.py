@@ -302,3 +302,56 @@ def test_durable_ledger_fails_closed_without_equity_baseline(tmp_path):
     assert "initial-equity baseline" in result.reason
     assert ledger.orders == ()
     ledger.close()
+
+
+def test_durable_ledger_fails_closed_when_open_position_marks_are_stale(tmp_path):
+    ledger = SQLitePaperLedger(tmp_path / "stale-open-mark.db")
+    intent = PaperOrderIntent(
+        proposal_id="existing-stale", signal_id="existing-signal", symbol="BTCUSDT", side="LONG",
+        quantity=0.1, entry_price=50_000, stop_loss=49_000, take_profit=52_000, recorded_at=900,
+    )
+    assert ledger.record_intent(intent) == "RECORDED"
+    assert ledger.simulate_fill(
+        "existing-stale", market_price=50_000, filled_at=901, fee_rate=0, slippage_bps=0,
+    ).status == "FILLED"
+
+    request = replace(
+        make_request(),
+        limits=RiskLimits(100_000, 1_000, 5, 1_000, max_mark_age_seconds=30),
+        initial_equity=10_000,
+        now=1_000,
+    )
+    result = TradingOrchestrator(ledger).process(request)
+
+    assert result.status == "RISK_VETOED"
+    assert "mark data is stale" in result.reason
+    assert all(order.proposal_id != request.proposal.proposal_id for order in ledger.orders)
+    assert ledger.orders_authorized is False
+    ledger.close()
+
+
+def test_durable_ledger_blocks_new_risk_at_mark_to_market_drawdown_limit(tmp_path):
+    ledger = SQLitePaperLedger(tmp_path / "drawdown-veto.db")
+    intent = PaperOrderIntent(
+        proposal_id="existing-loss", signal_id="existing-signal", symbol="BTCUSDT", side="LONG",
+        quantity=0.1, entry_price=50_000, stop_loss=49_000, take_profit=52_000, recorded_at=900,
+    )
+    assert ledger.record_intent(intent) == "RECORDED"
+    assert ledger.simulate_fill(
+        "existing-loss", market_price=50_000, filled_at=901, fee_rate=0, slippage_bps=0,
+    ).status == "FILLED"
+    ledger.mark_positions({"BTCUSDT": 25_000}, observed_at=995)
+
+    request = replace(
+        make_request(),
+        limits=RiskLimits(100_000, 1_000, 5, 1_000, max_drawdown_pct=20, max_mark_age_seconds=30),
+        initial_equity=10_000,
+        now=1_000,
+    )
+    result = TradingOrchestrator(ledger).process(request)
+
+    assert result.status == "RISK_VETOED"
+    assert "drawdown limit reached" in result.reason
+    assert all(order.proposal_id != request.proposal.proposal_id for order in ledger.orders)
+    assert ledger.orders_authorized is False
+    ledger.close()
