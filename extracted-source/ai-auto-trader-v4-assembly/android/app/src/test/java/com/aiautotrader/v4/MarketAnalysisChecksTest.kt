@@ -84,7 +84,7 @@ class MarketAnalysisChecksTest {
         assertTrue(flags.any { it.contains("ATR14") })
         assertTrue(flags.any { it.contains("RSI") && it.contains("70") })
         assertTrue(flags.any { it.contains("volume") && it.contains("2.0") })
-        assertTrue(flags.any { it.contains("trend") && it.contains("disagree") })
+        assertTrue(flags.any { it.contains("trend", ignoreCase = true) && it.contains("disagree") })
     }
 
     @Test
