@@ -33,6 +33,16 @@ def _open_ledger(database_path: str):
     return SQLitePaperLedger(database_path)
 
 
+def _safe_startup_error(exc: Exception) -> str:
+    """Return useful startup diagnostics without exposing a configured database URI."""
+    detail = str(exc)
+    dsn = os.environ.get("PAPER_DATABASE_URL", "").strip()
+    if dsn:
+        detail = detail.replace(dsn, "[database URI redacted]")
+    # Connection-adapter errors already redact credentials; keep the log bounded.
+    return f"{type(exc).__name__}: {detail[:240]}"
+
+
 def _json_bytes(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
@@ -335,9 +345,13 @@ def main() -> None:
         with _open_ledger(database) as ledger:
             ledger.verify_integrity()
     except Exception as exc:
+        logging.error(
+            "Paper ledger startup integrity check failed; refusing to start the API. cause=%s",
+            _safe_startup_error(exc),
+        )
         raise SystemExit(
             "Paper ledger startup integrity check failed; refusing to start the API."
-        ) from exc
+        ) from None
     storage_state = _state_storage_status(database)
     if storage_state["durability"] == "POSTGRESQL":
         logging.info(
