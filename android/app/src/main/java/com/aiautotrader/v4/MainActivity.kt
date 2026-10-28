@@ -139,7 +139,7 @@ private fun fetchTestnetAccountDiagnostic(token: String): TestnetAccountDiagnost
     } catch (e: Exception) {
         return TestnetAccountDiagnostic(
             "NETWORK ERROR",
-            "Backend account-status request could not be opened (\${e.javaClass.simpleName}); backend status remains separate.",
+            "Backend account-status request could not be opened (${e.javaClass.simpleName}); backend status remains separate.",
         )
     }
 
@@ -172,7 +172,7 @@ private fun fetchTestnetAccountDiagnostic(token: String): TestnetAccountDiagnost
     } catch (e: Exception) {
         TestnetAccountDiagnostic(
             "NETWORK ERROR",
-            "Binance Spot Testnet account status could not be loaded (\${e.javaClass.simpleName}); backend status remains separate.",
+            "Binance Spot Testnet account status could not be loaded (${e.javaClass.simpleName}); backend status remains separate.",
         )
     } finally {
         connection.disconnect()
