@@ -6,6 +6,7 @@ The fixture rejects non-loopback hosts before dropping/recreating its test schem
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlparse
@@ -15,6 +16,8 @@ import psycopg
 import pytest
 
 from app.engines.orchestrator import PaperOrderIntent
+from app.engines.paper_ledger import SQLitePaperLedger
+from app.engines.sqlite_to_postgres_import import import_sqlite_ledger
 from app.engines.postgres_paper_ledger import PostgresPaperLedger
 
 
@@ -158,3 +161,88 @@ def test_fill_funding_trailing_protection_and_close_are_persisted():
         assert any(event["funding_id"] == funding_id for event in ledger.funding_events)
         assert any(position.proposal_id == proposal_id and position.status == "CLOSED" for position in ledger.positions)
         assert ledger.verify_integrity() == "ok"
+
+
+def test_sqlite_import_preserves_ledger_rows_and_emergency_stop(tmp_path):
+    source_path = tmp_path / "legacy-paper-ledger.sqlite3"
+    open_proposal = f"import-open-{uuid4().hex}"
+    cancelled_proposal = f"import-pending-{uuid4().hex}"
+    funding_id = f"import-funding-{uuid4().hex}"
+
+    with SQLitePaperLedger(source_path) as source:
+        assert source.record_intent(_intent(open_proposal)) == "RECORDED"
+        fill = source.simulate_fill(
+            open_proposal,
+            market_price=60100.0,
+            filled_at=1_760_000_001.0,
+            fee_rate=0.0,
+            slippage_bps=0.0,
+        )
+        assert fill.status == "FILLED"
+        source.mark_positions({"BTCUSDT": 61000.0}, observed_at=1_760_000_002.0)
+        assert source.advance_trailing_stop(
+            open_proposal,
+            updated_at=1_760_000_002.0,
+            trailing_distance_pct=0.02,
+            activation_profit_pct=0.005,
+        ) is not None
+        assert source.record_funding_payment(
+            open_proposal,
+            funding_id=funding_id,
+            funding_rate=0.001,
+            mark_price=61000.0,
+            occurred_at=1_760_000_003.0,
+        ) == "RECORDED"
+        source.mark_to_market_risk_report(
+            initial_equity=10000.0,
+            as_of=1_760_000_003.0,
+            max_mark_age_seconds=30.0,
+        )
+        assert source.record_intent(_intent(cancelled_proposal)) == "RECORDED"
+        cancelled = source.activate_emergency_stop(
+            occurred_at=1_760_000_005.0,
+            reason="imported-emergency-stop",
+        )
+        assert cancelled_proposal in cancelled
+        assert source.emergency_stop_active is True
+
+    imported_counts = import_sqlite_ledger(source_path, TEST_DSN)
+    assert imported_counts["paper_orders"] == 2
+    assert imported_counts["paper_fills"] == 1
+    assert imported_counts["paper_positions"] == 1
+    assert imported_counts["paper_funding_events"] == 1
+    assert imported_counts["paper_audit_events"] >= 5
+    assert imported_counts["paper_system_controls"] == 1
+    assert imported_counts["paper_order_cancellations"] == 1
+    assert imported_counts["paper_position_extrema"] == 1
+    assert imported_counts["paper_equity_snapshots"] == 1
+
+    # A new connection verifies recovery from the imported committed state.
+    with PostgresPaperLedger(TEST_DSN) as target:
+        assert target.verify_integrity() == "ok"
+        assert target.orders_authorized is False
+        assert target.emergency_stop_active is True
+        assert target.emergency_stop_reason == "imported-emergency-stop"
+        assert any(order.proposal_id == cancelled_proposal and order.status == "CANCELLED" for order in target.orders)
+        assert any(position.proposal_id == open_proposal and position.status == "OPEN" for position in target.open_positions)
+        assert any(event["funding_id"] == funding_id for event in target.funding_events)
+        assert target._connection.execute(
+            "SELECT COUNT(*) AS n FROM paper_equity_snapshots"
+        ).fetchone()["n"] == 1
+
+
+def test_sqlite_import_refuses_nonempty_postgres_destination(tmp_path):
+    source_path = tmp_path / "source-paper-ledger.sqlite3"
+    with SQLitePaperLedger(source_path) as source:
+        assert source.record_intent(_intent("source-before-import")) == "RECORDED"
+
+    with PostgresPaperLedger(TEST_DSN) as target:
+        assert target.record_intent(_intent("existing-destination-order")) == "RECORDED"
+
+    with pytest.raises(ValueError, match="Destination paper ledger is not empty"):
+        import_sqlite_ledger(source_path, TEST_DSN)
+
+    with PostgresPaperLedger(TEST_DSN) as target:
+        ids = {order.proposal_id for order in target.orders}
+        assert ids == {"existing-destination-order"}
+        assert target.orders_authorized is False
