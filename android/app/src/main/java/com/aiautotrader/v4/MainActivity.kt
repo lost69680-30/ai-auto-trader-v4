@@ -1217,7 +1217,7 @@ private fun AnalysisScreen() {
                 )
                 AnalysisValue("AI signal", "HOLD · no approved strategy signal", Gold)
                 AnalysisValue("Risk check", "BLOCKED · authorization not verified in this check", Red)
-                Text("Indicators, swing structure and simple candle-pattern labels are calculated from validated, closed backend candles. Pattern recognition is heuristic and requires independent confirmation; none of this is a calibrated probability, validated strategy signal or order authorization. Missing, stale or insufficient data must never be used to infer a trade.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+                Text("Indicators, swing structure and simple candle-pattern labels are calculated from validated, closed backend candles. Pattern recognition is heuristic and requires independent confirmation; these indicators do not authorize orders and are not a calibrated probability or validated strategy signal. Missing, stale or insufficient data must never be used to infer a trade.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
             }
         } else {
             SectionTitle("PERFORMANCE ANALYTICS")
