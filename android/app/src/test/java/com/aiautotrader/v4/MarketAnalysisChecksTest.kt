@@ -97,4 +97,33 @@ class MarketAnalysisChecksTest {
         assertTrue(priceActionStructure(candles).contains("lower highs + lower lows"))
     }
 
+
+    @Test
+    fun marketRiskFlagsSurfaceRangeStretchVolumeAndTrendDisagreement() {
+        val flags = marketRiskFlags(
+            atrPercent = 3.1,
+            rsi = 75.0,
+            relativeVolume = 2.4,
+            trend = "Downtrend · price < EMA20 < EMA50"
+        )
+        assertTrue(flags.any { it.contains("ATR14") })
+        assertTrue(flags.any { it.contains("RSI") && it.contains("70") })
+        assertTrue(flags.any { it.contains("volume") && it.contains("2.0") })
+        assertTrue(flags.any { it.contains("trend", ignoreCase = true) && it.contains("disagree") })
+    }
+
+    @Test
+    fun marketRiskFlagsReportUnavailableChecksInsteadOfImplyingLowRisk() {
+        val flags = marketRiskFlags(
+            atrPercent = null,
+            rsi = null,
+            relativeVolume = null,
+            trend = "Unavailable"
+        )
+        assertTrue(flags.any { it.contains("ATR check unavailable") })
+        assertTrue(flags.any { it.contains("RSI check unavailable") })
+        assertTrue(flags.any { it.contains("volume check unavailable") })
+        assertTrue(flags.none { it.contains("LOW RISK") })
+    }
+
 }
