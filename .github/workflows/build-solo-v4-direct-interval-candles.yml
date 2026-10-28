@@ -1,0 +1,95 @@
+
+name: Solo V4 Direct Interval Candles Backend + APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'solo-v4-direct-interval-candles-source-v2.zip'
+      - '.github/workflows/build-solo-v4-direct-interval-candles.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: solo-v4-direct-interval-candles
+  cancel-in-progress: false
+
+jobs:
+  test-build-and-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Extract updated project source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s solo-v4-direct-interval-candles-source-v2.zip
+          mkdir extracted-source
+          unzip -q solo-v4-direct-interval-candles-source-v2.zip -d extracted-source
+          test -f extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py
+          test -f extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt
+          echo "PROJECT_DIR=extracted-source/ai-auto-trader-v4-assembly" >> "$GITHUB_ENV"
+
+      - name: Install Python test dependencies
+        run: python -m pip install -e 'extracted-source/ai-auto-trader-v4-assembly[test]'
+
+      - name: Run complete backend and contract test suite
+        run: python -m pytest -q "$PROJECT_DIR/tests" "$PROJECT_DIR/backend/tests"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle -p "$PROJECT_DIR" :android:app:assembleDebug \
+            -PpaperApiBaseUrl=https://ai-auto-trader-v4-backend.onrender.com \
+            --no-daemon
+          APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          sha256sum "$APK"
+
+      - name: Upload installable debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: solo-v4-direct-interval-candles-debug-apk
+          path: extracted-source/ai-auto-trader-v4-assembly/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Sync tested source into repository for Render deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          rsync -a --exclude='.pytest_cache/' --exclude='__pycache__/' --exclude='.github/workflows/' \
+            "$PROJECT_DIR/" ./
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No source changes to commit.'
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Add direct multi-timeframe candle history'
+            git push
+          fi
