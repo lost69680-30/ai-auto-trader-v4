@@ -36,7 +36,7 @@ jobs:
           from backend.strategy_research import Candle
           from backend.backtesting import BacktestConfig
           from backend.walk_forward import WalkForwardConfig, evaluate_walk_forward
-          symbol = os.environ["SYMBOL"]
+          symbol = os.environ.get("SYMBOL", "").strip() or "BTCUSDT"
           if not re.fullmatch(r"[A-Z0-9]{5,20}", symbol):
               raise SystemExit("Invalid symbol format")
           url = "https://data-api.binance.vision/api/v3/klines?" + urllib.parse.urlencode({"symbol": symbol, "interval": "1h", "limit": 1000})
