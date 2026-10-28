@@ -39,6 +39,7 @@ def test_websocket_rejects_missing_or_invalid_bearer_token():
         http_app=lambda scope, receive, send: None,
         snapshot_provider=lambda: [],
         token=TOKEN,
+        allowed_symbols={"BTCUSDT"},
     )
     sent = run_asgi(websocket_scope(), [{"type": "websocket.connect"}], app)
     assert sent[0]["type"] == "websocket.close"
