@@ -63,3 +63,22 @@ def test_solo_brand_is_applied_to_app_header_and_launcher():
     assert 'android:label="Solo"' in manifest
     assert 'android:icon="@drawable/ic_solo_logo"' in manifest
     assert 'android:strokeColor="#D8B878"' in logo
+
+
+def test_advanced_analysis_rejects_bad_candle_sequences_and_stale_history():
+    source = SOURCE.read_text(encoding="utf-8")
+    assert "internal fun candleSeriesIssue(" in source
+    assert "duplicate or out-of-order timestamps" in source
+    assert "gap or irregular timestamps" in source
+    assert "latest candle is not yet closed" in source
+    assert "latest candle is stale" in source
+    assert "Data quality blocked" in source
+    assert "val usableIntervals = timeframeSnapshots.count { it.analysis?.enoughData == true }" in source
+
+
+def test_relative_volume_uses_only_the_prior_twenty_candles():
+    source = SOURCE.read_text(encoding="utf-8")
+    assert "internal fun relativeVolumeRatio(" in source
+    assert "candles.dropLast(1).takeLast(20)" in source
+    assert "Last / prior 20-candle average" in source
+    assert "need 21 candles and non-zero baseline" in source
