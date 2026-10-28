@@ -1,0 +1,98 @@
+name: Solo V4 Step 4 - Backtest Validation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/solo-step4-backtest-validation.yml"
+      - "backend/backtesting.py"
+      - "backend/strategy_research.py"
+      - "backend/tests/test_backtesting.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/backtesting.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/strategy_research.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/tests/test_backtesting.py"
+      - "tests/**"
+      - "backend/tests/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solo-v4-step4-backtest-validation
+  cancel-in-progress: false
+
+jobs:
+  backtest-validation:
+    name: Offline backtest tests and safety checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependencies
+        run: python -m pip install -e ".[test]"
+
+      - name: Compile research and backtest modules
+        run: python -m compileall -q app backend
+
+      - name: Run focused backtest tests
+        run: python -m pytest -q backend/tests/test_backtesting.py
+
+      - name: Run full Python regression suite
+        run: python -m pytest -q tests backend/tests
+
+      - name: Verify deployed-package backtest parity
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+
+          pairs = (
+              (Path("backend/backtesting.py"),
+               Path("extracted-source/ai-auto-trader-v4-assembly/backend/backtesting.py")),
+              (Path("backend/strategy_research.py"),
+               Path("extracted-source/ai-auto-trader-v4-assembly/backend/strategy_research.py")),
+          )
+          for source, packaged in pairs:
+              if not source.is_file() or not packaged.is_file():
+                  raise SystemExit(f"Missing parity file: {source} or {packaged}")
+              source_bytes = source.read_bytes()
+              packaged_bytes = packaged.read_bytes()
+              if source_bytes != packaged_bytes:
+                  raise SystemExit(f"Parity mismatch: {source} != {packaged}")
+              digest = hashlib.sha256(source_bytes).hexdigest()
+              print(f"PASS: {source} matches packaged copy (sha256={digest})")
+          PY
+
+      - name: Verify backtest remains offline and order-disabled
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          path = Path("backend/backtesting.py")
+          tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+          assert "orders_authorized: bool = False" in path.read_text(encoding="utf-8")
+          forbidden = {"create_order", "place_order", "submit_order", "cancel_order"}
+          functions = {
+              node.name for node in ast.walk(tree)
+              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+          }
+          assert functions.isdisjoint(forbidden), "Backtest module exposes an order-placement method"
+          imports = {
+              alias.name.split(".")[0]
+              for node in ast.walk(tree)
+              if isinstance(node, (ast.Import, ast.ImportFrom))
+              for alias in node.names
+          }
+          assert "binance" not in imports and "ccxt" not in imports, (
+              "Backtest module must not import exchange execution clients"
+          )
+          print("PASS: backtest is offline-only and orders_authorized defaults to False.")
+          PY
