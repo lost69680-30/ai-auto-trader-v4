@@ -778,8 +778,8 @@ private fun AnalysisScreen() {
                 } else {
                     response.reason
                 }
-                // Keep the last validated market snapshot during transient failures. Its feed
-                // status above still reports the outage, and it never grants order authority.
+                // Retain the last validated snapshot while the feed reconnects.
+                // Its feed status above still reports outages; the snapshot grants no order authority.
                 if (response.backendConnected && response.safeResponse &&
                     response.feedStatus == "HEALTHY" && response.items.isNotEmpty()) {
                     BackendSession.marketItems.value = response.items
@@ -803,12 +803,14 @@ private fun AnalysisScreen() {
                 }
                 // Update only intervals with usable candles so an empty/failed refresh cannot
                 // erase a previously validated chart for the same symbol.
-                val nonEmptyHistory = history.filterValues { it.isNotEmpty() }
-                if (nonEmptyHistory.isNotEmpty()) {
-                    val previous = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
-                    BackendSession.candleHistoryBySymbol.value =
-                        BackendSession.candleHistoryBySymbol.value +
-                            (candleSymbolKey to (previous + nonEmptyHistory))
+                if (history.isNotEmpty()) {
+                    val nonEmptyHistory = history.filterValues { it.isNotEmpty() }
+                    if (nonEmptyHistory.isNotEmpty()) {
+                        val previous = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
+                        BackendSession.candleHistoryBySymbol.value =
+                            BackendSession.candleHistoryBySymbol.value +
+                                (candleSymbolKey to (previous + nonEmptyHistory))
+                    }
                 }
                 candleHistoryLoading = false
                 delay(60_000)
