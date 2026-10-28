@@ -1,0 +1,152 @@
+name: Solo V4 Cached Market Chart APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-solo-v4-cached-market-chart.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solo-v4-cached-market-chart-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Locate Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f settings.gradle.kts ] && [ -f android/app/build.gradle.kts ]; then
+            echo "PROJECT_DIR=." >> "$GITHUB_ENV"
+          elif [ -f extracted-project/ai-auto-trader-v4-assembly/settings.gradle.kts ] && [ -f extracted-project/ai-auto-trader-v4-assembly/android/app/build.gradle.kts ]; then
+            echo "PROJECT_DIR=extracted-project/ai-auto-trader-v4-assembly" >> "$GITHUB_ENV"
+          else
+            echo "STOP: Android Gradle project files were not found."
+            exit 1
+          fi
+
+      - name: Apply safe candle history cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["PROJECT_DIR"])
+          path = root / "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+          text = path.read_text(encoding="utf-8")
+
+          old_state = '''    val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+}'''
+          new_state = '''    val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+    // Keep validated closed candles alive while switching screens.
+    val candleHistoryBySymbol =
+        mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
+}'''
+          if "val candleHistoryBySymbol =" not in text:
+              if old_state not in text:
+                  raise SystemExit("STOP: session-state insertion point not found.")
+              text = text.replace(old_state, new_state, 1)
+
+          old_block = '''    var candleHistoryByTimeframe by remember { mutableStateOf<Map<String, List<MarketCandle>>>(emptyMap()) }
+    var candleHistoryLoading by remember { mutableStateOf(false) }
+    LaunchedEffect(sessionToken, selectedMarket?.symbol) {
+        candleHistoryByTimeframe = emptyMap()
+        if (sessionToken.length >= 32 && selectedMarket != null) {
+            while (true) {
+                candleHistoryLoading = true
+                val history = withContext(Dispatchers.IO) {
+                    try { fetchCandleHistory(sessionToken, selectedMarket.symbol) } catch (_: Exception) { emptyMap() }
+                }
+                candleHistoryByTimeframe = history
+                candleHistoryLoading = false
+                delay(60_000)
+            }
+        } else {
+            candleHistoryLoading = false
+        }
+    }'''
+          new_block = '''    val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol.orEmpty())
+    val candleHistoryByTimeframe =
+        BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
+    var candleHistoryLoading by remember { mutableStateOf(false) }
+    LaunchedEffect(sessionToken, selectedMarket?.symbol) {
+        if (sessionToken.length >= 32 && selectedMarket != null) {
+            while (true) {
+                candleHistoryLoading = true
+                val history = withContext(Dispatchers.IO) {
+                    try { fetchCandleHistory(sessionToken, selectedMarket.symbol) } catch (_: Exception) { emptyMap() }
+                }
+                // Preserve the last usable chart if a refresh fails or returns no data.
+                if (history.isNotEmpty()) {
+                    BackendSession.candleHistoryBySymbol.value =
+                        BackendSession.candleHistoryBySymbol.value + (candleSymbolKey to history)
+                }
+                candleHistoryLoading = false
+                delay(60_000)
+            }
+        } else {
+            candleHistoryLoading = false
+        }
+    }'''
+          if old_block in text:
+              text = text.replace(old_block, new_block, 1)
+          elif "val candleHistoryByTimeframe =" not in text:
+              raise SystemExit("STOP: candle loading block did not match expected source.")
+          if "val candleHistoryBySymbol =" not in text or "Preserve the last usable chart" not in text:
+              raise SystemExit("STOP: cache validation failed.")
+          path.write_text(text, encoding="utf-8")
+          print("PASS: candle cache patch and fail-safe refresh behavior verified.")
+          PY
+
+      - name: Verify paper-only safety invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE="$PROJECT_DIR/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+          grep -q 'PAPER_ONLY' "$FILE"
+          grep -q 'orders_authorized' "$FILE"
+          grep -q 'fetchCandleHistory' "$FILE"
+          grep -q 'candleHistoryBySymbol' "$FILE"
+          echo "PASS: paper-only and candle-cache source checks."
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle -p "$PROJECT_DIR" :android:app:assembleDebug \
+            -PpaperApiBaseUrl=https://ai-auto-trader-v4-backend.onrender.com \
+            --no-daemon
+          APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          sha256sum "$APK"
+          ls -lh "$APK"
+
+      - name: Upload installable debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: solo-v4-cached-market-chart-debug-apk
+          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
