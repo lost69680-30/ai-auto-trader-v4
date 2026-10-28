@@ -134,17 +134,18 @@ class _PostgresConnection:
             # be identified, while never emitting the configured URI or credentials.
             detail = str(exc)
             detail = detail.replace(dsn, "[database URI redacted]")
+            # Redact password-like key/value text without echoing the value.
             detail = re.sub(
-                r"(?i)(postgres(?:ql)?://[^:/\\s]+:)[^@\\s]+@",
-                r"\\1[redacted]@",
+                r"(?i)(password\s*=\s*)(?:'[^']*'|\"[^\"]*\"|[^\s,]+)",
+                r"\1[redacted]",
                 detail,
             )
             detail = re.sub(
-                r"(?i)(password\\s*=\\s*)(?:'[^']*'|\"[^\"]*\"|[^\\s,]+)",
-                r"\\1[redacted]",
+                r"(?i)(postgres(?:ql)?://[^:/\s]+:)[^@\s]+@",
+                r"\1[redacted]@",
                 detail,
             )
-            detail = re.sub(r"\\s+", " ", detail).strip()[:180]
+            detail = re.sub(r"\s+", " ", detail).strip()[:180]
             suffix = f": {detail}" if detail else ""
             raise RuntimeError(
                 f"Unable to connect to the configured PostgreSQL ledger "
