@@ -25,6 +25,7 @@ except ImportError:  # pragma: no cover - covered in the deployment environment
     tuple_row = None
 
 from app.engines.paper_ledger import SQLitePaperLedger
+from app.engines.postgres_ssl import postgres_connection_ssl_options
 
 
 SCHEMA_NAME = "paper_ledger"
@@ -126,6 +127,7 @@ class _PostgresConnection:
                 connect_timeout=10,
                 prepare_threshold=None,
                 row_factory=tuple_row,
+                **postgres_connection_ssl_options(dsn),
             )
         except Exception as exc:
             # Never include a connection URL or credential in application logs.
