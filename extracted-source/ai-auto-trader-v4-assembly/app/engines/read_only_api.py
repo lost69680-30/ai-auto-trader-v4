@@ -279,7 +279,7 @@ def main() -> None:
         symbols=symbols, interval=interval, candle_limit=candle_limit,
         poll_interval_seconds=poll_interval, max_market_age_seconds=max_age,
     ))
-    analysis_candle_limit = int(os.environ.get("PAPER_ANALYSIS_CANDLE_LIMIT", "200"))
+    analysis_candle_limit = int(os.environ.get("PAPER_ANALYSIS_CANDLE_LIMIT", "500"))
     if not 50 <= analysis_candle_limit <= 500:
         raise SystemExit("PAPER_ANALYSIS_CANDLE_LIMIT must be between 50 and 500")
     # Binance supplies native weekly ("1w") and monthly ("1M") candles.
