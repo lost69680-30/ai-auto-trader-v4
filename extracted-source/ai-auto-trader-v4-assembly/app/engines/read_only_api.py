@@ -243,6 +243,7 @@ def main() -> None:
     """Run the authenticated read-only API and independent public market poller."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     from backend.market_data_adapter import BinanceSpotMarketDataAdapter, BinanceUsdMFuturesAdapter
+    from backend.binance_spot_testnet_account import BinanceSpotTestnetAccountClient
     from backend.market_worker import MarketDataWorker, MarketWorkerConfig
 
     token = os.environ.get("PAPER_API_TOKEN", "")
@@ -267,6 +268,7 @@ def main() -> None:
         raise SystemExit("PAPER_MARKET_SYMBOLS must include at least one symbol")
 
     cache = MarketFeedCache(max_age_seconds=max_age)
+    binance_testnet_account = BinanceSpotTestnetAccountClient()
     if market_mode == "spot":
         source = BinanceSpotMarketDataAdapter()
         logging.info("market data mode=SPOT_PUBLIC_ANALYSIS_ONLY; spot last price is not futures mark price")
@@ -344,7 +346,8 @@ def main() -> None:
     try:
         with make_server(host, port, create_app(database_path=database, token=token,
                                                 market_status=cache.status, market_items=cache.items,
-                                                market_candles=market_candles)) as server:
+                                                market_candles=market_candles,
+                                                account_status=binance_testnet_account.account_summary)) as server:
             print(f"Read-only paper API listening on {host}:{port}; public market poller active; no execution routes")
             server.serve_forever()
     finally:
