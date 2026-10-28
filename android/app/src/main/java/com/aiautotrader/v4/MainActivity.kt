@@ -13,6 +13,7 @@ import java.util.Locale
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +26,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -84,6 +86,8 @@ private object BackendSession {
     val marketItems = mutableStateOf<List<MarketInstrument>>(emptyList())
     val marketLoading = mutableStateOf(false)
     val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+    // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
+    val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
 }
 
 private fun normalizeSymbol(value: String): String = value.uppercase(Locale.ROOT).filter { it.isLetterOrDigit() }
@@ -136,7 +140,8 @@ private data class TimeframeSnapshot(
     val bias: String,
 )
 
-private val supportedTimeframes = listOf("1m", "5m", "15m", "1h", "4h", "1D")
+// 1Y bars are derived in the backend only from twelve complete, closed monthly bars.
+private val supportedTimeframes = listOf("1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M", "1Y")
 private fun timeframeBias(analysis: TechnicalSnapshot?): String {
     if (analysis == null || !analysis.enoughData) return "INSUFFICIENT DATA"
     val up = analysis.trend.startsWith("Uptrend") && analysis.momentum.startsWith("Positive")
@@ -332,7 +337,13 @@ private fun fetchCandleHistory(token: String, symbol: String): Map<String, List<
         val grouped = root.optJSONObject("candles_by_interval") ?: return emptyMap()
         val result = mutableMapOf<String, List<MarketCandle>>()
         for (timeframe in supportedTimeframes) {
-            val apiInterval = if (timeframe == "1D") "1d" else timeframe
+            val apiInterval = when (timeframe) {
+                "1D" -> "1d"
+                "1W" -> "1w"
+                "1M" -> "1M"
+                "1Y" -> "1y"
+                else -> timeframe
+            }
             val rows = grouped.optJSONArray(apiInterval) ?: JSONArray()
             val candles = mutableListOf<MarketCandle>()
             for (i in 0 until rows.length()) {
@@ -378,8 +389,17 @@ private fun TraderApp() {
     Column(Modifier.fillMaxSize().background(Background)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column {
-                Text("AI AUTO TRADER", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                Text(screen, color = White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_solo_logo),
+                        contentDescription = "Solo logo",
+                        modifier = Modifier.size(34.dp)
+                    )
+                    Column {
+                        Text("SOLO", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.4.sp)
+                        Text(screen, color = White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text("v4", color = Muted, fontWeight = FontWeight.SemiBold)
@@ -758,9 +778,10 @@ private fun AnalysisScreen() {
                 } else {
                     response.reason
                 }
-                if (!response.backendConnected || !response.safeResponse || response.feedStatus != "HEALTHY" || response.items.isEmpty()) {
-                    BackendSession.marketItems.value = emptyList()
-                } else {
+                // Keep the last validated market snapshot during transient failures. Its feed
+                // status above still reports the outage, and it never grants order authority.
+                if (response.backendConnected && response.safeResponse &&
+                    response.feedStatus == "HEALTHY" && response.items.isNotEmpty()) {
                     BackendSession.marketItems.value = response.items
                 }
                 BackendSession.marketLoading.value = false
@@ -770,17 +791,25 @@ private fun AnalysisScreen() {
     }
     val loadedMarkets = BackendSession.marketItems.value
     val selectedMarket = loadedMarkets.firstOrNull { normalizeSymbol(it.symbol) == normalizeSymbol(symbol) }
-    var candleHistoryByTimeframe by remember { mutableStateOf<Map<String, List<MarketCandle>>>(emptyMap()) }
+    val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol ?: symbol)
+    val candleHistoryByTimeframe = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
     var candleHistoryLoading by remember { mutableStateOf(false) }
-    LaunchedEffect(sessionToken, selectedMarket?.symbol) {
-        candleHistoryByTimeframe = emptyMap()
-        if (sessionToken.length >= 32 && selectedMarket != null) {
+    LaunchedEffect(sessionToken, selectedMarket?.symbol, candleSymbolKey) {
+        if (sessionToken.length >= 32 && selectedMarket != null && candleSymbolKey.isNotBlank()) {
             while (true) {
                 candleHistoryLoading = true
                 val history = withContext(Dispatchers.IO) {
                     try { fetchCandleHistory(sessionToken, selectedMarket.symbol) } catch (_: Exception) { emptyMap() }
                 }
-                candleHistoryByTimeframe = history
+                // Update only intervals with usable candles so an empty/failed refresh cannot
+                // erase a previously validated chart for the same symbol.
+                val nonEmptyHistory = history.filterValues { it.isNotEmpty() }
+                if (nonEmptyHistory.isNotEmpty()) {
+                    val previous = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
+                    BackendSession.candleHistoryBySymbol.value =
+                        BackendSession.candleHistoryBySymbol.value +
+                            (candleSymbolKey to (previous + nonEmptyHistory))
+                }
                 candleHistoryLoading = false
                 delay(60_000)
             }
@@ -809,8 +838,12 @@ private fun AnalysisScreen() {
                         Text("Mark price: ${formatMarketPrice(selectedMarket.markPrice)}", color = Green, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
-                Tag(if (selectedMarket != null) "VALIDATED FEED" else if (BackendSession.marketLoading.value) "LOADING" else "NO LIVE DATA",
-                    if (selectedMarket != null) Green else Color(0xFFFFC857))
+                Tag(
+                    if (selectedMarket != null && BackendSession.feedStatus.value == "HEALTHY") "VALIDATED FEED"
+                    else if (selectedMarket != null) "LAST GOOD SNAPSHOT"
+                    else if (BackendSession.marketLoading.value) "LOADING" else "NO LIVE DATA",
+                    if (selectedMarket != null && BackendSession.feedStatus.value == "HEALTHY") Green else Color(0xFFFFC857)
+                )
             }
             val visibleSymbols = if (loadedMarkets.isNotEmpty()) loadedMarkets.map { displaySymbol(it.symbol) }.distinct() else listOf("BTC/USDT", "ETH/USDT", "EUR/USD", "GBP/USD")
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -878,6 +911,37 @@ private fun AnalysisScreen() {
                     else -> "Bearish alignment in ${bears} timeframe(s); other intervals may be neutral or unavailable"
                 }
                 Text(summary, color = Gold, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+            SectionTitle("EVIDENCE & UNCERTAINTY")
+            CardPanel {
+                val usableIntervals = timeframeSnapshots.count { it.candles.size >= 50 }
+                val bullish = timeframeSnapshots.count { it.bias == "BULLISH" }
+                val bearish = timeframeSnapshots.count { it.bias == "BEARISH" }
+                AnalysisValue(
+                    "History coverage",
+                    "\${usableIntervals} / \${timeframeSnapshots.size} intervals have 50+ closed candles",
+                    Muted
+                )
+                AnalysisValue(
+                    "Signal confidence",
+                    "NOT CALIBRATED · no validated out-of-sample confidence model",
+                    Gold
+                )
+                AnalysisValue(
+                    "Evidence uncertainty",
+                    when {
+                        usableIntervals == 0 -> "HIGH · no interval has sufficient history"
+                        bullish > 0 && bearish > 0 -> "HIGH · timeframes conflict"
+                        usableIntervals < timeframeSnapshots.size -> "ELEVATED · some intervals lack history"
+                        else -> "UNQUANTIFIED · indicator agreement is not a probability"
+                    },
+                    if (usableIntervals == 0 || (bullish > 0 && bearish > 0)) Red else Gold
+                )
+                AnalysisValue("Order authorization", "DISABLED · read-only market analysis", Red)
+                Text(
+                    "A bullish/bearish label describes the observed candle history only. It is not a win probability, a verified strategy signal, or permission to place an order.",
+                    color = Muted, fontSize = 11.sp, lineHeight = 16.sp
+                )
             }
             SectionTitle("AI MARKET ANALYSIS")
             CardPanel {
