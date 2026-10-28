@@ -198,6 +198,8 @@ private object BackendSession {
     val openPositions = mutableStateOf("—")
     val emergencyStop = mutableStateOf("UNKNOWN")
     val feedStatus = mutableStateOf("UNKNOWN")
+    val testnetAccountStatus = mutableStateOf("NOT CHECKED")
+    val testnetAccountDetails = mutableStateOf("Connect the authenticated backend to check Binance Spot Testnet account access.")
     val marketItems = mutableStateOf<List<MarketInstrument>>(emptyList())
     val marketLoading = mutableStateOf(false)
     val marketMessage = mutableStateOf("Market data has not been loaded yet.")
@@ -997,6 +999,8 @@ private fun ReadOnlyBackendConnectionCard() {
     var openPositions by BackendSession.openPositions
     var emergencyStop by BackendSession.emergencyStop
     var feedStatus by BackendSession.feedStatus
+    var testnetAccountStatus by BackendSession.testnetAccountStatus
+    var testnetAccountDetails by BackendSession.testnetAccountDetails
     val scope = rememberCoroutineScope()
 
     CardPanel {
@@ -1074,6 +1078,18 @@ private fun ReadOnlyBackendConnectionCard() {
                     }
                     status = result.first
                     details = result.second
+                    if (result.first.startsWith("CONNECTED")) {
+                        testnetAccountStatus = "CHECKING"
+                        testnetAccountDetails = "Checking the separate read-only Binance Spot Testnet account endpoint."
+                        val accountDiagnostic = withContext(Dispatchers.IO) {
+                            fetchTestnetAccountDiagnostic(normalizedToken)
+                        }
+                        testnetAccountStatus = accountDiagnostic.status
+                        testnetAccountDetails = accountDiagnostic.details
+                    } else {
+                        testnetAccountStatus = "NOT CHECKED"
+                        testnetAccountDetails = "Backend connection must succeed before the Testnet account can be checked."
+                    }
                     result.third?.let { summary ->
                         openPositions = summary.first
                         emergencyStop = summary.second
@@ -1090,7 +1106,9 @@ private fun ReadOnlyBackendConnectionCard() {
             Divider(color = Grid)
             IndicatorRow("Positions API", openPositions)
             IndicatorRow("Emergency stop", emergencyStop)
-            IndicatorRow("Market feed", feedStatus)
+            IndicatorRow("Public market feed", feedStatus)
+            IndicatorRow("Binance Spot Testnet account", testnetAccountStatus)
+            Text(testnetAccountDetails, color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
             Button(
                 enabled = !loading && emergencyStop != "ACTIVE",
                 onClick = {
@@ -1142,6 +1160,8 @@ private fun ReadOnlyBackendConnectionCard() {
                 openPositions = "—"
                 emergencyStop = "UNKNOWN"
                 feedStatus = "UNKNOWN"
+                testnetAccountStatus = "NOT CHECKED"
+                testnetAccountDetails = "Connect the authenticated backend to check Binance Spot Testnet account access."
                 BackendSession.marketItems.value = emptyList()
                 BackendSession.marketMessage.value = "Backend token cleared; no authenticated market request will be made."
             },
