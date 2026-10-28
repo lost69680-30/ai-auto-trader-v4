@@ -1,0 +1,78 @@
+name: Solo V4 Step 3 - Market Data and Analysis Validation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/solo-step3-market-validation.yml"
+      - "backend/market_data_adapter.py"
+      - "backend/market_connectivity_check.py"
+      - "backend/market_worker.py"
+      - "app/engines/price_planner.py"
+      - "tests/test_market_data_adapter.py"
+      - "tests/test_market_connectivity_check.py"
+      - "tests/test_market_worker.py"
+      - "tests/test_market_outage_policy.py"
+      - "tests/test_market_paper_gate.py"
+      - "tests/test_price_planner.py"
+      - "tests/test_complete_analysis_pipeline.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solo-v4-step3-market-validation
+  cancel-in-progress: false
+
+jobs:
+  market-validation:
+    name: Read-only market data and analysis safety tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependencies
+        run: python -m pip install -e ".[test]"
+
+      - name: Compile market-data and planning modules
+        run: python -m compileall -q backend app/engines
+
+      - name: Run market-data parsing, freshness, outage, and planner tests
+        run: >-
+          python -m pytest -q
+          tests/test_market_data_adapter.py
+          tests/test_market_connectivity_check.py
+          tests/test_market_worker.py
+          tests/test_market_outage_policy.py
+          tests/test_market_paper_gate.py
+          tests/test_price_planner.py
+          tests/test_complete_analysis_pipeline.py
+
+      - name: Verify safety boundary in source
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import ast
+
+          paths = [
+              Path("backend/market_data_adapter.py"),
+              Path("backend/market_connectivity_check.py"),
+          ]
+          for path in paths:
+              source = path.read_text(encoding="utf-8")
+              ast.parse(source, filename=str(path))
+          adapter = paths[0].read_text(encoding="utf-8")
+          checker = paths[1].read_text(encoding="utf-8")
+          assert "orders_authorized: bool = False" in adapter
+          assert "orders_authorized=False" in checker
+          assert "create_order" not in adapter.lower()
+          assert "place_order" not in adapter.lower()
+          print("PASS: market-data adapter remains public/read-only; order authorization remains disabled.")
+          PY
