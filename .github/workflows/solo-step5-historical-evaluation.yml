@@ -36,7 +36,7 @@ jobs:
           symbol = os.environ["SYMBOL"]
           if not re.fullmatch(r"[A-Z0-9]{5,20}", symbol):
               raise SystemExit("Invalid symbol format")
-          url = "https://api.binance.com/api/v3/klines?" + urllib.parse.urlencode({"symbol": symbol, "interval": "1h", "limit": 1000})
+          url = "https://data-api.binance.vision/api/v3/klines?" + urllib.parse.urlencode({"symbol": symbol, "interval": "1h", "limit": 1000})
           request = urllib.request.Request(url, headers={"User-Agent": "SoloV4-Research/1.0"})
           with urllib.request.urlopen(request, timeout=30) as response:
               raw = json.load(response)
