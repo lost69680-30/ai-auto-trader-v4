@@ -43,7 +43,7 @@ def test_postgres_paper_ledger_sources_and_driver_are_mirrored():
     root_project = ROOT / "pyproject.toml"
     package_project = ROOT / "extracted-source/ai-auto-trader-v4-assembly/pyproject.toml"
 
-    dependency = 'dependencies = ["psycopg[binary]==3.3.6"]'
+    dependency = 'dependencies = ["psycopg[binary]==3.3.6", "asgiref>=3.8,<4", "uvicorn[standard]>=0.30,<1"]'
     assert dependency in root_project.read_text(encoding="utf-8")
     assert dependency in package_project.read_text(encoding="utf-8")
 
