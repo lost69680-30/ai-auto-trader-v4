@@ -40,7 +40,9 @@ def test_multi_timeframe_contains_week_month_and_year_with_explicit_api_mapping(
     assert '"1Y" -> "1y"' in source
     assert '"1w", "1M"' in api_source
     assert 'interval_payloads["1y"] = yearly' in api_source
-    assert "complete set of twelve validated, closed monthly candles" in aggregation_source
+    assert "def aggregate_complete_yearly_candles(" in aggregation_source
+    assert "expected_close = next_month - timedelta(milliseconds=1)" in aggregation_source
+    assert "set(month_map) != set(range(1, 13))" in aggregation_source
 
 
 def test_candle_history_is_cached_without_claiming_stale_data_is_live():
