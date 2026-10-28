@@ -38,7 +38,8 @@ def _position_dict(p) -> dict[str, object]:
 
 def create_app(*, database_path: str, token: str, market_status: Callable[[], dict] | None = None,
                market_items: Callable[[], list[dict]] | None = None,
-               market_candles: Callable[[str], dict] | None = None):
+               market_candles: Callable[[str], dict] | None = None,
+               account_status: Callable[[], dict] | None = None):
     """Create WSGI app. A strong API token is mandatory; no permissive defaults."""
     if not isinstance(token, str) or len(token) < 32:
         raise ValueError("API token must be at least 32 characters; configure it as a secret")
@@ -106,6 +107,23 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                     body, status = _json_bytes({"error": "invalid_or_unavailable_candle_request", "orders_authorized": False}), "400 Bad Request"
                 except Exception:
                     body, status = _json_bytes({"error": "market_candles_unavailable", "orders_authorized": False}), "503 Service Unavailable"
+            elif path == "/api/v1/binance-spot-testnet/account":
+                try:
+                    if account_status is None:
+                        payload = {"connected": False, "mode": "BINANCE_SPOT_TESTNET_READ_ONLY",
+                                   "status": "NOT_CONFIGURED", "balances": [], "orders_authorized": False}
+                        body, status = _json_bytes(payload), "503 Service Unavailable"
+                    else:
+                        payload = account_status()
+                        if (not isinstance(payload, dict)
+                                or payload.get("orders_authorized") is not False
+                                or not isinstance(payload.get("balances"), list)
+                                or payload.get("mode") != "BINANCE_SPOT_TESTNET_READ_ONLY"):
+                            raise ValueError("account provider returned an invalid or unsafe response")
+                        body, status = _json_bytes(payload), ("200 OK" if payload.get("connected") else "503 Service Unavailable")
+                except Exception:
+                    body, status = _json_bytes({"connected": False, "mode": "BINANCE_SPOT_TESTNET_READ_ONLY",
+                        "status": "UNAVAILABLE", "balances": [], "orders_authorized": False}), "503 Service Unavailable"
             elif path == "/api/v1/markets":
                 try:
                     feed = market_status() if market_status else {"status": "UNKNOWN", "orders_authorized": False}
