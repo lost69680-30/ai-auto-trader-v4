@@ -112,3 +112,12 @@ def test_backtest_accepts_contiguous_non_minute_interval():
 
     assert not any("gap" in warning.lower() or "interval" in warning.lower() for warning in result.warnings)
     assert result.orders_authorized is False
+
+
+
+def test_backtest_start_timestamp_uses_prior_candles_only_as_warmup():
+    rows = candles([100 + i * 0.8 for i in range(100)])
+    start = rows[60].timestamp
+    result = run_backtest("BTCUSDT", rows, research_now=NOW, start_timestamp=start)
+    assert all(trade.entry_time >= start for trade in result.trades)
+    assert result.orders_authorized is False
