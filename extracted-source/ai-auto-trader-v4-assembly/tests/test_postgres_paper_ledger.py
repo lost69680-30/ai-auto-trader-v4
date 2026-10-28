@@ -43,17 +43,12 @@ def disposable_postgres_schema():
         pytest.fail(f"Required migration file is missing: {migration_path.name}")
     with psycopg.connect(TEST_DSN, autocommit=True, prepare_threshold=None) as connection:
         connection.execute("DROP SCHEMA IF EXISTS paper_ledger CASCADE")
-        connection.execute(
-            """
-            DO $
-            BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF;
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN; END IF;
-            END
-            $
-            """
-        )
+        for role in ("anon", "authenticated", "service_role"):
+            exists = connection.execute(
+                "SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)
+            ).fetchone()
+            if exists is None:
+                connection.execute(f"CREATE ROLE {role} NOLOGIN")
         connection.execute(migration_path.read_text(encoding="utf-8"), prepare=False)
     yield
 
