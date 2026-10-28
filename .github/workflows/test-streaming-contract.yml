@@ -6,12 +6,20 @@ on:
       - feature/streaming-worker-staging
     paths:
       - "backend/streaming_contract.py"
+      - "backend/asgi_streaming.py"
       - "tests/test_streaming_contract.py"
+      - "tests/test_asgi_streaming.py"
+      - "app/engines/read_only_api.py"
+      - "pyproject.toml"
       - ".github/workflows/test-streaming-contract.yml"
   pull_request:
     paths:
       - "backend/streaming_contract.py"
+      - "backend/asgi_streaming.py"
       - "tests/test_streaming_contract.py"
+      - "tests/test_asgi_streaming.py"
+      - "app/engines/read_only_api.py"
+      - "pyproject.toml"
       - ".github/workflows/test-streaming-contract.yml"
   workflow_dispatch:
 
@@ -25,7 +33,7 @@ concurrency:
 jobs:
   streaming-contract:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -35,7 +43,7 @@ jobs:
           cache-dependency-path: pyproject.toml
       - name: Install project and test dependencies
         run: python -m pip install -e ".[test]"
-      - name: Run streaming contract tests
-        run: python -m pytest -q tests/test_streaming_contract.py
+      - name: Run complete Python test suite
+        run: python -m pytest -q
       - name: Compile backend and app modules
         run: python -m compileall -q backend app
