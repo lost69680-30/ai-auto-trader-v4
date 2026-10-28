@@ -34,6 +34,7 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
           from backend.strategy_research import Candle
+          from backend.strategy_diagnostics import diagnose_strategy_signal_activity
           from backend.backtesting import BacktestConfig
           from backend.walk_forward import WalkForwardConfig, evaluate_walk_forward
           symbol = os.environ.get("SYMBOL", "").strip() or "BTCUSDT"
@@ -67,6 +68,17 @@ jobs:
                       "win_rate_pct": bt.win_rate_pct, "estimated_costs": bt.total_costs,
                       "buy_hold_return_pct": window.buy_hold_return_pct, "cash_return_pct": window.cash_return_pct,
                       "used_for_selection": window.used_for_selection, "orders_authorized": bt.orders_authorized}
+          # Diagnose activation only on the walk-forward folds. The final holdout is
+          # deliberately omitted so it remains untouched and cannot inform tuning.
+          signal_diagnostics = [
+              {"window": window.name, **diagnose_strategy_signal_activity(
+                  symbol, candles,
+                  signal_start_index=window.start_index - 1,
+                  signal_end_index_exclusive=window.end_index - 2,
+                  minimum_signal_score=60.0,
+              )}
+              for window in result.folds
+          ]
           report = {"report_type": "historical_research_only", "source": "Binance Spot public klines REST API",
                     "symbol": symbol, "interval": "1h", "candle_count": len(candles),
                     "first_candle_utc": candles[0].timestamp.isoformat(), "last_candle_utc": candles[-1].timestamp.isoformat(),
@@ -78,6 +90,13 @@ jobs:
                                              "fee_bps_per_side": 4.0, "slippage_bps_per_side": 2.0,
                                              "funding_bps_per_8h": 1.0, "fill_model": "next-open entry and following-open exit"},
                     "folds": [metrics(w) for w in result.folds],
+                    "signal_diagnostics": {
+                        "scope": "walk_forward_folds_only",
+                        "untouched_holdout_included": False,
+                        "minimum_signal_score": 60.0,
+                        "windows": signal_diagnostics,
+                        "orders_authorized": False,
+                    },
                     "untouched_holdout": metrics(result.holdout), "warnings": list(result.warnings),
                     "orders_authorized": False}
           Path("historical-evaluation-report.json").write_text(json.dumps(report, indent=2) + "\n")
