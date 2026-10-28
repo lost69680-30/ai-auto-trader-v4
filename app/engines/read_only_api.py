@@ -478,6 +478,7 @@ def main() -> None:
             http_app=WsgiToAsgi(wsgi_api),
             snapshot_provider=cache.items,
             token=token,
+            allowed_symbols=frozenset(symbols),
             max_age_seconds=max_age,
             poll_interval_seconds=max(1.0, min(poll_interval, 10.0)),
         )
