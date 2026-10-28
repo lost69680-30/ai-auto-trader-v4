@@ -593,7 +593,19 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
                 MarketFetchResult(statusCode, false, "UNSAFE RESPONSE", "BLOCKED", emptyList(),
                     "Backend did not confirm PAPER_ONLY mode and disabled order authorization.", false)
             } else {
-                val (marketsCode, marketsBody) = get("/api/v1/markets")
+                val marketsResponse = try {
+                    get("/api/v1/markets")
+                } catch (e: Exception) {
+                    // A transient market-feed request failure must not overwrite a successful
+                    // authenticated /status check and falsely ask the user to reconnect.
+                    // Keep the feed unavailable and fail closed, while preserving backend auth status.
+                    return MarketFetchResult(
+                        -1, true, "CONNECTED · PAPER ONLY", "OFFLINE", emptyList(),
+                        "Backend status is reachable, but the market-feed request failed (${e.javaClass.simpleName}). Retrying automatically; saved token retained.",
+                        false
+                    )
+                }
+                val (marketsCode, marketsBody) = marketsResponse
                 val marketJson = if (marketsBody.isNotBlank()) JSONObject(marketsBody) else JSONObject()
                 val feed = marketJson.optString("status", "UNKNOWN")
                 val reason = marketJson.optString("reason", "No reason supplied by the market feed.")
