@@ -58,6 +58,7 @@ def test_websocket_emits_only_validated_read_only_snapshots():
         http_app=lambda scope, receive, send: None,
         snapshot_provider=lambda: [snapshot],
         token=TOKEN,
+        allowed_symbols={"BTCUSDT"},
         max_age_seconds=90,
         poll_interval_seconds=0.25,
     )
