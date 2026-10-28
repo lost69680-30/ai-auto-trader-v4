@@ -373,8 +373,9 @@ def main() -> None:
             ledger.verify_integrity()
     except Exception as exc:
         raise SystemExit(
-            "Paper ledger startup integrity check failed; refusing to start the API."
-        ) from exc
+            "Paper ledger startup integrity check failed; refusing to start the API. "
+            + _safe_startup_error(exc)
+        ) from None
     storage_state = _state_storage_status(database)
     if storage_state["durability"] == "POSTGRESQL":
         logging.info(
