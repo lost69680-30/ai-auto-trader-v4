@@ -14,6 +14,7 @@ on:
       - "backend/timeframe_aggregation.py"
       - "tests/**"
       - "backend/**"
+      - "PROJECT_COMPLETENESS_AUDIT.md"
       - "extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py"
       - "extracted-source/ai-auto-trader-v4-assembly/backend/timeframe_aggregation.py"
       - "extracted-source/ai-auto-trader-v4-assembly/backend/backtesting.py"
