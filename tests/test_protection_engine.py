@@ -288,3 +288,54 @@ def test_conflicting_case_normalized_market_prices_fail_closed(tmp_path):
         engine.process_market_update({"BTCUSDT": 50_000, "btcusdt": 49_000}, observed_at=1002)
     assert ledger.open_positions[0].mark_price == pytest.approx(50_000)
     ledger.close()
+
+
+
+@pytest.mark.parametrize(
+    ("crossing_price", "expected_reason"),
+    ((48_900.0, "STOP_LOSS"), (52_100.0, "TAKE_PROFIT")),
+)
+def test_process_crash_after_persisted_crossing_mark_recovers_exit(
+    tmp_path, crossing_price, expected_reason
+):
+    path = tmp_path / f"crash-recovery-{expected_reason.lower()}.db"
+    ledger = SQLitePaperLedger(path)
+    open_position(ledger)
+    engine = PaperProtectionEngine(ledger, fee_rate=0, slippage_bps=0)
+
+    def simulate_process_crash(*args, **kwargs):
+        raise RuntimeError("simulated process crash after mark commit")
+
+    # This injects a crash at the boundary after mark_positions has committed,
+    # but before the protective close transaction can execute.
+    ledger.close_position = simulate_process_crash
+    with pytest.raises(RuntimeError, match="simulated process crash"):
+        engine.process_market_update({"BTCUSDT": crossing_price}, observed_at=1002)
+
+    persisted = ledger.open_positions
+    assert len(persisted) == 1
+    assert persisted[0].mark_price == pytest.approx(crossing_price)
+    assert persisted[0].mark_observed_at == pytest.approx(1002)
+    ledger.close()
+
+    recovered = SQLitePaperLedger(path)
+    recovery_engine = PaperProtectionEngine(recovered, fee_rate=0, slippage_bps=0)
+    result = recovery_engine.process_market_update(
+        {"BTCUSDT": crossing_price}, observed_at=1003
+    )
+
+    assert result.status == "PROTECTION_EXIT"
+    assert result.close_reasons["p1"] == expected_reason
+    assert len(result.closed_positions) == 1
+    closed = result.closed_positions[0]
+    assert closed.close_price == pytest.approx(crossing_price)
+    assert closed.closed_at == pytest.approx(1002)
+    assert recovered.open_positions == ()
+    close_events = [
+        event for event in recovered.audit_events
+        if event.event_type == "PAPER_POSITION_CLOSED"
+    ]
+    assert len(close_events) == 1
+    assert close_events[0].payload["close_reason"] == expected_reason
+    assert recovered.orders_authorized is False
+    recovered.close()
