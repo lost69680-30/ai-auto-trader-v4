@@ -122,7 +122,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                 reason = data.get("reason") if isinstance(data, dict) else None
                 if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 200:
                     raise ValueError("reason must contain 1 to 200 characters")
-                with _open_ledger(database_path) as ledger
+                with _open_ledger(database_path) as ledger:
                     ledger.activate_emergency_stop(occurred_at=time.time(), reason=reason.strip())
                     payload = {"emergency_stop_active": ledger.emergency_stop_active,
                                "emergency_stop_reason": ledger.emergency_stop_reason,
@@ -138,7 +138,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
         else:
             if path == "/api/v1/status":
                 try:
-                    with _open_ledger(database_path) as ledger
+                    with _open_ledger(database_path) as ledger:
                         feed = market_status() if market_status else {"status": "UNKNOWN", "orders_authorized": False}
                         payload = {
                             "service": "ai-auto-trader-v4", "mode": "PAPER_ONLY",
@@ -197,7 +197,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                         "reason": "market feed unavailable", "orders_authorized": False}), "503 Service Unavailable"
             elif path in ("/api/v1/positions", "/api/v1/orders", "/api/v1/audit", "/api/v1/funding"):
                 try:
-                    with _open_ledger(database_path) as ledger
+                    with _open_ledger(database_path) as ledger:
                         if path.endswith("/positions"):
                             payload = {"items": [_position_dict(p) for p in ledger.positions],
                                        "orders_authorized": False, "state_storage": state_storage}
@@ -217,7 +217,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                     body, status = _json_bytes({"error": "ledger_unavailable"}), "503 Service Unavailable"
             elif path == "/api/v1/risk":
                 try:
-                    with _open_ledger(database_path) as ledger
+                    with _open_ledger(database_path) as ledger:
                         snapshots = ledger._connection.execute(
                             "SELECT * FROM paper_equity_snapshots ORDER BY snapshot_at DESC LIMIT 1"
                         ).fetchone()
@@ -332,7 +332,7 @@ def main() -> None:
         raise SystemExit("PAPER_MARKET_SYMBOLS must include at least one symbol")
 
     try:
-        with _open_ledger(database) as ledger
+        with _open_ledger(database) as ledger:
             ledger.verify_integrity()
     except Exception as exc:
         raise SystemExit(
