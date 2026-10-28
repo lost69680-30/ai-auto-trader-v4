@@ -900,6 +900,7 @@ private fun ReadOnlyBackendConnectionCard() {
       scope.launch {
                     val result = withContext(Dispatchers.IO) {
                         try {
+                            var requestStage = "status request"
                             val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
                             fun get(path: String): Pair<Int, String> {
                                 val connection = (URL("$base$path").openConnection() as HttpURLConnection)
@@ -924,6 +925,7 @@ private fun ReadOnlyBackendConnectionCard() {
                                 if (json.optString("mode") != "PAPER_ONLY" || json.optBoolean("orders_authorized", true)) {
                                     Triple("UNSAFE RESPONSE", "Backend response did not confirm paper-only mode; data was not accepted.", null)
                                 } else {
+                                    requestStage = "positions request"
                                     val (positionsCode, positionsBody) = get("/api/v1/positions")
                                     val positionsLabel = if (positionsCode in 200..299) "AVAILABLE" else "UNAVAILABLE"
                                     // Parse the list response as JSON too; reject malformed responses rather than
@@ -935,8 +937,14 @@ private fun ReadOnlyBackendConnectionCard() {
                                     Triple("CONNECTED · PAPER ONLY", summary, Triple(positionsLabel, stop, feed))
                                 }
                             }
-                        } catch (_: Exception) {
-                            Triple("OFFLINE / ERROR", "Connection failed. Verify the HTTPS URL, hosting status, and network access.", null)
+                        } catch (e: Exception) {
+                            val reason = e.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(180)
+                                ?.takeIf { it.isNotBlank() } ?: "No additional detail supplied"
+                            Triple(
+                                "CONNECTION ERROR (\${e.javaClass.simpleName})",
+                                "Failed during $requestStage. $reason. Verify the HTTPS URL, hosting status, and network access.",
+                                null
+                            )
                         }
                     }
                     status = result.first
