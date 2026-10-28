@@ -1,0 +1,41 @@
+name: Streaming contract tests
+
+on:
+  push:
+    branches:
+      - feature/streaming-worker-staging
+    paths:
+      - "backend/streaming_contract.py"
+      - "tests/test_streaming_contract.py"
+      - ".github/workflows/test-streaming-contract.yml"
+  pull_request:
+    paths:
+      - "backend/streaming_contract.py"
+      - "tests/test_streaming_contract.py"
+      - ".github/workflows/test-streaming-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: streaming-contract-tests
+  cancel-in-progress: false
+
+jobs:
+  streaming-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install project and test dependencies
+        run: python -m pip install -e ".[test]"
+      - name: Run streaming contract tests
+        run: python -m pytest -q tests/test_streaming_contract.py
+      - name: Compile backend and app modules
+        run: python -m compileall -q backend app
