@@ -482,7 +482,7 @@ private fun analyzeCandles(candles: List<MarketCandle>): TechnicalSnapshot {
             "Rejected · invalid OHLCV", "Rejected · invalid OHLCV", "Rejected · invalid OHLCV",
             "Unavailable", "Unavailable", "Unavailable", "Unavailable", "Unavailable",
             "Blocked · invalid candles", "Blocked · invalid candles", "Blocked · invalid candles",
-            "Blocked · invalid candle data", "Unavailable · invalid swing history",
+            "Blocked · invalid candles", "Blocked · invalid candle data", "Unavailable · invalid swing history",
             listOf("Risk checks blocked · invalid OHLCV"), false, false
         )
     }
