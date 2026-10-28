@@ -7,6 +7,7 @@ name = "ai-auto-trader-v4-assembly"
 version = "0.1.0"
 description = "AI Auto Trader v4 research engines and safety-first assembly baseline"
 requires-python = ">=3.11"
+dependencies = ["psycopg[binary]==3.3.6"]
 
 [project.optional-dependencies]
 test = ["pytest>=8.0"]

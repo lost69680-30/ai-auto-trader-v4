@@ -20,6 +20,17 @@ from wsgiref.simple_server import make_server
 
 from app.engines.paper_ledger import SQLitePaperLedger
 from backend.timeframe_aggregation import aggregate_complete_yearly_candles
+from app.engines.postgres_paper_ledger import PostgresPaperLedger
+
+
+def _open_ledger(database_path: str):
+    """Select PostgreSQL only when explicitly configured; never silently fall back."""
+    if "PAPER_DATABASE_URL" in os.environ:
+        dsn = os.environ.get("PAPER_DATABASE_URL", "").strip()
+        if not dsn:
+            raise RuntimeError("PAPER_DATABASE_URL is set but empty; refusing local SQLite fallback.")
+        return PostgresPaperLedger(dsn)
+    return SQLitePaperLedger(database_path)
 
 
 def _json_bytes(value: object) -> bytes:
@@ -27,7 +38,22 @@ def _json_bytes(value: object) -> bytes:
 
 
 def _state_storage_status(database_path: str) -> dict[str, object]:
-    """Describe what the configured SQLite path can and cannot guarantee."""
+    """Describe the selected paper-ledger storage backend without exposing credentials."""
+    if "PAPER_DATABASE_URL" in os.environ:
+        if not os.environ.get("PAPER_DATABASE_URL", "").strip():
+            return {
+                "durability": "UNAVAILABLE",
+                "survives_restart": False,
+                "warning": "PAPER_DATABASE_URL is configured but empty; ledger operations fail closed.",
+            }
+        return {
+            "durability": "POSTGRESQL",
+            "survives_restart": True,
+            "warning": (
+                "Paper ledger is configured for external PostgreSQL. Recovery depends on the "
+                "database remaining available and the migration being applied; orders remain paper-only."
+            ),
+        }
     warning = (
         "SQLite file storage is not proof of persistence across a host restart or redeploy. "
         "Configure and verify a persistent disk or external durable database before relying "
@@ -96,7 +122,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                 reason = data.get("reason") if isinstance(data, dict) else None
                 if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 200:
                     raise ValueError("reason must contain 1 to 200 characters")
-                with SQLitePaperLedger(database_path) as ledger:
+                with _open_ledger(database_path) as ledger:
                     ledger.activate_emergency_stop(occurred_at=time.time(), reason=reason.strip())
                     payload = {"emergency_stop_active": ledger.emergency_stop_active,
                                "emergency_stop_reason": ledger.emergency_stop_reason,
@@ -112,7 +138,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
         else:
             if path == "/api/v1/status":
                 try:
-                    with SQLitePaperLedger(database_path) as ledger:
+                    with _open_ledger(database_path) as ledger:
                         feed = market_status() if market_status else {"status": "UNKNOWN", "orders_authorized": False}
                         payload = {
                             "service": "ai-auto-trader-v4", "mode": "PAPER_ONLY",
@@ -171,7 +197,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                         "reason": "market feed unavailable", "orders_authorized": False}), "503 Service Unavailable"
             elif path in ("/api/v1/positions", "/api/v1/orders", "/api/v1/audit", "/api/v1/funding"):
                 try:
-                    with SQLitePaperLedger(database_path) as ledger:
+                    with _open_ledger(database_path) as ledger:
                         if path.endswith("/positions"):
                             payload = {"items": [_position_dict(p) for p in ledger.positions],
                                        "orders_authorized": False, "state_storage": state_storage}
@@ -191,7 +217,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                     body, status = _json_bytes({"error": "ledger_unavailable"}), "503 Service Unavailable"
             elif path == "/api/v1/risk":
                 try:
-                    with SQLitePaperLedger(database_path) as ledger:
+                    with _open_ledger(database_path) as ledger:
                         snapshots = ledger._connection.execute(
                             "SELECT * FROM paper_equity_snapshots ORDER BY snapshot_at DESC LIMIT 1"
                         ).fetchone()
@@ -306,14 +332,19 @@ def main() -> None:
         raise SystemExit("PAPER_MARKET_SYMBOLS must include at least one symbol")
 
     try:
-        with SQLitePaperLedger(database) as ledger:
+        with _open_ledger(database) as ledger:
             ledger.verify_integrity()
     except Exception as exc:
         raise SystemExit(
             "Paper ledger startup integrity check failed; refusing to start the API."
         ) from exc
     storage_state = _state_storage_status(database)
-    if storage_state["durability"] == "EPHEMERAL":
+    if storage_state["durability"] == "POSTGRESQL":
+        logging.info(
+            "Paper ledger uses PostgreSQL and startup integrity checks passed. "
+            "No exchange orders are authorized."
+        )
+    elif storage_state["durability"] == "EPHEMERAL":
         logging.warning(
             "Configured paper ledger storage is ephemeral; emergency-stop and ledger state "
             "may not survive a host restart or redeploy. orders_authorized=False"

@@ -30,3 +30,29 @@ def test_short_or_conflicting_history_never_forces_directional_bias():
     assert 'else -> "NEUTRAL / MIXED"' in source
     assert 'CONFLICT · bullish and bearish timeframes disagree' in source
     assert 'orders_authorized' in source
+
+def test_postgres_paper_ledger_sources_and_driver_are_mirrored():
+    root_engines = ROOT / "app/engines"
+    package_engines = ROOT / "extracted-source/ai-auto-trader-v4-assembly/app/engines"
+    for name in (
+        "postgres_paper_ledger.py",
+        "postgres_ssl.py",
+        "sqlite_to_postgres_import.py",
+    ):
+        assert (root_engines / name).read_text(encoding="utf-8") == (package_engines / name).read_text(encoding="utf-8")
+    root_project = ROOT / "pyproject.toml"
+    package_project = ROOT / "extracted-source/ai-auto-trader-v4-assembly/pyproject.toml"
+
+    dependency = 'dependencies = ["psycopg[binary]==3.3.6"]'
+    assert dependency in root_project.read_text(encoding="utf-8")
+    assert dependency in package_project.read_text(encoding="utf-8")
+
+def test_remote_postgres_ledger_connections_require_encrypted_transport():
+    from app.engines.postgres_ssl import postgres_connection_ssl_options
+
+    assert postgres_connection_ssl_options(
+        "postgresql://ledger_user:example-password@db.example.com:5432/postgres"
+    ) == {"sslmode": "require"}
+    assert postgres_connection_ssl_options(
+        "postgresql://ledger_user:example-password@db.example.com:5432/postgres?sslmode=verify-full"
+    ) == {}
