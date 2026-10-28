@@ -1,0 +1,32 @@
+from pathlib import Path
+
+ROOT = Path(__file__).parents[1]
+ANDROID_SOURCE = ROOT / "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+ROOT_API = ROOT / "app/engines/read_only_api.py"
+PACKAGE_API = ROOT / "extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py"
+
+
+def test_default_candle_limit_supports_longer_calendar_history():
+    root_api = ROOT_API.read_text(encoding="utf-8")
+    package_api = PACKAGE_API.read_text(encoding="utf-8")
+    assert root_api == package_api
+    assert 'PAPER_ANALYSIS_CANDLE_LIMIT", "500"' in root_api
+    assert "analysis_candle_limit = int(" in root_api
+
+
+def test_high_timeframe_directional_readiness_does_not_require_ema50():
+    source = ANDROID_SOURCE.read_text(encoding="utf-8")
+    assert "internal fun classifyTimeframeBias(" in source
+    assert "val directionalReady: Boolean" in source
+    assert "analysis.directionalReady" in source
+    assert "EMA50 unavailable" in source
+    assert "core trend/momentum" in source
+    assert "NOT CALIBRATED" in source
+
+
+def test_short_or_conflicting_history_never_forces_directional_bias():
+    source = ANDROID_SOURCE.read_text(encoding="utf-8")
+    assert 'if (!directionalReady) return "INSUFFICIENT DATA"' in source
+    assert 'else -> "NEUTRAL / MIXED"' in source
+    assert 'CONFLICT · bullish and bearish timeframes disagree' in source
+    assert 'orders_authorized' in source

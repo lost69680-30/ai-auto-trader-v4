@@ -147,9 +147,20 @@ private data class TimeframeSnapshot(
 // 1Y bars are derived in the backend only from twelve complete, closed monthly bars.
 private val supportedTimeframes = listOf("1m", "5m", "15m", "1h", "4h", "1D", "1W", "1M", "1Y")
 private fun timeframeBias(analysis: TechnicalSnapshot?): String {
-    if (analysis == null || !analysis.enoughData) return "INSUFFICIENT DATA"
-    val up = analysis.trend.startsWith("Uptrend") && analysis.momentum.startsWith("Positive")
-    val down = analysis.trend.startsWith("Downtrend") && analysis.momentum.startsWith("Negative")
+    if (analysis == null) return "INSUFFICIENT DATA"
+    return classifyTimeframeBias(analysis.trend, analysis.momentum, analysis.directionalReady)
+}
+
+internal fun classifyTimeframeBias(
+    trend: String,
+    momentum: String,
+    directionalReady: Boolean,
+): String {
+    if (!directionalReady) return "INSUFFICIENT DATA"
+    val up = (trend.startsWith("Uptrend") || trend.startsWith("Above EMA20")) &&
+        momentum.startsWith("Positive")
+    val down = (trend.startsWith("Downtrend") || trend.startsWith("Below EMA20")) &&
+        momentum.startsWith("Negative")
     return when { up -> "BULLISH"; down -> "BEARISH"; else -> "NEUTRAL / MIXED" }
 }
 
@@ -183,6 +194,7 @@ private data class TechnicalSnapshot(
     val volume: String,
     val candlePattern: String,
     val enoughData: Boolean,
+    val directionalReady: Boolean,
 )
 
 private fun fmtIndicator(value: Double, digits: Int = 2): String =
@@ -386,12 +398,12 @@ private fun analyzeCandles(candles: List<MarketCandle>): TechnicalSnapshot {
             "Rejected · invalid OHLCV", "Rejected · invalid OHLCV", "Rejected · invalid OHLCV",
             "Unavailable", "Unavailable", "Unavailable", "Unavailable", "Unavailable",
             "Blocked · invalid candles", "Blocked · invalid candles", "Blocked · invalid candles",
-            "Blocked · invalid candles", "Blocked · invalid candle data", false
+            "Blocked · invalid candles", "Blocked · invalid candle data", false, false
         )
     }
     val closes = c.map { it.close }
     val enough = c.size >= 50
-    if (c.size < 20) return TechnicalSnapshot("Need 20+ candles", "Need 50+ candles", "Need 15+ candles", "Need 35+ candles", "Need 20+ candles", "Need 15+ candles", "Need positive volume", "Need 20+ candles", "Unavailable", "Unavailable", "Unavailable", "Insufficient data", "Need 2+ candles", false)
+    if (c.size < 20) return TechnicalSnapshot("Need 20+ candles", "Need 50+ candles", "Need 15+ candles", "Need 35+ candles", "Need 20+ candles", "Need 15+ candles", "Need positive volume", "Need 20+ candles", "Unavailable", "Unavailable", "Unavailable", "Insufficient data", "Need 2+ candles", false, false)
     val e20 = ema(closes, 20)
     val e50 = ema(closes, 50)
     val rsi = if (closes.size >= 15) {
@@ -432,6 +444,8 @@ private fun analyzeCandles(candles: List<MarketCandle>): TechnicalSnapshot {
     val trend = when {
         e20 != null && e50 != null && closes.last() > e20 && e20 > e50 -> "Uptrend · price > EMA20 > EMA50"
         e20 != null && e50 != null && closes.last() < e20 && e20 < e50 -> "Downtrend · price < EMA20 < EMA50"
+        e20 != null && e50 == null && closes.last() > e20 -> "Above EMA20 · EMA50 unavailable"
+        e20 != null && e50 == null && closes.last() < e20 -> "Below EMA20 · EMA50 unavailable"
         e20 != null && closes.last() > e20 -> "Above EMA20 · mixed trend"
         e20 != null && closes.last() < e20 -> "Below EMA20 · mixed trend"
         else -> "Unavailable"
@@ -446,7 +460,8 @@ private fun analyzeCandles(candles: List<MarketCandle>): TechnicalSnapshot {
         trend, momentum, volatility,
         if (volRatio != null) "Last / prior 20-candle average: ${fmtIndicator(volRatio, 2)}×" else "Unavailable · need 21 candles and non-zero baseline",
         detectRecentCandlestickPattern(c),
-        enough
+        enough,
+        e20 != null && rsi != null
     )
 }
 
@@ -1114,13 +1129,14 @@ private fun AnalysisScreen() {
             }
             SectionTitle("EVIDENCE & UNCERTAINTY")
             CardPanel {
-                val usableIntervals = timeframeSnapshots.count { it.analysis?.enoughData == true }
+                val coreReadyIntervals = timeframeSnapshots.count { it.analysis?.directionalReady == true }
+                val fullHistoryIntervals = timeframeSnapshots.count { it.analysis?.enoughData == true }
                 val blockedIntervals = timeframeSnapshots.count { it.status.startsWith("Data quality blocked") }
                 val bullish = timeframeSnapshots.count { it.bias == "BULLISH" }
                 val bearish = timeframeSnapshots.count { it.bias == "BEARISH" }
                 AnalysisValue(
                     "History coverage",
-                    "${usableIntervals} / ${timeframeSnapshots.size} intervals have 50+ candles and valid timestamps",
+                    "${coreReadyIntervals} / ${timeframeSnapshots.size} intervals have 20+ candles for core trend/momentum; ${fullHistoryIntervals} have 50+ for EMA50",
                     Muted
                 )
                 AnalysisValue(
@@ -1131,13 +1147,14 @@ private fun AnalysisScreen() {
                 AnalysisValue(
                     "Evidence uncertainty",
                     when {
-                        usableIntervals == 0 -> "HIGH · no interval has sufficient, integrity-checked history"
+                        coreReadyIntervals == 0 -> "HIGH · no interval has sufficient, integrity-checked core history"
                         blockedIntervals > 0 -> "HIGH · $blockedIntervals interval(s) blocked by gaps, stale bars or invalid data"
                         bullish > 0 && bearish > 0 -> "HIGH · timeframes conflict"
-                        usableIntervals < timeframeSnapshots.size -> "ELEVATED · some intervals lack history"
+                        coreReadyIntervals < timeframeSnapshots.size -> "ELEVATED · some intervals lack 20+ candles"
+                        fullHistoryIntervals < coreReadyIntervals -> "ELEVATED · some intervals lack EMA50 history and use EMA20/momentum only"
                         else -> "UNQUANTIFIED · indicator agreement is not a probability"
                     },
-                    if (usableIntervals == 0 || (bullish > 0 && bearish > 0)) Red else Gold
+                    if (coreReadyIntervals == 0 || (bullish > 0 && bearish > 0)) Red else Gold
                 )
                 AnalysisValue("Order authorization", "DISABLED · read-only market analysis", Red)
                 Text(
@@ -1158,8 +1175,9 @@ private fun AnalysisScreen() {
                     "Review readiness",
                     when {
                         selectedTimeframe?.status?.startsWith("Data quality blocked") == true -> "BLOCKED · invalid or stale candle history"
-                        technical?.enoughData == true -> "Indicators calculated · review only"
-                        else -> "Insufficient candles for full EMA20/50 review"
+                        technical?.directionalReady == true && technical.enoughData -> "Full EMA20/50 indicators calculated · review only"
+                        technical?.directionalReady == true -> "Core EMA20/RSI calculated; EMA50 unavailable · review only"
+                        else -> "Insufficient candles for core trend/momentum review"
                     },
                     Gold
                 )

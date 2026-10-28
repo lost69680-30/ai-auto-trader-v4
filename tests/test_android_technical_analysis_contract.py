@@ -73,7 +73,8 @@ def test_advanced_analysis_rejects_bad_candle_sequences_and_stale_history():
     assert "latest candle is not yet closed" in source
     assert "latest candle is stale" in source
     assert "Data quality blocked" in source
-    assert "val usableIntervals = timeframeSnapshots.count { it.analysis?.enoughData == true }" in source
+    assert "val coreReadyIntervals = timeframeSnapshots.count { it.analysis?.directionalReady == true }" in source
+    assert "val fullHistoryIntervals = timeframeSnapshots.count { it.analysis?.enoughData == true }" in source
 
 
 def test_relative_volume_uses_only_the_prior_twenty_candles():
