@@ -554,6 +554,7 @@ class PaperServiceApplication:
         path.parent.mkdir(parents=True, exist_ok=True)
         ledger = SQLitePaperLedger(path)
         try:
+            ledger.verify_integrity()
             startup_stamp = clock()
             if not isinstance(startup_stamp, datetime) or startup_stamp.tzinfo is None or startup_stamp.utcoffset() is None:
                 raise ValueError("service startup clock must return a timezone-aware datetime")
