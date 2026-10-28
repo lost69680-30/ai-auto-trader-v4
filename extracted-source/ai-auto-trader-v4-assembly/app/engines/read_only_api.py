@@ -19,6 +19,7 @@ from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
 
 from app.engines.paper_ledger import SQLitePaperLedger
+from backend.timeframe_aggregation import aggregate_complete_yearly_candles
 from app.engines.postgres_paper_ledger import PostgresPaperLedger
 
 
@@ -30,7 +31,6 @@ def _open_ledger(database_path: str):
             raise RuntimeError("PAPER_DATABASE_URL is set but empty; refusing local SQLite fallback.")
         return PostgresPaperLedger(dsn)
     return SQLitePaperLedger(database_path)
-from backend.timeframe_aggregation import aggregate_complete_yearly_candles
 
 
 def _json_bytes(value: object) -> bytes:
