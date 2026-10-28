@@ -144,9 +144,17 @@ class MarketDataWorker:
         self, symbol: str, now: datetime, *, refresh_validation_time: bool = False
     ) -> MarketFrame:
         try:
-            candles = self.source.fetch_klines(
-                symbol, interval=self.config.interval, limit=self.config.candle_limit, now=now
-            )
+            if refresh_validation_time:
+                # Let the adapter timestamp the response at receipt time. Passing
+                # the poll-start clock can falsely reject a new candle if the HTTP
+                # request crosses a candle boundary.
+                candles = self.source.fetch_klines(
+                    symbol, interval=self.config.interval, limit=self.config.candle_limit
+                )
+            else:
+                candles = self.source.fetch_klines(
+                    symbol, interval=self.config.interval, limit=self.config.candle_limit, now=now
+                )
             mark = self.source.fetch_mark_price(symbol)
         except Exception as exc:
             self._retry_counts[symbol] += 1
@@ -233,10 +241,13 @@ class MarketDataWorker:
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         """Continuously poll until stopped; wait duration applies rate limiting/backoff."""
+        injected_clock = clock is not None
         clock = clock or (lambda: datetime.now(timezone.utc))
         while not stop_event.is_set():
             try:
-                result = self.poll_once(now=clock())
+                # Keep deterministic clocks available for tests, but in production
+                # let poll_once capture its own clock and validate after network I/O.
+                result = self.poll_once(now=clock() if injected_clock else None)
             except Exception:
                 # A malformed adapter response or clock error must not silently
                 # terminate the long-running worker. No data is emitted for this
