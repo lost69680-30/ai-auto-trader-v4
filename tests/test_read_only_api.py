@@ -273,3 +273,20 @@ def test_candle_interval_fetches_run_concurrently_and_keep_failed_interval_isola
     assert payloads["5m"] == []
     assert rows_by_interval["5m"] == ()
     assert len(payloads["1h"]) == 1
+
+
+def test_status_discloses_that_full_research_to_paper_runtime_is_not_started(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+
+    status, _, body = request(app, auth="Bearer " + TOKEN)
+
+    runtime = body["analysis_runtime"]
+    assert status.startswith("200")
+    assert runtime["status"] == "READ_ONLY_MARKET_DATA_ONLY"
+    assert runtime["research_pipeline"] == "NOT_STARTED"
+    assert runtime["paper_simulation"] == "NOT_STARTED"
+    assert runtime["orders_authorized"] is False
+    assert "not started" in runtime["reason"].lower()
