@@ -35,63 +35,79 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path("android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt")
           source = path.read_text(encoding="utf-8")
-          old_state = "\\n".join([
-              '    val marketMessage = mutableStateOf("Market data has not been loaded yet.")',
-              '}'
-          ])
-          new_state = "\\n".join([
-              '    val marketMessage = mutableStateOf("Market data has not been loaded yet.")',
-              '    // Retain validated closed candle history across screen navigation.',
-              '    val candleHistoryBySymbol =',
-              '        mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())',
-              '}'
-          ])
-          if "val candleHistoryBySymbol =" not in source:
-              if old_state not in source:
-                  raise SystemExit("STOP: session state insertion point not found.")
-              source = source.replace(old_state, new_state, 1)
 
-          start_marker = "    var candleHistoryByTimeframe by remember"
-          end_marker = "    val timeframeSnapshots = remember"
-          if "val candleHistoryByTimeframe =" not in source:
-              start = source.find(start_marker)
-              end = source.find(end_marker, start)
-              if start < 0 or end < 0:
+          state_line = '    val marketMessage = mutableStateOf("Market data has not been loaded yet.")'
+          cache_state = '''    // Cache validated closed candles above the screen lifecycle.
+              val candleHistoryBySymbol =
+                  mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())'''
+          if "val candleHistoryBySymbol =" not in source:
+              if state_line not in source:
+                  raise SystemExit("STOP: market session state line not found.")
+              source = source.replace(state_line, state_line + "\n" + cache_state, 1)
+
+          # Keep the last valid market snapshot during transient feed errors.
+          clear_bad_snapshot = '''                if (!response.backendConnected || !response.safeResponse || response.feedStatus != "HEALTHY" || response.items.isEmpty()) {
+                    BackendSession.marketItems.value = emptyList()
+                } else {
+                    BackendSession.marketItems.value = response.items
+                }'''
+          keep_bad_snapshot = '''                // Keep the last validated snapshot during temporary feed failures.
+                if (response.backendConnected && response.safeResponse &&
+                    response.feedStatus == "HEALTHY" && response.items.isNotEmpty()) {
+                    BackendSession.marketItems.value = response.items
+                }'''
+          if clear_bad_snapshot in source:
+              source = source.replace(clear_bad_snapshot, keep_bad_snapshot, 1)
+          elif "Keep the last validated snapshot during temporary feed failures." not in source:
+              raise SystemExit("STOP: market refresh block not found.")
+
+          start_marker = '    var candleHistoryByTimeframe by remember'
+          end_marker = '    val timeframeSnapshots = remember'
+          start = source.find(start_marker)
+          end = source.find(end_marker, start)
+          if start < 0 or end < 0:
+              if "val candleHistoryByTimeframe =" not in source:
                   raise SystemExit("STOP: candle history block markers not found.")
-              new_block = "\\n".join([
-                  '    val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol.orEmpty())',
-                  '    val candleHistoryByTimeframe =',
-                  '        BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()',
-                  '    var candleHistoryLoading by remember { mutableStateOf(false) }',
-                  '    LaunchedEffect(sessionToken, selectedMarket?.symbol) {',
-                  '        if (sessionToken.length >= 32 && selectedMarket != null) {',
-                  '            while (true) {',
-                  '                candleHistoryLoading = true',
-                  '                val history = withContext(Dispatchers.IO) {',
-                  '                    try { fetchCandleHistory(sessionToken, selectedMarket.symbol) } catch (_: Exception) { emptyMap() }',
-                  '                }',
-                  '                // Preserve the last usable chart if refresh fails or returns empty data.',
-                  '                if (history.isNotEmpty()) {',
-                  '                    BackendSession.candleHistoryBySymbol.value =',
-                  '                        BackendSession.candleHistoryBySymbol.value + (candleSymbolKey to history)',
-                  '                }',
-                  '                candleHistoryLoading = false',
-                  '                delay(60_000)',
-                  '            }',
-                  '        } else {',
-                  '            candleHistoryLoading = false',
-                  '        }',
-                  '    }',
-                  ''
-              ])
+          else:
+              new_block = '''    val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol ?: symbol)
+              val candleHistoryByTimeframe =
+                  BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
+              var candleHistoryLoading by remember { mutableStateOf(false) }
+              LaunchedEffect(sessionToken, selectedMarket?.symbol, candleSymbolKey) {
+                  if (sessionToken.length >= 32 && candleSymbolKey.isNotBlank()) {
+                      while (true) {
+                          candleHistoryLoading = true
+                          val history = withContext(Dispatchers.IO) {
+                              try { fetchCandleHistory(sessionToken, selectedMarket?.symbol ?: symbol) }
+                              catch (_: Exception) { emptyMap() }
+                          }
+                          // Never replace usable cached data with an empty or failed refresh.
+                          if (history.isNotEmpty()) {
+                              BackendSession.candleHistoryBySymbol.value =
+                                  BackendSession.candleHistoryBySymbol.value + (candleSymbolKey to history)
+                          }
+                          candleHistoryLoading = false
+                          delay(60_000)
+                      }
+                  } else {
+                      candleHistoryLoading = false
+                  }
+              }
+          '''
               source = source[:start] + new_block + source[end:]
-          if "val candleHistoryBySymbol =" not in source or "Preserve the last usable chart" not in source:
-              raise SystemExit("STOP: cache source checks failed.")
+
+          if "val candleHistoryBySymbol =" not in source:
+              raise SystemExit("STOP: candle cache state verification failed.")
+          if "Keep the last validated snapshot during temporary feed failures." not in source:
+              raise SystemExit("STOP: market snapshot retention verification failed.")
+          if "Never replace usable cached data with an empty or failed refresh." not in source:
+              raise SystemExit("STOP: candle refresh retention verification failed.")
           path.write_text(source, encoding="utf-8")
-          print("PASS: validated candle cache patch.")
+          print("PASS: persistent candle cache and last-good market snapshot retention patched.")
           PY
       - name: Build debug APK
         run: |
