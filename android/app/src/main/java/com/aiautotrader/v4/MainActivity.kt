@@ -899,8 +899,8 @@ private fun ReadOnlyBackendConnectionCard() {
       status = "CHECKING"
       scope.launch {
                     val result = withContext(Dispatchers.IO) {
+                        var requestStage = "status request"
                         try {
-                            var requestStage = "status request"
                             val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
                             fun get(path: String): Pair<Int, String> {
                                 val connection = (URL("$base$path").openConnection() as HttpURLConnection)
