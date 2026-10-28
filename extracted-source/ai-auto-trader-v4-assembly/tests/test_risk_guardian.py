@@ -20,34 +20,34 @@ class RiskGuardianTests(unittest.TestCase):
 
     def test_approves_valid_proposal(self):
         decision = evaluate_proposal(self.proposal, self.market, self.limits,
-                                     daily_pnl=-10, open_positions=1, now=1000)
+                                     daily_pnl=-10, open_positions=1, now=1000, equity_baseline=10_000, same_asset_exposure=0, gross_exposure=0)
         self.assertTrue(decision.approved)
         self.assertEqual(decision.code, "APPROVED")
 
     def test_rejects_stale_market_data(self):
         stale = MarketSnapshot(symbol="BTCUSDT", mark_price=50000, observed_at=1, is_fresh=False)
         decision = evaluate_proposal(self.proposal, stale, self.limits,
-                                     daily_pnl=0, open_positions=0, now=1000)
+                                     daily_pnl=0, open_positions=0, now=1000, equity_baseline=10_000, same_asset_exposure=0, gross_exposure=0)
         self.assertFalse(decision.approved)
         self.assertEqual(decision.code, "STALE_MARKET_DATA")
 
     def test_rejects_when_daily_loss_limit_breached(self):
         decision = evaluate_proposal(self.proposal, self.market, self.limits,
-                                     daily_pnl=-101, open_positions=0, now=1000)
+                                     daily_pnl=-101, open_positions=0, now=1000, equity_baseline=10_000, same_asset_exposure=0, gross_exposure=0)
         self.assertFalse(decision.approved)
         self.assertEqual(decision.code, "DAILY_LOSS_LIMIT")
 
     def test_rejects_invalid_long_stop_geometry(self):
         bad = TradeProposal(**{**self.proposal.__dict__, "stop_loss": 50100})
         decision = evaluate_proposal(bad, self.market, self.limits,
-                                     daily_pnl=0, open_positions=0, now=1000)
+                                     daily_pnl=0, open_positions=0, now=1000, equity_baseline=10_000, same_asset_exposure=0, gross_exposure=0)
         self.assertFalse(decision.approved)
         self.assertEqual(decision.code, "INVALID_STOP_GEOMETRY")
 
     def test_rejects_excess_notional(self):
         big = TradeProposal(**{**self.proposal.__dict__, "quantity": 0.1})
         decision = evaluate_proposal(big, self.market, self.limits,
-                                     daily_pnl=0, open_positions=0, now=1000)
+                                     daily_pnl=0, open_positions=0, now=1000, equity_baseline=10_000, same_asset_exposure=0, gross_exposure=0)
         self.assertFalse(decision.approved)
         self.assertEqual(decision.code, "POSITION_NOTIONAL_LIMIT")
 
