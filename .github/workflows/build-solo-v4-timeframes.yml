@@ -10,7 +10,17 @@ on:
       - "android/app/src/main/res/drawable/ic_solo_logo.xml"
       - "android/app/src/test/**"
       - "android/app/build.gradle.kts"
+      - "android/app/src/test/**"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/AndroidManifest.xml"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/res/drawable/ic_solo_logo.xml"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/**"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/build.gradle.kts"
+      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_android_technical_analysis_contract.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_read_only_api.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/binance_spot_testnet_account.py"
       - "app/engines/read_only_api.py"
+      - "backend/binance_spot_testnet_account.py"
       - "backend/timeframe_aggregation.py"
       - "tests/**"
       - "backend/**"
@@ -52,7 +62,17 @@ jobs:
           cmp app/engines/paper_runtime.py extracted-source/ai-auto-trader-v4-assembly/app/engines/paper_runtime.py
           cmp backend/timeframe_aggregation.py extracted-source/ai-auto-trader-v4-assembly/backend/timeframe_aggregation.py
           cmp backend/backtesting.py extracted-source/ai-auto-trader-v4-assembly/backend/backtesting.py
-          echo "PASS: checked backend files match their Render package copies."
+          cmp backend/binance_spot_testnet_account.py extracted-source/ai-auto-trader-v4-assembly/backend/binance_spot_testnet_account.py
+          cmp android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt
+          cmp android/app/src/main/AndroidManifest.xml extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/AndroidManifest.xml
+          cmp android/app/src/main/res/drawable/ic_solo_logo.xml extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/res/drawable/ic_solo_logo.xml
+          cmp android/app/build.gradle.kts extracted-source/ai-auto-trader-v4-assembly/android/app/build.gradle.kts
+          cmp android/app/src/main/res/values/styles.xml extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/res/values/styles.xml
+          cmp android/app/src/test/java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt
+          cmp android/app/src/test/java/com/aiautotrader/v4/CandlestickPatternTest.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/CandlestickPatternTest.kt
+          cmp tests/test_android_technical_analysis_contract.py extracted-source/ai-auto-trader-v4-assembly/tests/test_android_technical_analysis_contract.py
+          cmp tests/test_read_only_api.py extracted-source/ai-auto-trader-v4-assembly/tests/test_read_only_api.py
+          echo "PASS: checked Android source/tests and backend files match their Render package copies."
 
       - name: Compile Python modules
         run: |
