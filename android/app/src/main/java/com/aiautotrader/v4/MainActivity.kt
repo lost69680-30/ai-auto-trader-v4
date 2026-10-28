@@ -564,8 +564,9 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
         val connection = (URL("$base$path").openConnection() as HttpURLConnection)
         try {
             connection.requestMethod = "GET"
-            connection.connectTimeout = 8000
-            connection.readTimeout = 8000
+            // Status and market-list requests can hit a waking free-tier host; avoid false disconnects on short delays.
+            connection.connectTimeout = 20000
+            connection.readTimeout = 45000
             connection.setRequestProperty("Authorization", "Bearer $token")
             connection.setRequestProperty("Accept", "application/json")
             connection.useCaches = false
