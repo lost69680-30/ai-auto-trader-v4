@@ -6,7 +6,7 @@ closed monthly candles. Missing or open months are never filled or estimated.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from math import isfinite
 from typing import Iterable
 
@@ -36,6 +36,7 @@ def aggregate_complete_yearly_candles(
             continue
 
         opened_at = opened_at.astimezone(timezone.utc)
+        closed_at = closed_at.astimezone(timezone.utc)
         year = opened_at.year
         if (
             opened_at.month < 1
@@ -45,6 +46,16 @@ def aggregate_complete_yearly_candles(
             or opened_at.second != 0
             or opened_at.microsecond != 0
         ):
+            invalid_years.add(year)
+            continue
+
+        next_month = (
+            datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+            if opened_at.month == 12
+            else datetime(year, opened_at.month + 1, 1, tzinfo=timezone.utc)
+        )
+        expected_close = next_month - timedelta(milliseconds=1)
+        if closed_at != expected_close:
             invalid_years.add(year)
             continue
 
