@@ -67,3 +67,48 @@ def test_metrics_are_finite_and_losses_are_accounted_for():
     assert result.max_drawdown_pct >= 0
     assert result.ending_equity >= 0
     assert result.orders_authorized is False
+
+
+
+def test_backtest_rejects_missing_candle_intervals_fail_closed():
+    rows = candles([100 + i * 0.4 for i in range(60)])
+    del rows[25]  # A missing bar preserves timestamp order but creates a 2-minute gap.
+
+    result = run_backtest("BTCUSDT", rows, research_now=NOW)
+
+    assert result.trade_count == 0
+    assert result.trades == ()
+    assert result.ending_equity == result.initial_equity
+    assert any("gap" in warning.lower() or "interval" in warning.lower() for warning in result.warnings)
+    assert result.orders_authorized is False
+
+
+def test_backtest_enforces_configured_candle_interval():
+    rows = candles([100 + i * 0.6 for i in range(60)], step_minutes=1)
+
+    result = run_backtest(
+        "BTCUSDT",
+        rows,
+        config=BacktestConfig(candle_interval_minutes=5),
+        research_now=NOW,
+    )
+
+    assert result.trade_count == 0
+    assert result.trades == ()
+    assert result.ending_equity == result.initial_equity
+    assert any("interval" in warning.lower() for warning in result.warnings)
+    assert result.orders_authorized is False
+
+
+def test_backtest_accepts_contiguous_non_minute_interval():
+    rows = candles([100 + i * 0.3 for i in range(60)], step_minutes=5)
+
+    result = run_backtest(
+        "BTCUSDT",
+        rows,
+        config=BacktestConfig(candle_interval_minutes=5),
+        research_now=NOW,
+    )
+
+    assert not any("gap" in warning.lower() or "interval" in warning.lower() for warning in result.warnings)
+    assert result.orders_authorized is False

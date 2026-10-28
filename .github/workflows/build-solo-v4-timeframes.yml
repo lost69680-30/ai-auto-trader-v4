@@ -14,8 +14,10 @@ on:
       - "backend/timeframe_aggregation.py"
       - "tests/**"
       - "backend/**"
+      - "PROJECT_COMPLETENESS_AUDIT.md"
       - "extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py"
       - "extracted-source/ai-auto-trader-v4-assembly/backend/timeframe_aggregation.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/backtesting.py"
 
 permissions:
   contents: read
@@ -49,7 +51,8 @@ jobs:
           cmp app/engines/read_only_api.py extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py
           cmp app/engines/paper_runtime.py extracted-source/ai-auto-trader-v4-assembly/app/engines/paper_runtime.py
           cmp backend/timeframe_aggregation.py extracted-source/ai-auto-trader-v4-assembly/backend/timeframe_aggregation.py
-          echo "PASS: Render package and tested backend candle API are identical."
+          cmp backend/backtesting.py extracted-source/ai-auto-trader-v4-assembly/backend/backtesting.py
+          echo "PASS: checked backend files match their Render package copies."
 
       - name: Compile Python modules
         run: |
