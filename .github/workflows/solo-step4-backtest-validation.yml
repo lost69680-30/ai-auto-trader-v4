@@ -6,9 +6,13 @@ on:
     paths:
       - ".github/workflows/solo-step4-backtest-validation.yml"
       - "backend/backtesting.py"
+      - "backend/walk_forward.py"
+      - "backend/tests/test_walk_forward.py"
       - "backend/strategy_research.py"
       - "backend/tests/test_backtesting.py"
       - "extracted-source/ai-auto-trader-v4-assembly/backend/backtesting.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/walk_forward.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/tests/test_walk_forward.py"
       - "extracted-source/ai-auto-trader-v4-assembly/backend/strategy_research.py"
       - "extracted-source/ai-auto-trader-v4-assembly/backend/tests/test_backtesting.py"
       - "tests/**"
@@ -41,8 +45,8 @@ jobs:
       - name: Compile research and backtest modules
         run: python -m compileall -q app backend
 
-      - name: Run focused backtest tests
-        run: python -m pytest -q backend/tests/test_backtesting.py
+      - name: Run focused backtest and walk-forward tests
+        run: python -m pytest -q backend/tests/test_backtesting.py backend/tests/test_walk_forward.py
 
       - name: Run full Python regression suite
         run: python -m pytest -q tests backend/tests
@@ -58,6 +62,8 @@ jobs:
                Path("extracted-source/ai-auto-trader-v4-assembly/backend/backtesting.py")),
               (Path("backend/strategy_research.py"),
                Path("extracted-source/ai-auto-trader-v4-assembly/backend/strategy_research.py")),
+              (Path("backend/walk_forward.py"),
+               Path("extracted-source/ai-auto-trader-v4-assembly/backend/walk_forward.py")),
           )
           for source, packaged in pairs:
               if not source.is_file() or not packaged.is_file():
