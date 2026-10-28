@@ -1,0 +1,70 @@
+name: Solo V4 Extended Timeframes and Branding
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-solo-v4-timeframes.yml"
+      - "android/app/src/main/AndroidManifest.xml"
+      - "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+      - "android/app/src/main/res/drawable/ic_solo_logo.xml"
+      - "app/engines/read_only_api.py"
+      - "backend/timeframe_aggregation.py"
+      - "tests/**"
+      - "backend/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solo-v4-extended-timeframes
+  cancel-in-progress: false
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: python -m pip install -e ".[test]"
+
+      - name: Run backend and Android contract tests
+        run: python -m pytest -q tests backend/tests
+
+      - name: Compile Python modules
+        run: python -m compileall -q app backend
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build Solo debug APK
+        run: |
+          set -euo pipefail
+          gradle :android:app:assembleDebug -PpaperApiBaseUrl=https://ai-auto-trader-v4-backend.onrender.com --no-daemon
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          ls -lh "$APK"
+          sha256sum "$APK"
+
+      - name: Upload installable debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: solo-v4-extended-timeframes-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
