@@ -59,7 +59,7 @@ def test_websocket_emits_only_validated_read_only_snapshots():
         snapshot_provider=lambda: [snapshot],
         token=TOKEN,
         max_age_seconds=90,
-        poll_interval_seconds=0.01,
+        poll_interval_seconds=0.25,
     )
     sent = run_asgi(
         websocket_scope(TOKEN),
@@ -88,7 +88,7 @@ def test_websocket_does_not_emit_stale_or_unhealthy_snapshots():
         snapshot_provider=lambda: [snapshot],
         token=TOKEN,
         max_age_seconds=90,
-        poll_interval_seconds=0.01,
+        poll_interval_seconds=0.25,
     )
     sent = run_asgi(
         websocket_scope(TOKEN),
@@ -111,7 +111,7 @@ def test_websocket_never_emits_symbols_outside_configured_allowlist():
         snapshot_provider=lambda: [snapshot],
         token=TOKEN,
         allowed_symbols={"BTCUSDT"},
-        poll_interval_seconds=0.01,
+        poll_interval_seconds=0.25,
     )
     sent = run_asgi(websocket_scope(TOKEN), [{"type": "websocket.connect"}], app)
     assert not [message for message in sent if message["type"] == "websocket.send"]
