@@ -92,4 +92,4 @@ def test_market_risk_panel_exposes_explicit_heuristics_and_missing_data_uncertai
     assert 'SectionTitle("RISK & MARKET CONDITIONS")' in source
     assert "this does not mean risk is low or absent" in source
     assert "not a calibrated risk score" in source
-    assert "do not estimate loss probability" in source
+    assert "does not estimate loss probability" in source
