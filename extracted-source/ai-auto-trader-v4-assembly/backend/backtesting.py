@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import math
 from typing import Iterable
 
@@ -114,6 +114,30 @@ def run_backtest(
     ):
         return BacktestResult(symbol, initial, initial, 0.0, 0.0, 0, 0, 0, 0.0, 0.0,
                               (), (f"input rejected: {validation.reasons[0]}",), False)
+
+    # The configured interval is part of the dataset contract, not a hint.
+    # Strict cadence validation prevents a missing or irregular bar from being
+    # treated as one ordinary backtest step. Convert offsets to UTC before
+    # comparing so timezone differences do not disguise interval gaps.
+    expected_interval = timedelta(minutes=cfg.candle_interval_minutes)
+    utc_stamps = [row.timestamp.astimezone(timezone.utc) for row in rows]
+    for index, (previous_stamp, current_stamp) in enumerate(zip(utc_stamps, utc_stamps[1:]), start=1):
+        elapsed = current_stamp - previous_stamp
+        if elapsed != expected_interval:
+            if elapsed > expected_interval:
+                detail = (
+                    f"candle interval gap before row {index + 1}: expected "
+                    f"{cfg.candle_interval_minutes}-minute cadence, got {elapsed.total_seconds():g} seconds"
+                )
+            else:
+                detail = (
+                    f"candle interval mismatch before row {index + 1}: expected "
+                    f"{cfg.candle_interval_minutes}-minute cadence, got {elapsed.total_seconds():g} seconds"
+                )
+            return BacktestResult(
+                symbol, initial, initial, 0.0, 0.0, 0, 0, 0, 0.0, 0.0,
+                (), (f"input rejected: {detail}",), False,
+            )
 
     equity = initial
     total_costs = 0.0
