@@ -89,8 +89,16 @@ def evaluate_proposal(
     ):
         return _reject(proposal, "INVALID_INPUT", "Prices, quantity, timestamps, risk estimates, or limits are out of range.")
 
-    if not market.is_fresh or now < market.observed_at:
-        return _reject(proposal, "STALE_MARKET_DATA", "Market data is stale or timestamp is invalid.")
+    if (
+        not market.is_fresh
+        or now < market.observed_at
+        or now - market.observed_at > limits.max_mark_age_seconds
+    ):
+        return _reject(
+            proposal,
+            "STALE_MARKET_DATA",
+            "Market data is stale, older than the configured maximum age, or timestamp is invalid.",
+        )
     if market.symbol != proposal.symbol:
         return _reject(proposal, "SYMBOL_MISMATCH", "Proposal symbol does not match validated market data.")
     if now - proposal.signal_timestamp > limits.max_signal_age_seconds or proposal.signal_timestamp > now:

@@ -97,3 +97,19 @@ def test_unrepresentably_large_integer_fails_closed(valid_case):
     result = decide(replace(proposal, quantity=10**1000), market, limits)
     assert result.approved is False
     assert result.code == "INVALID_INPUT"
+
+
+def test_mark_timestamp_older_than_configured_max_age_is_rejected_even_if_flagged_fresh(valid_case):
+    proposal, market, limits = valid_case
+    stale_market = replace(market, observed_at=969, is_fresh=True)
+    result = decide(proposal, stale_market, limits, now=1_000)
+    assert result.approved is False
+    assert result.code == "STALE_MARKET_DATA"
+
+
+def test_mark_timestamp_at_configured_max_age_boundary_remains_eligible(valid_case):
+    proposal, market, limits = valid_case
+    boundary_market = replace(market, observed_at=970, is_fresh=True)
+    result = decide(proposal, boundary_market, limits, now=1_000)
+    assert result.approved is True
+    assert result.code == "APPROVED"

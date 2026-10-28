@@ -10,7 +10,9 @@ on:
       - "android/app/src/main/res/drawable/ic_solo_logo.xml"
       - "android/app/src/test/**"
       - "android/app/build.gradle.kts"
-      - "android/app/src/test/**"
+      - "app/core/**"
+      - "app/engines/orchestrator.py"
+      - "app/engines/paper_ledger.py"
       - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/AndroidManifest.xml"
       - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
       - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/res/drawable/ic_solo_logo.xml"
@@ -25,6 +27,14 @@ on:
       - "tests/**"
       - "backend/**"
       - "PROJECT_COMPLETENESS_AUDIT.md"
+      - "extracted-source/ai-auto-trader-v4-assembly/app/core/models.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/app/core/risk_guardian.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/app/engines/orchestrator.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/app/engines/paper_ledger.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_risk_guardian.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_risk_guardian_additional.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_risk_guardian_malformed_inputs.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_orchestrator.py"
       - "extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py"
       - "extracted-source/ai-auto-trader-v4-assembly/backend/timeframe_aggregation.py"
       - "extracted-source/ai-auto-trader-v4-assembly/backend/backtesting.py"
@@ -63,6 +73,14 @@ jobs:
           cmp backend/timeframe_aggregation.py extracted-source/ai-auto-trader-v4-assembly/backend/timeframe_aggregation.py
           cmp backend/backtesting.py extracted-source/ai-auto-trader-v4-assembly/backend/backtesting.py
           cmp backend/binance_spot_testnet_account.py extracted-source/ai-auto-trader-v4-assembly/backend/binance_spot_testnet_account.py
+          cmp app/core/models.py extracted-source/ai-auto-trader-v4-assembly/app/core/models.py
+          cmp app/core/risk_guardian.py extracted-source/ai-auto-trader-v4-assembly/app/core/risk_guardian.py
+          cmp app/engines/orchestrator.py extracted-source/ai-auto-trader-v4-assembly/app/engines/orchestrator.py
+          cmp app/engines/paper_ledger.py extracted-source/ai-auto-trader-v4-assembly/app/engines/paper_ledger.py
+          cmp tests/test_risk_guardian.py extracted-source/ai-auto-trader-v4-assembly/tests/test_risk_guardian.py
+          cmp tests/test_risk_guardian_additional.py extracted-source/ai-auto-trader-v4-assembly/tests/test_risk_guardian_additional.py
+          cmp tests/test_risk_guardian_malformed_inputs.py extracted-source/ai-auto-trader-v4-assembly/tests/test_risk_guardian_malformed_inputs.py
+          cmp tests/test_orchestrator.py extracted-source/ai-auto-trader-v4-assembly/tests/test_orchestrator.py
           cmp android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt
           cmp android/app/src/main/AndroidManifest.xml extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/AndroidManifest.xml
           cmp android/app/src/main/res/drawable/ic_solo_logo.xml extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/res/drawable/ic_solo_logo.xml
