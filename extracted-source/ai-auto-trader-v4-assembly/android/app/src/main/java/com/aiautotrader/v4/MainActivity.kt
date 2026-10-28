@@ -1062,7 +1062,11 @@ private fun ReadOnlyBackendConnectionCard() {
                                     if (positionsCode in 200..299) JSONObject(positionsBody).optJSONArray("items") ?: JSONArray()
                                     val feed = json.optJSONObject("feed")?.optString("status", "UNKNOWN") ?: "UNKNOWN"
                                     val stop = if (json.optBoolean("emergency_stop_active", false)) "ACTIVE" else "INACTIVE"
-                                    val summary = "Mode: PAPER ONLY · Open positions: ${json.optInt("open_position_count", 0)} · Positions API: $positionsLabel"
+                                    val runtime = json.optJSONObject("analysis_runtime")
+                                    val researchStatus = runtime?.optString("research_pipeline", "UNKNOWN") ?: "UNKNOWN"
+                                    val paperStatus = runtime?.optString("paper_simulation", "UNKNOWN") ?: "UNKNOWN"
+                                    val runtimeReason = runtime?.optString("reason", "")?.take(180).orEmpty()
+                                    val summary = "Mode: PAPER ONLY · Open positions: ${json.optInt("open_position_count", 0)} · Positions API: $positionsLabel · Research: $researchStatus · Paper simulation: $paperStatus · $runtimeReason"
                                     Triple("CONNECTED · PAPER ONLY", summary, Triple(positionsLabel, stop, feed))
                                 }
                             }

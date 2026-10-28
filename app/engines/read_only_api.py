@@ -183,6 +183,17 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                             "emergency_stop_reason": ledger.emergency_stop_reason,
                             "open_position_count": len(ledger.open_positions), "feed": feed,
                             "state_storage": state_storage, "server_time": time.time(),
+                            "analysis_runtime": {
+                                "status": "READ_ONLY_MARKET_DATA_ONLY",
+                                "research_pipeline": "NOT_STARTED",
+                                "paper_simulation": "NOT_STARTED",
+                                "orders_authorized": False,
+                                "reason": (
+                                    "This deployment runs the validated public market-data poller and "
+                                    "read-only API only; the unattended research-to-paper simulation "
+                                    "worker is not started."
+                                ),
+                            },
                         }
                     body, status = _json_bytes(payload), "200 OK"
                 except Exception:
