@@ -34,6 +34,15 @@ def _open_ledger(database_path: str):
     return SQLitePaperLedger(database_path)
 
 
+def _safe_startup_error(exc: Exception) -> str:
+    """Return bounded startup diagnostics with the configured database URI redacted."""
+    message = str(exc)
+    dsn = os.environ.get("PAPER_DATABASE_URL", "").strip()
+    if dsn:
+        message = message.replace(dsn, "[database URI redacted]")
+    message = " ".join(message.split())[:240]
+    return f"{type(exc).__name__}: {message}"
+
 def _json_bytes(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
@@ -100,7 +109,6 @@ def _fetch_candle_intervals(source, symbol: str, intervals: tuple[str, ...], lim
     if not intervals:
         return {}, {}, {}
     worker_count = max(1, min(max_workers, len(intervals), 4))
-
     def fetch_one(requested_interval: str):
         try:
             rows = source.fetch_klines(symbol, interval=requested_interval, limit=limit)
@@ -113,17 +121,13 @@ def _fetch_candle_intervals(source, symbol: str, intervals: tuple[str, ...], lim
             return requested_interval, rows, payload, status
         except Exception as exc:
             return requested_interval, (), [], f"UNAVAILABLE:{type(exc).__name__}"
-
-    rows_by_interval = {}
-    interval_payloads = {}
-    interval_status = {}
+    rows_by_interval, interval_payloads, interval_status = {}, {}, {}
     with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="candle-history") as pool:
-        for requested_interval, rows, payload, status in pool.map(fetch_one, intervals):
-            rows_by_interval[requested_interval] = rows
-            interval_payloads[requested_interval] = payload
-            interval_status[requested_interval] = status
+        for interval, rows, payload, status in pool.map(fetch_one, intervals):
+            rows_by_interval[interval] = rows
+            interval_payloads[interval] = payload
+            interval_status[interval] = status
     return interval_payloads, interval_status, rows_by_interval
-
 
 
 def create_app(*, database_path: str, token: str, market_status: Callable[[], dict] | None = None,
