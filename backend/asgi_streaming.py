@@ -19,16 +19,18 @@ MAX_STREAM_SNAPSHOTS_PER_TICK = 100
 
 def _bearer_token(scope: Mapping[str, Any]) -> str:
     headers = scope.get("headers", ())
-    for key, value in headers:
-        if key.lower() == b"authorization":
-            try:
-                raw = value.decode("ascii")
-            except (AttributeError, UnicodeDecodeError):
-                return ""
-            scheme, separator, token = raw.partition(" ")
-            if separator and scheme.lower() == "bearer":
-                return token.strip()
-            return ""
+    authorization_values = [value for key, value in headers if key.lower() == b"authorization"]
+    # Duplicate auth headers can be normalized differently by proxies; reject
+    # ambiguity rather than letting intermediaries disagree about credentials.
+    if len(authorization_values) != 1:
+        return ""
+    try:
+        raw = authorization_values[0].decode("ascii")
+    except (AttributeError, UnicodeDecodeError):
+        return ""
+    scheme, separator, token = raw.partition(" ")
+    if separator and scheme.lower() == "bearer" and token.strip():
+        return token.strip()
     return ""
 
 
