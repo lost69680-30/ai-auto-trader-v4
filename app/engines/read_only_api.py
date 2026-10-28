@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 from urllib.parse import parse_qs
-from wsgiref.simple_server import make_server
 
 from app.engines.paper_ledger import SQLitePaperLedger
 from backend.timeframe_aggregation import aggregate_complete_yearly_candles
@@ -467,12 +466,24 @@ def main() -> None:
     poller = threading.Thread(target=poll_loop, name="readonly-market-poller", daemon=True)
     poller.start()
     try:
-        with make_server(host, port, create_app(database_path=database, token=token,
-                                                market_status=cache.status, market_items=cache.items,
-                                                market_candles=market_candles,
-                                                account_status=binance_testnet_account.account_summary)) as server:
-            print(f"Read-only paper API listening on {host}:{port}; public market poller active; no execution routes")
-            server.serve_forever()
+        from asgiref.wsgi import WsgiToAsgi
+        import uvicorn
+        from backend.asgi_streaming import create_streaming_asgi_app
+
+        wsgi_api = create_app(database_path=database, token=token,
+                              market_status=cache.status, market_items=cache.items,
+                              market_candles=market_candles,
+                              account_status=binance_testnet_account.account_summary)
+        asgi_api = create_streaming_asgi_app(
+            http_app=WsgiToAsgi(wsgi_api),
+            snapshot_provider=cache.items,
+            token=token,
+            max_age_seconds=max_age,
+            poll_interval_seconds=max(1.0, min(poll_interval, 10.0)),
+        )
+        logging.info("Read-only paper API listening on %s:%s; WebSocket /ws/v1/markets enabled; no execution routes",
+                     host, port)
+        uvicorn.run(asgi_api, host=host, port=port, log_level="info", lifespan="off")
     finally:
         stop.set()
         poller.join(timeout=5)
