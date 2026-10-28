@@ -156,8 +156,10 @@ class PaperServiceConfig:
             raise ValueError("risk limits must be finite and positive")
         if isinstance(self.limits.max_open_positions, bool) or not isinstance(self.limits.max_open_positions, int) or self.limits.max_open_positions < 1:
             raise ValueError("max_open_positions must be a positive integer")
-        if self.limits.max_daily_loss >= self.simulated_equity:
-            raise ValueError("max_daily_loss must be smaller than simulated equity")
+        if self.limits.max_daily_loss > self.simulated_equity * 0.02:
+            raise ValueError("max_daily_loss cannot exceed 2 percent of the formal simulated-equity baseline")
+        if self.limits.max_position_notional > self.simulated_equity * 0.10:
+            raise ValueError("max_position_notional cannot exceed 10 percent of the formal simulated-equity baseline")
         if self.limits.max_position_notional > self.simulated_equity:
             raise ValueError("max_position_notional cannot exceed equity without an explicit leverage model")
         if self.limits.max_risk_per_trade > self.simulated_equity:
@@ -465,17 +467,33 @@ class PaperServiceAnalysisHandler:
             if not math.isfinite(equity) or equity <= 0:
                 raise ValueError("simulated equity exhausted or invalid")
             exposure = sum(position.mark_price * position.quantity for position in open_rows)
-            gross_cap = self._config.max_gross_exposure or self._config.simulated_equity
+            gross_cap = min(
+                self._config.max_gross_exposure or self._config.simulated_equity,
+                self._config.simulated_equity * 1.0,
+            )
             remaining_exposure = gross_cap - exposure
+            same_asset_exposure = sum(
+                position.mark_price * position.quantity
+                for position in open_rows if position.symbol.upper() == symbol.upper()
+            )
+            remaining_asset_allocation = self._config.simulated_equity * 0.10 - same_asset_exposure
             if not math.isfinite(remaining_exposure) or remaining_exposure <= 0:
                 raise ValueError("gross exposure cap is exhausted; no additional position is allowed")
+            if not math.isfinite(remaining_asset_allocation) or remaining_asset_allocation <= 0:
+                raise ValueError("single-asset allocation cap is exhausted; no additional position is allowed")
             configured_limits = self._config.limits
             effective_limits = RiskLimits(
-                max_position_notional=min(configured_limits.max_position_notional, remaining_exposure),
+                max_position_notional=min(
+                    configured_limits.max_position_notional,
+                    remaining_exposure,
+                    remaining_asset_allocation,
+                ),
                 max_daily_loss=configured_limits.max_daily_loss,
                 max_open_positions=configured_limits.max_open_positions,
                 max_risk_per_trade=configured_limits.max_risk_per_trade,
                 max_signal_age_seconds=configured_limits.max_signal_age_seconds,
+                max_drawdown_pct=configured_limits.max_drawdown_pct,
+                max_mark_age_seconds=configured_limits.max_mark_age_seconds,
             )
             contract = contract_by_symbol[symbol]
             return build_paper_orchestration_request(
@@ -484,6 +502,7 @@ class PaperServiceAnalysisHandler:
                 quantity_step=float(contract.quantity_step), min_quantity=float(contract.min_quantity),
                 limits=effective_limits, daily_pnl=daily_pnl, open_positions=len(open_rows),
                 max_tick_age_seconds=min(10.0, self._config.max_market_age_seconds),
+                equity_baseline=self._config.simulated_equity,
             )
 
         cost_limit = max(policy.estimated_round_trip_cost_pct for policy in self._config.symbols)

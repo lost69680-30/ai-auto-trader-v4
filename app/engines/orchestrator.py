@@ -7,6 +7,7 @@ place exchange orders, simulate fills, or persist records across restarts.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from threading import RLock
 from typing import Literal, Protocol
 
@@ -90,6 +91,10 @@ class OrchestrationResult:
     orders_authorized: bool = False
 
 
+def _finite_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
 class TradingOrchestrator:
     """Connect validation, watcher trigger, deterministic risk, and paper ledger."""
 
@@ -129,20 +134,29 @@ class TradingOrchestrator:
 
         daily_pnl = request.daily_pnl
         open_positions = request.open_positions
+        if not _finite_number(request.initial_equity) or request.initial_equity <= 0:
+            return self._result(
+                "RISK_VETOED",
+                "Risk validation requires a positive formal initial-equity baseline.",
+                proposal.proposal_id,
+            )
+        equity_baseline = float(request.initial_equity)
         # A durable ledger is the source of truth for realized loss and open
         # positions. Missing baseline or report errors fail closed instead of
         # silently trusting request-supplied risk numbers.
         report_method = getattr(self._ledger, "realized_risk_report", None)
         if callable(report_method):
-            if request.initial_equity is None:
-                return self._result(
-                    "RISK_VETOED",
-                    "Durable-ledger risk accounting requires a configured initial-equity baseline.",
-                    proposal.proposal_id,
-                )
             try:
-                report = report_method(initial_equity=request.initial_equity, as_of=request.now)
-                daily_pnl = report.daily_realized_pnl
+                report = report_method(initial_equity=equity_baseline, as_of=request.now)
+                if not _finite_number(report.daily_realized_pnl) or not _finite_number(request.daily_pnl):
+                    return self._result(
+                        "RISK_VETOED",
+                        "Daily P&L accounting is invalid; fail closed.",
+                        proposal.proposal_id,
+                    )
+                # Include floating loss conservatively: use the more negative of
+                # ledger-realized P&L and the ledger-derived total daily P&L.
+                daily_pnl = min(float(report.daily_realized_pnl), float(request.daily_pnl))
                 open_positions = len(getattr(self._ledger, "open_positions"))
                 mark_report_method = getattr(self._ledger, "mark_to_market_risk_report", None)
                 if not callable(mark_report_method):
@@ -152,7 +166,7 @@ class TradingOrchestrator:
                         proposal.proposal_id,
                     )
                 mtm = mark_report_method(
-                    initial_equity=request.initial_equity, as_of=request.now,
+                    initial_equity=equity_baseline, as_of=request.now,
                     max_mark_age_seconds=request.limits.max_mark_age_seconds,
                 )
                 if not mtm.marks_fresh:
@@ -175,6 +189,59 @@ class TradingOrchestrator:
                     proposal.proposal_id,
                 )
 
+        # Calculate existing exposure only from persisted, marked positions. If
+        # the ledger cannot establish exposures while it reports open positions,
+        # no new risk is authorized.
+        same_asset_exposure = 0.0
+        gross_exposure = 0.0
+        try:
+            ledger_positions = getattr(self._ledger, "open_positions", None)
+            if ledger_positions is None:
+                if open_positions != 0:
+                    return self._result(
+                        "RISK_VETOED",
+                        "Existing exposure cannot be calculated from the ledger; fail closed.",
+                        proposal.proposal_id,
+                    )
+                ledger_positions = ()
+            else:
+                ledger_positions = tuple(ledger_positions)
+            for position in ledger_positions:
+                position_symbol = getattr(position, "symbol", None)
+                quantity = getattr(position, "quantity", None)
+                mark_price = getattr(position, "mark_price", None)
+                if (not isinstance(position_symbol, str) or not position_symbol
+                        or position_symbol != position_symbol.strip().upper()
+                        or not _finite_number(quantity) or quantity <= 0
+                        or not _finite_number(mark_price) or mark_price <= 0):
+                    return self._result(
+                        "RISK_VETOED",
+                        "Existing-position exposure data is invalid; fail closed.",
+                        proposal.proposal_id,
+                    )
+                position_notional = float(quantity) * float(mark_price)
+                if not math.isfinite(position_notional) or position_notional <= 0:
+                    return self._result(
+                        "RISK_VETOED",
+                        "Existing-position notional is invalid; fail closed.",
+                        proposal.proposal_id,
+                    )
+                gross_exposure += position_notional
+                if position_symbol == proposal.symbol:
+                    same_asset_exposure += position_notional
+            if not math.isfinite(gross_exposure) or not math.isfinite(same_asset_exposure):
+                return self._result(
+                    "RISK_VETOED",
+                    "Aggregated exposure is non-finite; fail closed.",
+                    proposal.proposal_id,
+                )
+        except Exception:
+            return self._result(
+                "RISK_VETOED",
+                "Existing-position exposure is unavailable; fail closed.",
+                proposal.proposal_id,
+            )
+
         decision = evaluate_proposal(
             proposal,
             request.market,
@@ -182,6 +249,9 @@ class TradingOrchestrator:
             daily_pnl=daily_pnl,
             open_positions=open_positions,
             now=request.now,
+            equity_baseline=equity_baseline,
+            same_asset_exposure=same_asset_exposure,
+            gross_exposure=gross_exposure,
         )
         if not decision.approved:
             return OrchestrationResult(

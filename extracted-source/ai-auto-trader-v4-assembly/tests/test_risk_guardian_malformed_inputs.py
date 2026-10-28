@@ -28,7 +28,8 @@ def valid_case():
 def decide(proposal, market, limits, *, daily_pnl=0, open_positions=0, now=1_000):
     return evaluate_proposal(
         proposal, market, limits, daily_pnl=daily_pnl,
-        open_positions=open_positions, now=now,
+        open_positions=open_positions, now=now, equity_baseline=10_000,
+        same_asset_exposure=0, gross_exposure=0,
     )
 
 

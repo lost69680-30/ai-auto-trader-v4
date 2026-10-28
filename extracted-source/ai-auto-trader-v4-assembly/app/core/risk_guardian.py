@@ -6,6 +6,11 @@ import math
 from .models import MarketSnapshot, RiskDecision, RiskLimits, TradeProposal
 
 
+MAX_DAILY_LOSS_FRACTION = 0.02
+MAX_SINGLE_ASSET_ALLOCATION_FRACTION = 0.10
+MAX_GROSS_LEVERAGE = 1.0
+
+
 def _reject(proposal: TradeProposal, code: str, reason: str) -> RiskDecision:
     proposal_id = proposal.proposal_id if isinstance(proposal.proposal_id, str) else ""
     return RiskDecision(False, code, reason, proposal_id)
@@ -33,6 +38,9 @@ def evaluate_proposal(
     daily_pnl: float,
     open_positions: int,
     now: float,
+    equity_baseline: float | None = None,
+    same_asset_exposure: float = 0.0,
+    gross_exposure: float = 0.0,
 ) -> RiskDecision:
     """Return a pre-trade approval/veto decision, never an exchange order.
 
@@ -61,6 +69,12 @@ def evaluate_proposal(
         return _reject(proposal, "INVALID_INPUT", "Market price and timestamp must be finite numeric values.")
     if not _finite_number(daily_pnl) or not _finite_number(now):
         return _reject(proposal, "INVALID_INPUT", "Daily P&L and evaluation timestamp must be finite numeric values.")
+    if not _finite_number(equity_baseline) or float(equity_baseline) <= 0:
+        return _reject(proposal, "INVALID_INPUT", "A positive formal equity baseline is required for risk validation.")
+    if not _finite_number(same_asset_exposure) or not _finite_number(gross_exposure):
+        return _reject(proposal, "INVALID_INPUT", "Existing asset and gross exposures must be finite numeric values.")
+    if same_asset_exposure < 0 or gross_exposure < 0:
+        return _reject(proposal, "INVALID_INPUT", "Existing asset and gross exposures cannot be negative.")
     if isinstance(open_positions, bool) or not isinstance(open_positions, int) or open_positions < 0:
         return _reject(proposal, "INVALID_INPUT", "Open-position count must be a non-negative integer.")
     if not isinstance(market.is_fresh, bool):
@@ -103,8 +117,9 @@ def evaluate_proposal(
         return _reject(proposal, "SYMBOL_MISMATCH", "Proposal symbol does not match validated market data.")
     if now - proposal.signal_timestamp > limits.max_signal_age_seconds or proposal.signal_timestamp > now:
         return _reject(proposal, "STALE_SIGNAL", "Signal is expired or has a future timestamp.")
-    if daily_pnl <= -abs(limits.max_daily_loss):
-        return _reject(proposal, "DAILY_LOSS_LIMIT", "Daily loss limit has been reached; no new risk is allowed.")
+    daily_loss_budget = min(limits.max_daily_loss, float(equity_baseline) * MAX_DAILY_LOSS_FRACTION)
+    if daily_pnl <= -daily_loss_budget:
+        return _reject(proposal, "DAILY_LOSS_LIMIT", "Daily loss limit (capped at 2% of formal equity) has been reached; no new risk is allowed.")
     if open_positions >= limits.max_open_positions:
         return _reject(proposal, "OPEN_POSITION_LIMIT", "Maximum open-position count has been reached.")
 
@@ -123,6 +138,12 @@ def evaluate_proposal(
         return _reject(proposal, "INVALID_INPUT", "Derived notional or stop-distance risk is non-finite.")
     if notional > limits.max_position_notional:
         return _reject(proposal, "POSITION_NOTIONAL_LIMIT", "Proposed notional exceeds the configured position limit.")
+    asset_allocation_cap = float(equity_baseline) * MAX_SINGLE_ASSET_ALLOCATION_FRACTION
+    if same_asset_exposure + notional > asset_allocation_cap:
+        return _reject(proposal, "ASSET_ALLOCATION_LIMIT", "Proposed order would exceed the 10% single-asset allocation cap.")
+    gross_exposure_cap = float(equity_baseline) * MAX_GROSS_LEVERAGE
+    if gross_exposure + notional > gross_exposure_cap:
+        return _reject(proposal, "LEVERAGE_LIMIT", "Proposed order would exceed the 1x gross-exposure cap.")
     conservative_risk = max(proposal.estimated_risk, derived_risk)
     if conservative_risk > limits.max_risk_per_trade:
         return _reject(proposal, "TRADE_RISK_LIMIT", "Estimated or recomputed loss at stop exceeds the per-trade risk budget.")

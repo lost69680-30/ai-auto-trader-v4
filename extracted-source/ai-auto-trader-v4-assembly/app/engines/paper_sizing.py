@@ -41,12 +41,17 @@ def build_paper_orchestration_request(
     equity: float, risk_fraction: float, quantity_step: float, min_quantity: float,
     limits: RiskLimits, daily_pnl: float, open_positions: int,
     max_tick_age_seconds: float = 10.0,
+    equity_baseline: float | None = None,
 ) -> OrchestrationRequest:
     """Build a risk-sized request; rejects malformed inputs instead of guessing."""
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("now must be timezone-aware")
     now = now.astimezone(timezone.utc)
     cfg = PaperSizingConfig(equity, risk_fraction, quantity_step, min_quantity)
+    baseline = cfg.simulated_equity if equity_baseline is None else equity_baseline
+    if (isinstance(baseline, bool) or not isinstance(baseline, (int, float))
+            or not math.isfinite(baseline) or baseline <= 0):
+        raise ValueError("equity_baseline must be a positive finite number")
     if getattr(handoff, "orders_authorized", True):
         raise ValueError("signal handoff authorization flag is forbidden")
     if getattr(handoff, "status", None) != "VALID":
@@ -106,5 +111,5 @@ def build_paper_orchestration_request(
         market=MarketSnapshot(symbol=symbol, mark_price=float(tick.price),
                               observed_at=tick_time.timestamp(), is_fresh=True),
         validation=validation, watch_result=None, limits=limits, daily_pnl=float(daily_pnl),
-        open_positions=open_positions, now=now.timestamp(), initial_equity=cfg.simulated_equity,
+        open_positions=open_positions, now=now.timestamp(), initial_equity=float(baseline),
     )

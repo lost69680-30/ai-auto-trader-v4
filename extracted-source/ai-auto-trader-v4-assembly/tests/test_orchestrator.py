@@ -217,7 +217,7 @@ def test_end_to_end_validated_signal_and_confirmed_trigger_reach_paper_intent_on
         validation=handoff.validation,
         watch_result=watch_result,
         limits=RiskLimits(1000, 100, 3, 20),
-        daily_pnl=0, open_positions=0, now=now_ts,
+        daily_pnl=0, open_positions=0, now=now_ts, initial_equity=1_000,
     )
     ledger = InMemoryPaperLedger()
     result = TradingOrchestrator(ledger).process(request)
