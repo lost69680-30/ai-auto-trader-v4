@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from psycopg.conninfo import conninfo_to_dict
 
-_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "postgres"}
+_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _TLS_MODES = {"require", "verify-ca", "verify-full"}
 
 
