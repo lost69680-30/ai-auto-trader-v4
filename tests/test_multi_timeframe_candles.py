@@ -63,3 +63,21 @@ def test_yearly_candles_are_sorted_and_derived_from_monthly_rows():
 
     assert [candle["open_time"][:4] for candle in result] == ["2023", "2024"]
     assert all(candle["is_closed"] for candle in result)
+
+
+def test_yearly_aggregation_rejects_monthly_bar_with_misaligned_close_time():
+    rows = monthly_candles(2024)
+    rows[4] = MarketCandle(
+        symbol=rows[4].symbol,
+        open_time=rows[4].open_time,
+        close_time=rows[4].close_time.replace(day=28),
+        open=rows[4].open,
+        high=rows[4].high,
+        low=rows[4].low,
+        close=rows[4].close,
+        volume=rows[4].volume,
+        quote_volume=rows[4].quote_volume,
+        trades=rows[4].trades,
+        is_closed=True,
+    )
+    assert aggregate_complete_yearly_candles(rows) == []
