@@ -12,6 +12,8 @@ on:
       - "backend/timeframe_aggregation.py"
       - "tests/**"
       - "backend/**"
+      - "extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/timeframe_aggregation.py"
 
 permissions:
   contents: read
@@ -38,8 +40,19 @@ jobs:
       - name: Run backend and Android contract tests
         run: python -m pytest -q tests backend/tests
 
+      - name: Verify Render package matches tested backend candle API
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmp app/engines/read_only_api.py extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py
+          cmp backend/timeframe_aggregation.py extracted-source/ai-auto-trader-v4-assembly/backend/timeframe_aggregation.py
+          echo "PASS: Render package and tested backend candle API are identical."
+
       - name: Compile Python modules
-        run: python -m compileall -q app backend
+        run: |
+          set -euo pipefail
+          python -m compileall -q app backend
+          python -m compileall -q extracted-source/ai-auto-trader-v4-assembly/app extracted-source/ai-auto-trader-v4-assembly/backend
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
