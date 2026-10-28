@@ -87,6 +87,7 @@ def run_backtest(
     config: BacktestConfig | None = None,
     research_config: ResearchConfig | None = None,
     research_now: datetime,
+    start_timestamp: datetime | None = None,
 ) -> BacktestResult:
     """Simulate one-bar holds with next-open fills and explicit estimated costs.
 
@@ -97,6 +98,8 @@ def run_backtest(
     """
     if research_now.tzinfo is None or research_now.utcoffset() is None:
         raise ValueError("research_now must be timezone-aware")
+    if start_timestamp is not None and (start_timestamp.tzinfo is None or start_timestamp.utcoffset() is None):
+        raise ValueError("start_timestamp must be timezone-aware")
     cfg = config or BacktestConfig()
     strategy_cfg = research_config or ResearchConfig()
     rows = list(candles)
@@ -144,6 +147,15 @@ def run_backtest(
     trades: list[SimulatedTrade] = []
     equity_points = [initial]
     i = strategy_cfg.min_candles - 1
+    if start_timestamp is not None:
+        start_utc = start_timestamp.astimezone(timezone.utc)
+        # Signals may use prior candles as warmup, but no simulated entry may precede
+        # the requested out-of-sample boundary.
+        first_entry_index = next(
+            (index for index, row in enumerate(rows) if row.timestamp.astimezone(timezone.utc) >= start_utc),
+            len(rows),
+        )
+        i = max(i, first_entry_index - 1)
     while i < len(rows) - 2 and equity > 0:
         window = rows[max(0, i - strategy_cfg.min_candles + 1):i + 1]
         signal = research_strategies(symbol, window, now=window[-1].timestamp, config=strategy_cfg)
