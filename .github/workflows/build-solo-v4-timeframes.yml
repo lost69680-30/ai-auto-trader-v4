@@ -8,6 +8,8 @@ on:
       - "android/app/src/main/AndroidManifest.xml"
       - "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
       - "android/app/src/main/res/drawable/ic_solo_logo.xml"
+      - "android/app/src/test/**"
+      - "android/app/build.gradle.kts"
       - "app/engines/read_only_api.py"
       - "backend/timeframe_aggregation.py"
       - "tests/**"
@@ -64,6 +66,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
+
+      - name: Run Android market-analysis unit tests
+        run: gradle :android:app:testDebugUnitTest -PpaperApiBaseUrl=https://ai-auto-trader-v4-backend.onrender.com --no-daemon
 
       - name: Build Solo debug APK
         run: |
