@@ -2,7 +2,6 @@ package com.aiautotrader.v4
 
 import java.time.Instant
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -70,6 +69,7 @@ class MarketAnalysisChecksTest {
     fun invalidOHLCVIsRejectedWithoutFilteringItAway() {
         val malformed = MarketCandle("2026-10-28T08:59:00Z", 100.0, 98.0, 99.0, 100.5, 100.0)
         assertEquals("invalid OHLCV values", candleSeriesIssue("1m", listOf(malformed), Instant.parse("2026-10-28T09:01:00Z")))
-        assertFalse(relativeVolumeRatio(listOf(malformed) + List(20) { malformed }) != null)
+        val zeroVolume = List(21) { index -> candle(Instant.parse("2026-10-28T08:00:00Z").plusSeconds(index * 60L).toString(), 0.0) }
+        assertNull(relativeVolumeRatio(zeroVolume))
     }
 }
