@@ -11,6 +11,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from app.engines.postgres_ssl import postgres_connection_ssl_options
+
 try:
     import psycopg
 except ImportError:  # pragma: no cover
@@ -153,6 +155,7 @@ def import_sqlite_ledger(sqlite_path: str | Path, database_url: str) -> dict[str
             autocommit=True,
             connect_timeout=10,
             prepare_threshold=None,
+            **postgres_connection_ssl_options(database_url.strip()),
         )
     except Exception as exc:
         raise RuntimeError(f"Unable to connect to the PostgreSQL destination ({type(exc).__name__}); credentials redacted.") from None
