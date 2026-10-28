@@ -1,4 +1,5 @@
 # Trigger refresh: request a fresh Solo APK CI run; trading remains disabled.
+# Re-run after synchronized source-copy repair.
 name: Solo V4 Extended Timeframes and Branding
 
 on:
