@@ -1,4 +1,5 @@
 name: Solo V4 Cached Market Chart APK
+# Re-trigger build after workflow is present on the default branch.
 
 on:
   workflow_dispatch:
