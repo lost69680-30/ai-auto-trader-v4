@@ -117,3 +117,30 @@ def test_websocket_never_emits_symbols_outside_configured_allowlist():
     )
     sent = run_asgi(websocket_scope(TOKEN), [{"type": "websocket.connect"}], app)
     assert not [message for message in sent if message["type"] == "websocket.send"]
+
+def test_websocket_rejects_duplicate_authorization_headers():
+    app = create_streaming_asgi_app(
+        http_app=lambda scope, receive, send: None,
+        snapshot_provider=lambda: [],
+        token=TOKEN,
+        allowed_symbols={"BTCUSDT"},
+    )
+    scope = websocket_scope(TOKEN)
+    scope["headers"].append((b"authorization", f"Bearer {TOKEN}".encode()))
+    sent = run_asgi(scope, [{"type": "websocket.connect"}], app)
+    assert sent[0]["type"] == "websocket.close"
+    assert sent[0]["code"] == 4401
+
+
+def test_websocket_rejects_weak_server_token_at_construction():
+    try:
+        create_streaming_asgi_app(
+            http_app=lambda scope, receive, send: None,
+            snapshot_provider=lambda: [],
+            token="short",
+            allowed_symbols={"BTCUSDT"},
+        )
+    except ValueError as exc:
+        assert "32 characters" in str(exc)
+    else:
+        raise AssertionError("weak server token must be rejected")
