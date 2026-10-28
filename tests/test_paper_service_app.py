@@ -326,3 +326,39 @@ def test_service_stale_first_market_frame_fails_closed_end_to_end(tmp_path):
         assert app.ledger.orders_authorized is False
     finally:
         app.close()
+
+
+def test_service_config_rejects_daily_loss_and_position_caps_above_policy(tmp_path):
+    safe = PaperServiceConfig(
+        database_path=str(tmp_path / "safe.sqlite"),
+        symbols=(PaperSymbolPolicy("BTCUSDT", 0.12),),
+        simulated_equity=1000.0,
+        risk_fraction=0.005,
+        limits=RiskLimits(max_position_notional=100.0, max_daily_loss=20.0,
+                          max_open_positions=2, max_risk_per_trade=5.0),
+        fee_rate=0.0004,
+        slippage_bps=2.0,
+    )
+    with pytest.raises(ValueError, match="2 percent"):
+        PaperServiceConfig(
+            database_path=str(tmp_path / "daily-over.sqlite"),
+            symbols=safe.symbols,
+            simulated_equity=1000.0,
+            risk_fraction=0.005,
+            limits=RiskLimits(max_position_notional=100.0, max_daily_loss=20.01,
+                              max_open_positions=2, max_risk_per_trade=5.0),
+            fee_rate=0.0004,
+            slippage_bps=2.0,
+        )
+    with pytest.raises(ValueError, match="10 percent"):
+        PaperServiceConfig(
+            database_path=str(tmp_path / "asset-over.sqlite"),
+            symbols=safe.symbols,
+            simulated_equity=1000.0,
+            risk_fraction=0.005,
+            limits=RiskLimits(max_position_notional=100.01, max_daily_loss=20.0,
+                              max_open_positions=2, max_risk_per_trade=5.0),
+            fee_rate=0.0004,
+            slippage_bps=2.0,
+        )
+

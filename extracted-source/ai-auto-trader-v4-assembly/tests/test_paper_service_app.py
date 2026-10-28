@@ -289,3 +289,76 @@ def test_service_startup_cancels_pending_intents_from_prior_process(tmp_path):
         assert app.ledger.orders_authorized is False
     finally:
         app.close()
+
+
+
+def test_service_stale_first_market_frame_fails_closed_end_to_end(tmp_path):
+    class StaleFirstMarkSource(FakeSource):
+        def fetch_mark_price(self, symbol):
+            return MarkPriceSnapshot(
+                symbol, self.current_price, self.current_price, 0.0001,
+                NOW + timedelta(hours=8), NOW - timedelta(minutes=3),
+                orders_authorized=False,
+            )
+
+    app = PaperServiceApplication.create(
+        source=StaleFirstMarkSource(),
+        config=config(tmp_path),
+        clock=lambda: NOW,
+    )
+    try:
+        first_poll = app.worker.poll_once(now=NOW)
+        assert first_poll.orders_authorized is False
+        assert len(first_poll.frames) == 1
+        assert first_poll.frames[0].status.value == "STALE"
+        assert first_poll.frames[0].closed_candles == ()
+
+        report = app.process_poll(first_poll, now=NOW.timestamp())
+
+        assert report.analysis_status == "SKIPPED_UNHEALTHY_MARKET_DATA"
+        assert report.analysis_result is None
+        assert report.healthy_symbols == ()
+        assert report.unhealthy_symbols == ("BTCUSDT",)
+        assert report.fill_statuses == ()
+        assert report.open_positions == 0
+        assert app.ledger.orders == ()
+        assert app.ledger.fills == ()
+        assert app.ledger.orders_authorized is False
+    finally:
+        app.close()
+
+
+def test_service_config_rejects_daily_loss_and_position_caps_above_policy(tmp_path):
+    safe = PaperServiceConfig(
+        database_path=str(tmp_path / "safe.sqlite"),
+        symbols=(PaperSymbolPolicy("BTCUSDT", 0.12),),
+        simulated_equity=1000.0,
+        risk_fraction=0.005,
+        limits=RiskLimits(max_position_notional=100.0, max_daily_loss=20.0,
+                          max_open_positions=2, max_risk_per_trade=5.0),
+        fee_rate=0.0004,
+        slippage_bps=2.0,
+    )
+    with pytest.raises(ValueError, match="2 percent"):
+        PaperServiceConfig(
+            database_path=str(tmp_path / "daily-over.sqlite"),
+            symbols=safe.symbols,
+            simulated_equity=1000.0,
+            risk_fraction=0.005,
+            limits=RiskLimits(max_position_notional=100.0, max_daily_loss=20.01,
+                              max_open_positions=2, max_risk_per_trade=5.0),
+            fee_rate=0.0004,
+            slippage_bps=2.0,
+        )
+    with pytest.raises(ValueError, match="10 percent"):
+        PaperServiceConfig(
+            database_path=str(tmp_path / "asset-over.sqlite"),
+            symbols=safe.symbols,
+            simulated_equity=1000.0,
+            risk_fraction=0.005,
+            limits=RiskLimits(max_position_notional=100.01, max_daily_loss=20.0,
+                              max_open_positions=2, max_risk_per_trade=5.0),
+            fee_rate=0.0004,
+            slippage_bps=2.0,
+        )
+
