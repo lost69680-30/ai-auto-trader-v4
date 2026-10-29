@@ -34,7 +34,7 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
           from backend.strategy_research import Candle
-          from backend.strategy_diagnostics import diagnose_strategy_signal_activity
+          from backend.strategy_diagnostics import diagnose_strategy_signal_activity, diagnose_strategy_threshold_sweep
           from backend.backtesting import BacktestConfig
           from backend.walk_forward import WalkForwardConfig, evaluate_walk_forward
 
@@ -101,6 +101,11 @@ jobs:
                       "signal_diagnostics": {"scope": "walk_forward_folds_only",
                                              "untouched_holdout_included": False,
                                              "minimum_signal_score": 60.0, "windows": diagnostics,
+                                             "threshold_sweep": [{"window": window.name, **diagnose_strategy_threshold_sweep(
+                                                 symbol, candles, signal_start_index=window.start_index - 1,
+                                                 signal_end_index_exclusive=window.end_index - 2,
+                                                 thresholds=(0.0, 20.0, 40.0, 60.0, 80.0))}
+                                                 for window in result.folds],
                                              "orders_authorized": False},
                       "untouched_holdout": metrics(result.holdout),
                       "warnings": list(result.warnings), "orders_authorized": False})
