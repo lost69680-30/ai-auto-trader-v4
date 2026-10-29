@@ -55,6 +55,7 @@ def test_futures_mark_index_and_funding_context_reaches_read_only_api():
     cache.publish(poll)
     item = cache.items()[0]
     assert item["mark_price"] == 101.25
+    assert item["price_type"] == "FUTURES_MARK_PRICE"
     assert item["index_price"] == 101.10
     assert item["funding_rate"] == 0.0001
     assert item["next_funding_at"] == (NOW + timedelta(hours=8)).isoformat()
