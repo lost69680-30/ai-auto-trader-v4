@@ -41,6 +41,9 @@ class FakeSource:
             orders_authorized=False,
         )
 
+    def fetch_funding_rate_history(self, symbol, *, start_time_ms=None, end_time_ms=None, limit=1000):
+        return ()
+
     def fetch_klines(self, symbol, *, interval="1m", limit=100, now=None):
         return candles(symbol, now or NOW)
 
