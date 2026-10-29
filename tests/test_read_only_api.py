@@ -345,3 +345,45 @@ def test_analysis_runtime_health_only_reports_running_after_a_cycle():
     assert failed["last_cycle_error"] == "RuntimeError"
     assert "sensitive internal detail" not in str(failed)
     assert failed["orders_authorized"] is False
+
+
+def test_analysis_runtime_health_does_not_report_running_after_failed_analysis():
+    from types import SimpleNamespace
+    from app.engines.read_only_api import AnalysisRuntimeHealth
+
+    health = AnalysisRuntimeHealth(enabled=True)
+    report = SimpleNamespace(
+        checked_at=1793275200.0,
+        analysis_result=None,
+        analysis_status="ANALYSIS_FAILED:ValueError",
+    )
+
+    health.publish(report)
+
+    status = health.status()
+    assert status["status"] == "ERROR"
+    assert status["research_pipeline"] == "ERROR"
+    assert status["paper_simulation"] == "ERROR"
+    assert status["last_cycle_error"] == "ValueError"
+    assert status["orders_authorized"] is False
+
+
+def test_analysis_runtime_health_marks_unhealthy_market_cycle_degraded():
+    from types import SimpleNamespace
+    from app.engines.read_only_api import AnalysisRuntimeHealth
+
+    health = AnalysisRuntimeHealth(enabled=True)
+    report = SimpleNamespace(
+        checked_at=1793275200.0,
+        analysis_result=None,
+        analysis_status="SKIPPED_UNHEALTHY_MARKET_DATA",
+    )
+
+    health.publish(report)
+
+    status = health.status()
+    assert status["status"] == "DEGRADED"
+    assert status["research_pipeline"] == "DEGRADED"
+    assert status["paper_simulation"] == "DEGRADED"
+    assert status["last_cycle_error"] is None
+    assert status["orders_authorized"] is False
