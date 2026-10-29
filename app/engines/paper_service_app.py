@@ -62,6 +62,11 @@ class MarketUniverseSource(Protocol):
 
     def fetch_mark_price(self, symbol: str): ...
 
+    def fetch_funding_rate_history(
+        self, symbol: str, *, start_time_ms: int | None = None,
+        end_time_ms: int | None = None, limit: int = 1000,
+    ) -> tuple[FundingRateRecord, ...]: ...
+
 
 @dataclass(frozen=True, slots=True)
 class PaperSymbolPolicy:
