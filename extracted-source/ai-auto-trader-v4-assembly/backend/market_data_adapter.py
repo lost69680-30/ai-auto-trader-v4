@@ -71,6 +71,15 @@ class MarkPriceSnapshot:
     orders_authorized: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class SpotPriceSnapshot:
+    """Last-trade observation for Spot markets; contains no Futures-only fields."""
+    symbol: str
+    last_price: float
+    observed_at: datetime
+    orders_authorized: bool = False
+
+
 Transport = Callable[[str, Mapping[str, object], float], object]
 
 
@@ -550,6 +559,22 @@ class BinanceSpotMarketDataAdapter(BinanceUsdMFuturesAdapter):
             except MarketDataError:
                 continue
         return MarketUniverse(tuple(contracts), tuple(snapshots), fetched_at, orders_authorized=False)
+
+    def fetch_spot_price(self, symbol: str) -> SpotPriceSnapshot:
+        """Fetch a Spot last-trade price without implying Futures mark/index/funding data."""
+        if not isinstance(symbol, str) or not symbol or symbol != symbol.upper().strip():
+            raise ValueError("symbol must be non-empty, trimmed and uppercase-normalized")
+        path = "/api/v3/ticker/24hr"
+        payload = self._get(path, {"symbol": symbol})
+        if not isinstance(payload, Mapping) or payload.get("symbol") != symbol:
+            raise MarketDataError("unexpected response shape from /api/v3/ticker/24hr")
+        price = _number(payload.get("lastPrice"), "lastPrice")
+        if price <= 0:
+            raise MarketDataError("spot last price must be positive")
+        return SpotPriceSnapshot(
+            symbol=symbol, last_price=price,
+            observed_at=datetime.now(timezone.utc), orders_authorized=False,
+        )
 
     def fetch_mark_price(self, symbol: str) -> MarkPriceSnapshot:
         """Reject Futures-only mark/index/funding semantics on Spot markets."""
