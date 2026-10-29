@@ -198,6 +198,8 @@ def evaluate_spot_walk_forward(symbol: str, candles: Iterable[Candle], *,
         raise ValueError("window sizes must be positive")
     if step_bars < validation_bars:
         raise ValueError("step_bars must be at least validation_bars to keep evaluation folds disjoint")
+    if step_bars < validation_bars:
+        raise ValueError("step_bars must be at least validation_bars to keep evaluation folds disjoint")
     if validation_bars < max(cfg.min_candles, cfg.moving_average_period + 2) or holdout_bars < max(cfg.min_candles, cfg.moving_average_period + 2):
         raise ValueError("validation and holdout windows are too small")
     if len(rows) < train_bars + validation_bars + holdout_bars:
