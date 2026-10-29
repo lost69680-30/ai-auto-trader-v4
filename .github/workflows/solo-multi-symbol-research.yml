@@ -10,6 +10,16 @@ on:
         required: true
         default: BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT
         type: string
+      interval:
+        description: Candle timeframe; each run keeps the same chronological holdout protocol
+        required: true
+        default: 1h
+        type: choice
+        options:
+          - 15m
+          - 1h
+          - 4h
+          - 1d
 permissions:
   contents: read
 concurrency:
@@ -28,6 +38,7 @@ jobs:
       - name: Evaluate independent chronological folds per symbol
         env:
           SYMBOLS: ${{ inputs.symbols }}
+          INTERVAL: ${{ inputs.interval }}
         run: |
           python - <<'PY'
           import json, os, re, urllib.parse, urllib.request
@@ -42,16 +53,21 @@ jobs:
           symbols = list(dict.fromkeys(item.strip().upper() for item in raw_symbols.split(",") if item.strip()))
           if not symbols or len(symbols) > 10 or any(not re.fullmatch(r"[A-Z0-9]{5,20}", item) for item in symbols):
               raise SystemExit("Provide 1-10 comma-separated symbols using letters and numbers only")
+          interval = os.environ.get("INTERVAL", "").strip() or "1h"
+          interval_minutes_by_name = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+          if interval not in interval_minutes_by_name:
+              raise SystemExit("Interval must be one of 15m, 1h, 4h, or 1d")
+          interval_minutes = interval_minutes_by_name[interval]
 
           now = datetime.now(timezone.utc)
           cfg = WalkForwardConfig(train_bars=500, validation_bars=100, holdout_bars=100,
-                                  step_bars=100, candle_interval_minutes=60)
-          bt_cfg = BacktestConfig(candle_interval_minutes=60, funding_bps_per_8h=0.0)
+                                  step_bars=100, candle_interval_minutes=interval_minutes)
+          bt_cfg = BacktestConfig(candle_interval_minutes=interval_minutes, funding_bps_per_8h=0.0)
           reports = []
           for symbol in symbols:
               try:
                   url = "https://data-api.binance.vision/api/v3/klines?" + urllib.parse.urlencode(
-                      {"symbol": symbol, "interval": "1h", "limit": 1000})
+                      {"symbol": symbol, "interval": interval, "limit": 1000})
                   request = urllib.request.Request(url, headers={"User-Agent": "SoloV4-Research/1.0"})
                   with urllib.request.urlopen(request, timeout=30) as response:
                       raw = json.load(response)
@@ -86,7 +102,8 @@ jobs:
                       signal_end_index_exclusive=window.end_index - 2, minimum_signal_score=60.0)}
                       for window in result.folds]
                   reports.append({
-                      "symbol": symbol, "status": "evaluated", "interval": "1h",
+                      "symbol": symbol, "status": "evaluated", "interval": interval,
+                      "interval_minutes": interval_minutes,
                       "candle_count": len(candles), "first_candle_utc": candles[0].timestamp.isoformat(),
                       "last_candle_utc": candles[-1].timestamp.isoformat(), "evaluated_at_utc": now.isoformat(),
                       "protocol": {"train_bars_warmup_only": 500, "validation_bars": 100,
@@ -114,7 +131,7 @@ jobs:
                                   "orders_authorized": False})
 
           report = {"report_type": "multi_symbol_historical_research_only",
-                    "source": "Binance Spot public closed hourly klines",
+                    "source": "Binance Spot public closed klines",
                     "evaluated_at_utc": now.isoformat(), "symbols_requested": symbols,
                     "successful_symbols": sum(item["status"] == "evaluated" for item in reports),
                     "failed_symbols": sum(item["status"] == "failed" for item in reports),
