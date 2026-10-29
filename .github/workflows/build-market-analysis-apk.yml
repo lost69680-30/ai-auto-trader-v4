@@ -1,26 +1,34 @@
-
-name: AI Auto Trader V4 - Market Analysis APK Build
+name: Solo - Market Analysis APK Build
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/build-market-analysis-apk.yml"
+      - "android/**"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/**"
+      - "extracted-source/ai-auto-trader-v4-assembly/*.gradle.kts"
+      - "extracted-source/ai-auto-trader-v4-assembly/gradle.properties"
   push:
     paths:
       - ".github/workflows/build-market-analysis-apk.yml"
-      - "ai-auto-trader-v4-emergency-stop-v7.zip"
+      - "android/**"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/**"
+      - "extracted-source/ai-auto-trader-v4-assembly/*.gradle.kts"
+      - "extracted-source/ai-auto-trader-v4-assembly/gradle.properties"
 
 permissions:
   contents: read
 
 concurrency:
-  group: market-analysis-apk
+  group: solo-market-analysis-apk
   cancel-in-progress: false
 
 jobs:
   build:
-    name: Validate and build Android APK
+    name: Test and build Android APK from repository source
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,32 +39,16 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Check project archive
+      - name: Set project directory
         shell: bash
         run: |
           set -euo pipefail
-          test -f ai-auto-trader-v4-emergency-stop-v7.zip
-          unzip -t ai-auto-trader-v4-emergency-stop-v7.zip
-
-      - name: Extract Android project
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/ai-auto-trader"
-          unzip -q ai-auto-trader-v4-emergency-stop-v7.zip \
-            -d "$RUNNER_TEMP/ai-auto-trader"
-
-          PROJECT="$RUNNER_TEMP/ai-auto-trader/ai-auto-trader-v4-assembly"
-
-          if [ ! -f "$PROJECT/android/app/build.gradle.kts" ]; then
-            echo "Expected Android Gradle file was not found."
-            find "$RUNNER_TEMP/ai-auto-trader" -name build.gradle.kts -print
-            exit 1
-          fi
-
+          PROJECT="$GITHUB_WORKSPACE/extracted-source/ai-auto-trader-v4-assembly"
+          test -f "$PROJECT/settings.gradle.kts"
+          test -f "$PROJECT/android/app/build.gradle.kts"
           echo "PROJECT_DIR=$PROJECT" >> "$GITHUB_ENV"
-    
-      - name: Configure Gradle memory
+
+      - name: Configure Gradle memory and AndroidX
         shell: bash
         run: |
           set -euo pipefail
@@ -67,39 +59,24 @@ jobs:
             printf '\norg.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8\n' >> "$PROJECT_DIR/gradle.properties"
           fi
           if ! grep -q '^android.useAndroidX=' "$PROJECT_DIR/gradle.properties"; then
-            printf 'android.useAndroidX=true\n' >> "$PROJECT_DIR/gradle.properties"
+            printf '\nandroid.useAndroidX=true\n' >> "$PROJECT_DIR/gradle.properties"
           fi
-          cat "$PROJECT_DIR/gradle.properties"
 
-      - name: Enable AndroidX
-        shell: bash
-        run: |
-          set -euo pipefail
-          printf '\nandroid.useAndroidX=true\n' >> "$PROJECT_DIR/gradle.properties"
-          cat "$PROJECT_DIR/gradle.properties"
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
-      - name: Verify Gradle installation
-        shell: bash
-        run: gradle --version
-
-      - name: Run Android unit tests
+      - name: Run Android unit tests and build APK
         shell: bash
         run: |
           set -euo pipefail
           gradle -p "$PROJECT_DIR" :android:app:testDebugUnitTest :android:app:assembleDebug --no-daemon --max-workers=2
 
-      - name: Build debug APK
-        shell: bash
-        run: echo "APK build was included in the test Gradle invocation."
-
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: ai-auto-trader-v4-market-analysis-debug-apk
+          name: solo-market-analysis-debug-apk
           path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
