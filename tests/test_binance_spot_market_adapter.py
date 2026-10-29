@@ -18,26 +18,25 @@ def test_spot_adapter_uses_documented_spot_public_endpoints_and_keeps_orders_dis
 
     adapter = BinanceSpotMarketDataAdapter(transport=transport)
     candles = adapter.fetch_klines("BTCUSDT", interval="1m", limit=2, now=NOW)
-    price = adapter.fetch_mark_price("BTCUSDT")
+    price = adapter.fetch_spot_price("BTCUSDT")
 
     assert candles[0].is_closed is True
     assert candles[0].close == 102
-    assert price.mark_price == 102  # generic worker interface; spot last price, not futures mark price
+    assert price.last_price == 102
     assert price.orders_authorized is False
     assert [path for path, _ in calls] == ["/api/v3/klines", "/api/v3/ticker/24hr"]
     assert all(path.startswith("/api/v3/") for path, _ in calls)
 
 
 def test_spot_last_price_observation_time_uses_local_receive_time_not_24h_window_close_time():
-    from datetime import timedelta
     from datetime import datetime as dt
     before = dt.now(timezone.utc)
     adapter = BinanceSpotMarketDataAdapter(transport=lambda path, params, timeout: {
         "symbol": "BTCUSDT", "lastPrice": "102",
-        # The 24-hour ticker's closeTime can be ahead of the worker clock.
-        "closeTime": int((before + timedelta(minutes=5)).timestamp() * 1000),
+        # Observation time must use local receive time, not the 24-hour window close.
+        "closeTime": int((before.timestamp() + 300) * 1000),
     })
-    price = adapter.fetch_mark_price("BTCUSDT")
+    price = adapter.fetch_spot_price("BTCUSDT")
     after = dt.now(timezone.utc)
 
     assert before <= price.observed_at <= after

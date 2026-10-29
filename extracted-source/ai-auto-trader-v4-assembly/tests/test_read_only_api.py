@@ -1,6 +1,7 @@
 import json
 import io
-from datetime import datetime
+from types import SimpleNamespace
+from datetime import datetime, timezone
 
 import pytest
 
@@ -290,3 +291,145 @@ def test_status_discloses_that_full_research_to_paper_runtime_is_not_started(tmp
     assert runtime["paper_simulation"] == "NOT_STARTED"
     assert runtime["orders_authorized"] is False
     assert "not started" in runtime["reason"].lower()
+
+
+def test_spot_research_endpoint_is_authenticated_and_never_authorizes_orders(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(
+        database_path=db,
+        token=TOKEN,
+        spot_research=lambda: {
+            "status": "REVIEW_CANDIDATES",
+            "market_type": "SPOT",
+            "opportunities": [{"symbol": "BTCUSDT", "status": "REVIEW", "orders_authorized": False}],
+            "rejections": [],
+            "orders_authorized": False,
+        },
+    )
+    status, _, body = request(app, path="/api/v1/spot/research")
+    assert status.startswith("401")
+    status, _, body = request(app, path="/api/v1/spot/research", auth="Bearer " + TOKEN)
+    assert status.startswith("200")
+    assert body["market_type"] == "SPOT"
+    assert body["opportunities"][0]["orders_authorized"] is False
+    assert body["orders_authorized"] is False
+
+
+def test_spot_research_endpoint_fails_closed_when_not_configured(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+    status, _, body = request(app, path="/api/v1/spot/research", auth="Bearer " + TOKEN)
+    assert status.startswith("503")
+    assert body["opportunities"] == []
+    assert body["orders_authorized"] is False
+
+
+def test_spot_research_endpoint_rejects_any_order_authorized_opportunity(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(
+        database_path=db,
+        token=TOKEN,
+        spot_research=lambda: {
+            "status": "REVIEW_CANDIDATES",
+            "market_type": "SPOT",
+            "opportunities": [{"symbol": "BTCUSDT", "orders_authorized": True}],
+            "rejections": [],
+            "orders_authorized": False,
+        },
+    )
+    status, _, body = request(app, path="/api/v1/spot/research", auth="Bearer " + TOKEN)
+    assert status.startswith("503")
+    assert body["orders_authorized"] is False
+    assert body["opportunities"] == []
+
+
+def test_spot_market_feed_cache_preserves_last_price_semantics():
+    from app.engines.read_only_api import MarketFeedCache
+
+    now = datetime.now(timezone.utc)
+    frame = SimpleNamespace(
+        symbol="BTCUSDT",
+        status="HEALTHY",
+        last_price=65000.0,
+        last_observed_at=now,
+        checked_at=now,
+        closed_candles=(),
+        reasons=(),
+        orders_authorized=False,
+    )
+    result = SimpleNamespace(
+        market_type="SPOT",
+        checked_at=now,
+        frames=(frame,),
+    )
+    cache = MarketFeedCache(max_age_seconds=90)
+    cache.publish(result)
+    items = cache.items()
+    assert cache.status()["status"] == "HEALTHY"
+    assert items[0]["market_type"] == "SPOT"
+    assert items[0]["last_price"] == 65000.0
+    assert "mark_price" not in items[0]
+    assert items[0]["orders_authorized"] is False
+
+
+def test_historical_spot_backtest_endpoint_is_authenticated_bounded_and_read_only(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    calls = []
+    def provider(symbol, interval, limit):
+        calls.append((symbol, interval, limit))
+        return {"status": "COMPLETED", "market_type": "SPOT", "symbol": symbol,
+                "interval": interval, "closed_candles": limit,
+                "orders_authorized": False, "positions_created": False}
+    app = create_app(database_path=db, token=TOKEN, spot_historical_research=provider)
+    status, _, body = request(app, path="/api/v1/spot/backtest?symbol=BTCUSDT&interval=5m&limit=60")
+    assert status.startswith("401")
+    status, _, body = request(app, path="/api/v1/spot/backtest?symbol=BTCUSDT&interval=5m&limit=60",
+                              auth="Bearer " + TOKEN)
+    assert status.startswith("200")
+    assert body["market_type"] == "SPOT"
+    assert body["orders_authorized"] is False
+    assert body["positions_created"] is False
+    assert calls == [("BTCUSDT", "5m", 60)]
+
+
+@pytest.mark.parametrize("query", [
+    "symbol=btcusdt&interval=5m&limit=60",
+    "symbol=BTCUSDT&interval=1M&limit=60",
+    "symbol=BTCUSDT&interval=5m&limit=1501",
+    "symbol=BTCUSDT&interval=5m&limit=true",
+])
+def test_historical_spot_backtest_endpoint_rejects_invalid_parameters(tmp_path, query):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN,
+                     spot_historical_research=lambda *_: {
+                         "market_type": "SPOT", "orders_authorized": False, "positions_created": False
+                     })
+    status, _, body = request(app, path="/api/v1/spot/backtest?" + query, auth="Bearer " + TOKEN)
+    assert status.startswith("400")
+    assert body["orders_authorized"] is False
+    assert body["positions_created"] is False
+
+
+def test_historical_spot_backtest_endpoint_rejects_unsafe_provider_response(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN,
+                     spot_historical_research=lambda *_: {
+                         "market_type": "SPOT", "orders_authorized": True, "positions_created": False
+                     })
+    status, _, body = request(app, path="/api/v1/spot/backtest?symbol=BTCUSDT&interval=5m&limit=60",
+                              auth="Bearer " + TOKEN)
+    assert status.startswith("503")
+    assert body["orders_authorized"] is False
+    assert body["positions_created"] is False

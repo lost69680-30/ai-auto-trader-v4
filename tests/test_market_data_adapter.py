@@ -261,3 +261,73 @@ def test_public_funding_history_rejects_duplicate_or_mismatched_rows():
         ]
     with pytest.raises(Exception, match="duplicate"):
         BinanceUsdMFuturesAdapter(transport=transport).fetch_funding_rate_history("BTCUSDT")
+
+
+def test_spot_market_universe_uses_spot_endpoints_and_spot_contract_metadata():
+    from backend.market_data_adapter import BinanceSpotMarketDataAdapter
+
+    payloads = {
+        "/api/v3/exchangeInfo": {"symbols": [{
+            "symbol": "BTCUSDT", "status": "TRADING", "baseAsset": "BTC", "quoteAsset": "USDT",
+            "filters": [
+                {"filterType": "PRICE_FILTER", "tickSize": "0.10"},
+                {"filterType": "LOT_SIZE", "stepSize": "0.001", "minQty": "0.001", "maxQty": "100"},
+                {"filterType": "NOTIONAL", "minNotional": "5"},
+            ],
+        }]},
+        "/api/v3/ticker/24hr": [{
+            "symbol": "BTCUSDT", "lastPrice": "100", "quoteVolume": "2000000",
+            "highPrice": "105", "lowPrice": "95",
+        }],
+        "/api/v3/ticker/bookTicker": [{"symbol": "BTCUSDT", "bidPrice": "99.9", "askPrice": "100.1"}],
+    }
+    transport, calls = make_transport(payloads)
+    adapter = BinanceSpotMarketDataAdapter(transport=transport)
+
+    universe = adapter.fetch_market_universe(now=NOW)
+
+    assert adapter.base_url == "https://data-api.binance.vision"
+    assert [call[0] for call in calls] == [
+        "/api/v3/exchangeInfo", "/api/v3/ticker/24hr", "/api/v3/ticker/bookTicker",
+    ]
+    assert universe.orders_authorized is False
+    assert universe.contracts[0].contract_type == "SPOT"
+    assert universe.contracts[0].tick_size == pytest.approx(0.1)
+    assert universe.contracts[0].quantity_step == pytest.approx(0.001)
+    assert universe.contracts[0].min_notional == pytest.approx(5)
+    assert universe.snapshots[0].symbol == "BTCUSDT"
+    assert universe.snapshots[0].last_price == pytest.approx(100)
+
+
+def test_spot_server_time_uses_spot_time_endpoint():
+    from backend.market_data_adapter import BinanceSpotMarketDataAdapter
+
+    transport, calls = make_transport({"/api/v3/time": {"serverTime": int(NOW.timestamp() * 1000)}})
+    adapter = BinanceSpotMarketDataAdapter(transport=transport)
+
+    assert adapter.fetch_server_time() == NOW
+    assert calls[0][0] == "/api/v3/time"
+    assert adapter.base_url == "https://data-api.binance.vision"
+
+
+def test_spot_funding_history_is_explicitly_unsupported():
+    from backend.market_data_adapter import BinanceSpotMarketDataAdapter
+
+    def transport(path, params, timeout):
+        raise AssertionError("Spot funding-history call must not hit a Futures endpoint")
+
+    adapter = BinanceSpotMarketDataAdapter(transport=transport)
+    with pytest.raises(NotImplementedError, match="Spot markets do not have funding rates"):
+        adapter.fetch_funding_rate_history("BTCUSDT")
+
+
+
+def test_spot_mark_price_is_not_misrepresented_as_futures_mark_or_funding_data():
+    from backend.market_data_adapter import BinanceSpotMarketDataAdapter
+
+    def transport(path, params, timeout):
+        raise AssertionError("Spot adapter must not fetch or fabricate Futures mark/funding data")
+
+    adapter = BinanceSpotMarketDataAdapter(transport=transport)
+    with pytest.raises(NotImplementedError, match="Spot markets do not provide Futures mark price or funding data"):
+        adapter.fetch_mark_price("BTCUSDT")

@@ -22,6 +22,7 @@ from app.core.models import RiskLimits
 from app.engines.complete_analysis_pipeline import AnalysisPipelineReport, CompleteAnalysisPipeline
 from app.engines.orchestrator import TradingOrchestrator
 from app.engines.paper_ledger import SQLitePaperLedger
+from app.engines.postgres_paper_ledger import PostgresPaperLedger
 from app.engines.paper_runtime import PaperRuntime, PaperRuntimeReport
 from app.engines.paper_signal_cycle import PaperSignalCycle
 from app.engines.paper_sizing import build_paper_orchestration_request
@@ -548,11 +549,16 @@ class PaperServiceApplication:
         source: MarketUniverseSource,
         config: PaperServiceConfig,
         clock: Callable[[], datetime] | None = None,
+        ledger_factory: Callable[[PaperServiceConfig], SQLitePaperLedger] | None = None,
     ) -> "PaperServiceApplication":
         clock = clock or (lambda: datetime.now(timezone.utc))
-        path = Path(config.database_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        ledger = SQLitePaperLedger(path)
+        if ledger_factory is None:
+            path = Path(config.database_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            ledger = SQLitePaperLedger(path)
+        else:
+            # A selected external backend must open successfully; never fall back to SQLite.
+            ledger = ledger_factory(config)
         try:
             ledger.verify_integrity()
             startup_stamp = clock()
@@ -602,11 +608,28 @@ class PaperServiceApplication:
                  clock: Callable[[], datetime] | None = None) -> "PaperServiceApplication":
         config = PaperServiceConfig.from_env(environ)
         env = os.environ if environ is None else environ
+        market_type = str(env.get("PAPER_MARKET_TYPE", "futures")).strip().lower()
+        if market_type == "spot":
+            # Fail closed: the current analysis pipeline still requires Futures-only
+            # mark/funding fields. Never silently route an explicit Spot request to
+            # the USD-M Futures adapter until the full pipeline uses Spot contracts.
+            raise ValueError(
+                "Spot market mode is not yet supported by the paper analysis pipeline; "
+                "refusing to use the Futures adapter for a Spot request"
+            )
+        if market_type != "futures":
+            raise ValueError("PAPER_MARKET_TYPE must be 'futures' or 'spot'")
         testnet = _parse_market_testnet(env.get("PAPER_MARKET_TESTNET", "true"))
         # This adapter only uses public GET endpoints. Testnet here means market
         # data only; this application has no credentials or exchange-order client.
         source = BinanceUsdMFuturesAdapter(testnet=testnet)
-        return cls.create(source=source, config=config, clock=clock)
+        ledger_factory = None
+        if "PAPER_DATABASE_URL" in env:
+            dsn = str(env.get("PAPER_DATABASE_URL", "")).strip()
+            if not dsn:
+                raise ValueError("PAPER_DATABASE_URL is configured but empty; refusing SQLite fallback")
+            ledger_factory = lambda _config: PostgresPaperLedger(dsn)
+        return cls.create(source=source, config=config, clock=clock, ledger_factory=ledger_factory)
 
     def process_poll(self, poll: MarketPollResult, *, now: float) -> PaperRuntimeReport[PaperServiceAnalysisResult]:
         if self._closed:

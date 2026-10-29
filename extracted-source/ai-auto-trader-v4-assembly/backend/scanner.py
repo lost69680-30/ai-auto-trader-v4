@@ -1,4 +1,4 @@
-"""Fail-closed market scanner for research candidates, never order placement.
+"""Fail-closed scanner for explicitly configured Spot or Futures research candidates.
 
 The score is a transparent screening heuristic, not a forecast or probability of profit.
 Every accepted market is labelled REVIEW and this module has no execution interface.
@@ -112,7 +112,7 @@ def scan_candidates(
     now: datetime,
     config: ScannerConfig | None = None,
 ) -> ScanResult:
-    """Screen eligible perpetual markets; output is research-only, never a trade signal."""
+    """Screen markets matching the explicitly configured contract type; never a trade signal."""
     if not _aware(now):
         raise ValueError("now must be timezone-aware")
     config = config or ScannerConfig()
@@ -140,7 +140,7 @@ def scan_candidates(
             rejections.append(Rejection(symbol, "contract status or symbol is not eligible"))
             continue
         if contract.contract_type != config.required_contract_type:
-            rejections.append(Rejection(symbol, "contract is not the required perpetual type"))
+            rejections.append(Rejection(symbol, "contract type does not match configured market type"))
             continue
         if contract.quote_asset != config.required_quote_asset:
             rejections.append(Rejection(symbol, "quote asset does not match configured asset"))

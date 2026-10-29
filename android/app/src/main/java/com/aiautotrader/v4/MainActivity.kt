@@ -63,9 +63,51 @@ internal data class MarketCandle(
 
 private data class MarketInstrument(
     val symbol: String,
-    val markPrice: Double,
-    val markObservedAt: String,
+    val marketType: String,
+    val price: Double,
+    val priceObservedAt: String,
+    val priceLabel: String,
     val candles: List<MarketCandle>,
+)
+
+private data class SpotResearchOpportunity(
+    val symbol: String,
+    val direction: String,
+    val score: Double,
+    val rank: Int,
+    val patterns: List<String>,
+    val evidence: List<String>,
+    val status: String,
+)
+
+private data class SpotResearchFetchResult(
+    val safeResponse: Boolean,
+    val status: String,
+    val message: String,
+    val opportunities: List<SpotResearchOpportunity>,
+    val rejections: List<String>,
+)
+
+private data class SpotBacktestReport(
+    val symbol: String,
+    val interval: String,
+    val status: String,
+    val requestedCandles: Int,
+    val closedCandles: Int,
+    val endingEquity: Double,
+    val netReturnPct: Double,
+    val tradeCount: Int,
+    val maxDrawdownPct: Double,
+    val totalEstimatedCosts: Double,
+    val method: String,
+    val warnings: List<String>,
+)
+
+private data class SpotBacktestFetchResult(
+    val safeResponse: Boolean,
+    val status: String,
+    val message: String,
+    val report: SpotBacktestReport?,
 )
 
 internal data class TestnetAccountDiagnostic(
@@ -203,6 +245,14 @@ private object BackendSession {
     val marketItems = mutableStateOf<List<MarketInstrument>>(emptyList())
     val marketLoading = mutableStateOf(false)
     val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+    val spotResearchStatus = mutableStateOf("NOT AVAILABLE")
+    val spotResearchMessage = mutableStateOf("Spot research is available when Spot public market mode is enabled.")
+    val spotResearchItems = mutableStateOf<List<SpotResearchOpportunity>>(emptyList())
+    val spotResearchRejections = mutableStateOf<List<String>>(emptyList())
+    val spotBacktestStatus = mutableStateOf("NOT RUN")
+    val spotBacktestMessage = mutableStateOf("Run a bounded, read-only baseline backtest on closed Spot candles.")
+    val spotBacktestReport = mutableStateOf<SpotBacktestReport?>(null)
+    val spotBacktestLoading = mutableStateOf(false)
     // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
     val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
 }
@@ -224,7 +274,11 @@ private fun parseMarketItems(array: JSONArray): List<MarketInstrument> {
         val row = array.optJSONObject(i) ?: continue
         if (row.optString("status") != "HEALTHY" || row.optBoolean("orders_authorized", true)) continue
         val symbol = row.optString("symbol").trim()
-        val price = row.optDouble("mark_price", Double.NaN)
+        val marketType = row.optString("market_type", "FUTURES").uppercase(Locale.ROOT)
+        val isSpot = marketType == "SPOT"
+        if (!isSpot && marketType != "FUTURES") continue
+        val price = if (isSpot) row.optDouble("last_price", Double.NaN) else row.optDouble("mark_price", Double.NaN)
+        val observedAt = if (isSpot) row.optString("last_observed_at") else row.optString("mark_observed_at")
         if (symbol.isBlank() || !price.isFinite() || price <= 0.0) continue
         val candlesJson = row.optJSONArray("candles") ?: JSONArray()
         val candles = mutableListOf<MarketCandle>()
@@ -243,7 +297,11 @@ private fun parseMarketItems(array: JSONArray): List<MarketInstrument> {
             }
         }
         if (candles.isNotEmpty()) {
-            result += MarketInstrument(symbol, price, row.optString("mark_observed_at"), candles.takeLast(100))
+            result += MarketInstrument(
+                symbol, marketType, price, observedAt,
+                if (isSpot) "Spot last price" else "Futures mark price",
+                candles.takeLast(100),
+            )
         }
     }
     return result
@@ -742,6 +800,192 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
     }
 }
 
+
+private fun fetchSpotResearch(token: String): SpotResearchFetchResult {
+    val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
+    if (!base.startsWith("https://") || token.length < 32) {
+        return SpotResearchFetchResult(false, "NOT CONNECTED",
+            "Connect the authenticated HTTPS backend to load Spot research.", emptyList(), emptyList())
+    }
+    val connection = try {
+        URL("$base/api/v1/spot/research").openConnection() as HttpURLConnection
+    } catch (e: Exception) {
+        return SpotResearchFetchResult(false, "OFFLINE",
+            "Spot research request could not be opened (${e.javaClass.simpleName}).", emptyList(), emptyList())
+    }
+    return try {
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 20000
+        connection.readTimeout = 45000
+        connection.setRequestProperty("Authorization", "Bearer $token")
+        connection.setRequestProperty("Accept", "application/json")
+        connection.useCaches = false
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        val json = try { JSONObject(body) } catch (_: Exception) {
+            return SpotResearchFetchResult(false, "INVALID RESPONSE",
+                "Spot research endpoint returned unreadable JSON.", emptyList(), emptyList())
+        }
+        if (code !in 200..299) {
+            val status = json.optString("status", "UNAVAILABLE")
+            return SpotResearchFetchResult(false, status,
+                "Spot research is unavailable (HTTP $code · $status).", emptyList(), emptyList())
+        }
+        if (json.optString("market_type") != "SPOT" || json.optBoolean("orders_authorized", true)) {
+            return SpotResearchFetchResult(false, "BLOCKED",
+                "Spot research response did not confirm Spot mode and disabled order authorization.",
+                emptyList(), emptyList())
+        }
+        val opportunitiesJson = json.optJSONArray("opportunities") ?: JSONArray()
+        val opportunities = mutableListOf<SpotResearchOpportunity>()
+        for (i in 0 until opportunitiesJson.length()) {
+            val row = opportunitiesJson.optJSONObject(i) ?: continue
+            val symbol = row.optString("symbol").trim()
+            val direction = row.optString("direction").uppercase(Locale.ROOT)
+            val score = row.optDouble("score", Double.NaN)
+            val rank = row.optInt("rank", 0)
+            if (symbol.isBlank() || !score.isFinite() || score !in 0.0..100.0 ||
+                rank <= 0 || row.optString("status") != "REVIEW" ||
+                row.optBoolean("orders_authorized", true) ||
+                direction !in setOf("LONG", "SHORT", "NEUTRAL")) {
+                return SpotResearchFetchResult(false, "BLOCKED",
+                    "Spot research contained an invalid or unsafe candidate; results were rejected.",
+                    emptyList(), emptyList())
+            }
+            val patterns = row.optJSONArray("patterns") ?: JSONArray()
+            val evidence = row.optJSONArray("evidence") ?: JSONArray()
+            opportunities += SpotResearchOpportunity(
+                symbol, direction, score, rank,
+                (0 until patterns.length()).mapNotNull { patterns.optString(it).takeIf(String::isNotBlank) },
+                (0 until evidence.length()).mapNotNull { evidence.optString(it).takeIf(String::isNotBlank) },
+                row.optString("status"),
+            )
+        }
+        val rejectionsJson = json.optJSONArray("rejections") ?: JSONArray()
+        val rejections = (0 until rejectionsJson.length()).mapNotNull { index ->
+            val row = rejectionsJson.optJSONObject(index) ?: return@mapNotNull null
+            val symbol = row.optString("symbol").ifBlank { "Unknown symbol" }
+            val reason = row.optString("reason").ifBlank { "Data rejected" }
+            "$symbol: $reason"
+        }
+        val status = json.optString("status", "UNKNOWN")
+        val message = when (status) {
+            "REVIEW_CANDIDATES" -> "OHLCV structure candidates only; no trade or profit prediction is authorized."
+            "NO_REVIEW_CANDIDATES" -> "No qualifying Spot structure candidates were found in the validated data."
+            "PARTIAL_DATA" -> "Some Spot data was unavailable or rejected; results may be incomplete."
+            else -> "Spot research status: $status."
+        }
+        SpotResearchFetchResult(true, status, message, opportunities, rejections)
+    } catch (e: Exception) {
+        SpotResearchFetchResult(false, "UNAVAILABLE",
+            "Spot research request failed (${e.javaClass.simpleName}); retrying automatically.",
+            emptyList(), emptyList())
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private fun fetchSpotBacktest(
+    token: String,
+    symbol: String,
+    interval: String,
+    limit: Int = 500,
+): SpotBacktestFetchResult {
+    val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
+    val normalizedSymbol = normalizeSymbol(symbol)
+    if (!base.startsWith("https://") || token.length < 32 || normalizedSymbol.isBlank()) {
+        return SpotBacktestFetchResult(false, "NOT CONNECTED",
+            "Connect the authenticated HTTPS backend and select a validated Spot market.", null)
+    }
+    val encodedSymbol = java.net.URLEncoder.encode(normalizedSymbol, "UTF-8")
+    val encodedInterval = java.net.URLEncoder.encode(interval, "UTF-8")
+    val connection = try {
+        URL("$base/api/v1/spot/backtest?symbol=$encodedSymbol&interval=$encodedInterval&limit=$limit")
+            .openConnection() as HttpURLConnection
+    } catch (e: Exception) {
+        return SpotBacktestFetchResult(false, "OFFLINE",
+            "Historical Spot research request could not be opened (${e.javaClass.simpleName}).", null)
+    }
+    return try {
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 20000
+        connection.readTimeout = 60000
+        connection.setRequestProperty("Authorization", "Bearer $token")
+        connection.setRequestProperty("Accept", "application/json")
+        connection.useCaches = false
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        val json = try {
+            JSONObject(body)
+        } catch (_: Exception) {
+            return SpotBacktestFetchResult(false, "INVALID RESPONSE",
+                "Historical Spot endpoint returned unreadable JSON (HTTP $code).", null)
+        }
+        if (code == 401) {
+            return SpotBacktestFetchResult(false, "UNAUTHORIZED",
+                "Backend rejected the saved bearer token. Reconnect from Dashboard.", null)
+        }
+        if (code !in 200..299) {
+            val status = json.optString("status", "UNAVAILABLE")
+            return SpotBacktestFetchResult(false, status,
+                "Historical Spot backtest is unavailable (HTTP $code · $status).", null)
+        }
+
+        val reportStatus = json.optString("status", "UNKNOWN")
+        val requested = json.optInt("requested_candles", -1)
+        val closed = json.optInt("closed_candles", -1)
+        val endingEquity = json.optDouble("ending_equity", Double.NaN)
+        val netReturnPct = json.optDouble("net_return_pct", Double.NaN)
+        val trades = json.optInt("trade_count", -1)
+        val maxDrawdownPct = json.optDouble("max_drawdown_pct", Double.NaN)
+        val estimatedCosts = json.optDouble("total_estimated_costs", Double.NaN)
+        val warningsJson = json.optJSONArray("warnings") ?: JSONArray()
+        val warnings = (0 until warningsJson.length()).mapNotNull { i ->
+            warningsJson.optString(i).takeIf(String::isNotBlank)
+        }
+        val safeResponse =
+            json.optString("market_type") == "SPOT" &&
+            !json.optBoolean("orders_authorized", true) &&
+            !json.optBoolean("positions_created", true) &&
+            reportStatus in setOf("COMPLETED", "INSUFFICIENT_HISTORY", "REJECTED") &&
+            requested == limit && closed in 0..limit && trades >= 0 &&
+            endingEquity.isFinite() && endingEquity >= 0.0 &&
+            netReturnPct.isFinite() && maxDrawdownPct.isFinite() && maxDrawdownPct >= 0.0 &&
+            estimatedCosts.isFinite() && estimatedCosts >= 0.0
+        if (!safeResponse) {
+            return SpotBacktestFetchResult(false, "BLOCKED",
+                "Historical Spot response failed safety or data validation; its metrics were rejected.", null)
+        }
+        val report = SpotBacktestReport(
+            symbol = normalizedSymbol,
+            interval = interval,
+            status = reportStatus,
+            requestedCandles = requested,
+            closedCandles = closed,
+            endingEquity = endingEquity,
+            netReturnPct = netReturnPct,
+            tradeCount = trades,
+            maxDrawdownPct = maxDrawdownPct,
+            totalEstimatedCosts = estimatedCosts,
+            method = json.optString("method", "Method not supplied."),
+            warnings = warnings,
+        )
+        val message = when (reportStatus) {
+            "INSUFFICIENT_HISTORY" -> "Not enough valid closed candles for the configured baseline."
+            "REJECTED" -> "Input data failed backtest validation; review the warnings before using this result."
+            else -> "Completed a fixed, long-only baseline simulation. Fees and slippage are estimates."
+        }
+        SpotBacktestFetchResult(true, reportStatus, message, report)
+    } catch (e: Exception) {
+        SpotBacktestFetchResult(false, "UNAVAILABLE",
+            "Historical Spot backtest failed (${e.javaClass.simpleName}); no orders or positions were created.", null)
+    } finally {
+        connection.disconnect()
+    }
+}
+
 private fun fetchCandleHistory(token: String, symbol: String): Map<String, List<MarketCandle>> {
     val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
     if (!base.startsWith("https://") || token.length < 32 || normalizeSymbol(symbol).isBlank()) return emptyMap()
@@ -1216,6 +1460,9 @@ private fun AnalysisScreen() {
     var symbol by remember { mutableStateOf("BTC/USDT") }
     var timeframe by remember { mutableStateOf("15m") }
     var selectedTab by remember { mutableStateOf("Market") }
+    var spotBacktestInterval by remember { mutableStateOf("5m") }
+    val backtestIntervals = listOf("1m", "5m", "15m", "1h", "4h", "1d", "1w")
+    val coroutineScope = rememberCoroutineScope()
     val timeframes = supportedTimeframes
     val sessionToken = BackendSession.token.value
     LaunchedEffect(sessionToken) {
@@ -1248,6 +1495,26 @@ private fun AnalysisScreen() {
         }
     }
     val loadedMarkets = BackendSession.marketItems.value
+    val spotMode = loadedMarkets.any { it.marketType == "SPOT" }
+    LaunchedEffect(sessionToken, spotMode) {
+        if (sessionToken.length < 32 || !spotMode) {
+            BackendSession.spotResearchItems.value = emptyList()
+            BackendSession.spotResearchRejections.value = emptyList()
+            BackendSession.spotResearchStatus.value = if (spotMode) "NOT CONNECTED" else "NOT AVAILABLE"
+            BackendSession.spotResearchMessage.value =
+                if (spotMode) "Connect the authenticated backend to load Spot research."
+                else "Spot research is available when Spot public market mode is enabled."
+        } else {
+            while (true) {
+                val result = withContext(Dispatchers.IO) { fetchSpotResearch(sessionToken) }
+                BackendSession.spotResearchStatus.value = result.status
+                BackendSession.spotResearchMessage.value = result.message
+                BackendSession.spotResearchItems.value = if (result.safeResponse) result.opportunities else emptyList()
+                BackendSession.spotResearchRejections.value = result.rejections
+                delay(120_000)
+            }
+        }
+    }
     val selectedMarket = loadedMarkets.firstOrNull { normalizeSymbol(it.symbol) == normalizeSymbol(symbol) }
     val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol ?: symbol)
     val candleHistoryByTimeframe = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
@@ -1295,7 +1562,7 @@ private fun AnalysisScreen() {
                     Text("MARKET CHART", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp)
                     Text(symbol, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     if (selectedMarket != null) {
-                        Text("Mark price: ${formatMarketPrice(selectedMarket.markPrice)}", color = Green, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("${selectedMarket.priceLabel}: ${formatMarketPrice(selectedMarket.price)}", color = Green, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 Tag(
@@ -1318,7 +1585,7 @@ private fun AnalysisScreen() {
             if (selectedMarket == null) {
                 Text(if (BackendSession.marketLoading.value || candleHistoryLoading) "Loading authenticated interval-specific candles…" else "No validated candles for $symbol. The chart will remain empty rather than fabricate prices.", color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
             } else {
-                Text("${displayedCandles.size} complete $timeframe candles · last observed ${selectedMarket.markObservedAt.ifBlank { "timestamp unavailable" }}", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                Text("${displayedCandles.size} complete $timeframe candles · last observed ${selectedMarket.priceObservedAt.ifBlank { "timestamp unavailable" }}", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 LegendDot("Volume", Gold)
@@ -1326,8 +1593,12 @@ private fun AnalysisScreen() {
                 LegendDot("Down candle", Red)
             }
         }
+        LaunchedEffect(selectedMarket?.marketType) {
+            if (selectedMarket?.marketType != "SPOT" && selectedTab == "Spot Research") selectedTab = "Market"
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Market", "Performance").forEach { t ->
+            (if (selectedMarket?.marketType == "SPOT") listOf("Market", "Spot Research", "Performance")
+             else listOf("Market", "Performance")).forEach { t ->
                 Box(Modifier.weight(1f).background(if (selectedTab == t) Gold.copy(alpha = .15f) else Panel, RoundedCornerShape(10.dp))
                     .border(1.dp, if (selectedTab == t) Gold else Grid, RoundedCornerShape(10.dp)).clickable { selectedTab = t }.padding(11.dp), contentAlignment = Alignment.Center) {
                     Text(t, color = if (selectedTab == t) Gold else Muted, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
@@ -1451,6 +1722,115 @@ private fun AnalysisScreen() {
                     "Thresholds are screening heuristics and are not calibrated across instruments or timeframes. This panel does not estimate loss probability, forecast profit, or authorize orders.",
                     color = Muted, fontSize = 11.sp, lineHeight = 16.sp
                 )
+            }
+        } else if (selectedTab == "Spot Research") {
+            SectionTitle("SPOT STRUCTURE RESEARCH · REVIEW ONLY")
+            CardPanel {
+                Text("Status: ${BackendSession.spotResearchStatus.value}", color = Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(BackendSession.spotResearchMessage.value, color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+                Text("Scores rank OHLCV patterns and are not probabilities of profit. This screen does not create orders or paper positions.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+            }
+            val researchItems = BackendSession.spotResearchItems.value
+            if (researchItems.isEmpty()) {
+                CardPanel {
+                    Text("No Spot structure candidates to review.", color = Muted, fontSize = 12.sp)
+                }
+            } else {
+                researchItems.forEach { item ->
+                    CardPanel {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(displaySymbol(item.symbol), color = White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                Text(item.patterns.joinToString(" · "), color = Gold, fontSize = 11.sp, lineHeight = 16.sp)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text("#${item.rank}", color = Muted, fontSize = 10.sp)
+                                Text("${item.score}/100", color = Green, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Text(
+                            when (item.direction) {
+                                "LONG" -> "Long-pattern review only · not a trade signal"
+                                "SHORT" -> "Short pattern only · Spot short selling is not enabled"
+                                else -> "Neutral pattern review only"
+                            },
+                            color = if (item.direction == "LONG") Green else Gold,
+                            fontSize = 11.sp, lineHeight = 16.sp
+                        )
+                        item.evidence.forEach { evidence -> Text("• $evidence", color = Muted, fontSize = 11.sp, lineHeight = 16.sp) }
+                    }
+                }
+            }
+            val rejected = BackendSession.spotResearchRejections.value
+            if (rejected.isNotEmpty()) {
+                SectionTitle("DATA REJECTIONS")
+                CardPanel {
+                    rejected.take(8).forEach { Text("• $it", color = Color(0xFFFFC857), fontSize = 11.sp, lineHeight = 16.sp) }
+                }
+            }
+
+            SectionTitle("HISTORICAL SPOT BACKTEST · BASELINE ONLY")
+            CardPanel {
+                Text("Selected market: ${selectedMarket?.symbol ?: "Unavailable"}", color = White, fontSize = 12.sp)
+                Text("Interval", color = Muted, fontSize = 11.sp)
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    backtestIntervals.forEach { candidate ->
+                        ChoiceChip(candidate, spotBacktestInterval == candidate) {
+                            spotBacktestInterval = candidate
+                        }
+                    }
+                }
+                Text("History limit: 500 closed candles · validated by the backend before simulation.", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                Button(
+                    enabled = !BackendSession.spotBacktestLoading.value &&
+                        sessionToken.length >= 32 && selectedMarket?.marketType == "SPOT",
+                    onClick = {
+                        val requestToken = sessionToken
+                        val requestSymbol = selectedMarket?.symbol.orEmpty()
+                        val requestInterval = spotBacktestInterval
+                        BackendSession.spotBacktestLoading.value = true
+                        BackendSession.spotBacktestStatus.value = "RUNNING"
+                        BackendSession.spotBacktestMessage.value = "Fetching and validating closed Spot candles…"
+                        BackendSession.spotBacktestReport.value = null
+                        coroutineScope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                fetchSpotBacktest(requestToken, requestSymbol, requestInterval, 500)
+                            }
+                            BackendSession.spotBacktestStatus.value = result.status
+                            BackendSession.spotBacktestMessage.value = result.message
+                            BackendSession.spotBacktestReport.value = if (result.safeResponse) result.report else null
+                            BackendSession.spotBacktestLoading.value = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (BackendSession.spotBacktestLoading.value) "Running baseline…" else "Run historical backtest")
+                }
+                Text("Status: ${BackendSession.spotBacktestStatus.value}", color = Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(BackendSession.spotBacktestMessage.value, color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                Text("Read-only research: no orders, no positions and no leverage. This fixed baseline is not a forecast or evidence of future profitability.", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                val report = BackendSession.spotBacktestReport.value
+                if (report != null) {
+                    Divider(color = Grid)
+                    Text("${displaySymbol(report.symbol)} · ${report.interval} · ${report.status}", color = White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                    AnalysisValue("Closed candles", "${report.closedCandles} / ${report.requestedCandles}", Muted)
+                    AnalysisValue("Ending equity (simulated)", String.format(Locale.US, "%.2f", report.endingEquity), Muted)
+                    AnalysisValue("Net return (simulated)", String.format(Locale.US, "%+.2f%%", report.netReturnPct), if (report.netReturnPct >= 0.0) Green else Red)
+                    AnalysisValue("Completed trades", report.tradeCount.toString(), Muted)
+                    AnalysisValue("Maximum drawdown", String.format(Locale.US, "%.2f%%", report.maxDrawdownPct), Gold)
+                    AnalysisValue("Estimated fees + slippage", String.format(Locale.US, "%.4f", report.totalEstimatedCosts), Muted)
+                    Text(report.method, color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                    if (report.warnings.isNotEmpty()) {
+                        Text("Warnings", color = Gold, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                        report.warnings.take(5).forEach { warning ->
+                            Text("• $warning", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                        }
+                    }
+                }
             }
         } else {
             SectionTitle("PERFORMANCE ANALYTICS")
