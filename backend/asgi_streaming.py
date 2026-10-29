@@ -110,7 +110,14 @@ def create_streaming_asgi_app(
                     continue
                 if message.get("type") == "websocket.disconnect":
                     return
-                # Client messages are intentionally ignored; this is a one-way feed.
+                # This endpoint is a one-way feed. Reject unexpected frames so
+                # client traffic cannot trigger an extra provider poll.
+                await send({
+                    "type": "websocket.close",
+                    "code": 4400,
+                    "reason": "client messages are not supported",
+                })
+                return
         except Exception:
             logger.warning("WebSocket stream ended unexpectedly; orders remain unauthorized")
             return
