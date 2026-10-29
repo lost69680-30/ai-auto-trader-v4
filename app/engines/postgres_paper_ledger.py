@@ -124,37 +124,76 @@ class _CompatCursor:
 
 
 class _PostgresConnection:
-    """Translate only the narrow SQLite SQL subset used by paper_ledger.py."""
+    """Translate the narrow SQLite SQL subset and recover dropped idle sessions.
+
+    Reconnects are allowed only when no transaction is in progress, and automatic
+    retries are limited to read-only SELECT statements. A lost write transaction
+    remains fail-closed because its commit outcome may be uncertain.
+    """
 
     def __init__(self, dsn: str) -> None:
         if psycopg is None:
             raise RuntimeError("PostgreSQL ledger requires the pinned psycopg dependency.")
+        self._dsn = dsn
+        self._transaction_open = False
+        self._search_path: str | None = None
+        self._raw = self._open_connection()
+        self.row_factory = None
+
+    def _open_connection(self):
         try:
-            # A persistent session is intentional: this adapter sets search_path and
-            # relies on transaction-scoped advisory locks. Use Supabase session mode.
-            self._raw = psycopg.connect(
-                dsn,
+            # Session mode is required for session search_path and advisory locks.
+            return psycopg.connect(
+                self._dsn,
                 autocommit=True,
                 connect_timeout=10,
                 prepare_threshold=None,
                 row_factory=tuple_row,
-                **postgres_connection_ssl_options(dsn),
+                **postgres_connection_ssl_options(self._dsn),
             )
         except Exception as exc:
-            # Driver text is useful for diagnosis only after URI/password redaction.
-            diagnostic = _safe_driver_diagnostic(exc, dsn)
+            diagnostic = _safe_driver_diagnostic(exc, self._dsn)
             raise RuntimeError(
                 f"Unable to connect to the configured PostgreSQL ledger ({type(exc).__name__}): {diagnostic}"
             ) from None
-        self.row_factory = None
+
+    def _reconnect(self) -> None:
+        if self._transaction_open:
+            raise RuntimeError(
+                "PostgreSQL connection was lost inside a transaction; refusing automatic reconnect "
+                "because the transaction outcome may be uncertain."
+            ) from None
+        old_connection = self._raw
+        try:
+            old_connection.close()
+        except Exception:
+            pass
+        self._raw = self._open_connection()
+        if self._search_path == SCHEMA_NAME:
+            try:
+                self._raw.execute("SET search_path TO paper_ledger")
+            except Exception:
+                self._raw.close()
+                raise
+
+    def _ensure_connection(self) -> None:
+        if self._raw.closed:
+            self._reconnect()
 
     @property
     def in_transaction(self) -> bool:
-        return self._raw.info.transaction_status != TransactionStatus.IDLE
+        # If the transport is gone, do not issue ROLLBACK on the dead socket.
+        # _transaction_open still prevents unsafe automatic reconnect.
+        return self._transaction_open and not self._raw.closed
+
+    @staticmethod
+    def _is_retryable_read(query: str) -> bool:
+        return bool(re.match(r"^SELECT\b", query.lstrip(), re.IGNORECASE))
 
     def execute(self, statement: str, parameters: Iterable[Any] | None = None) -> _CompatCursor:
         query = statement.strip()
         upper = query.upper().rstrip(";").strip()
+        self._ensure_connection()
 
         # SQLite connection tuning pragmas are irrelevant to PostgreSQL.
         if re.fullmatch(r"PRAGMA\s+(FOREIGN_KEYS\s*=\s*ON|BUSY_TIMEOUT\s*=\s*\d+|JOURNAL_MODE\s*=\s*WAL)", upper):
@@ -179,7 +218,7 @@ class _PostgresConnection:
 
         if upper == "BEGIN IMMEDIATE":
             self._raw.execute("BEGIN")
-            # Match SQLite BEGIN IMMEDIATE write serialization across API workers.
+            self._transaction_open = True
             cursor = self._raw.execute("SELECT pg_advisory_xact_lock(%s)", (_WRITE_LOCK_KEY,))
             return _CompatCursor(cursor)
 
@@ -199,11 +238,37 @@ class _PostgresConnection:
             query, flags=re.IGNORECASE,
         )
         query = re.sub(r"\bREAL\b", "DOUBLE PRECISION", query, flags=re.IGNORECASE)
-        cursor = (
-            self._raw.execute(query, tuple(parameters))
-            if parameters is not None
-            else self._raw.execute(query)
-        )
+
+        try:
+            cursor = (
+                self._raw.execute(query, tuple(parameters))
+                if parameters is not None
+                else self._raw.execute(query)
+            )
+        except Exception as exc:
+            # Never replay writes or queries in a transaction: the server may have
+            # applied a mutation before the transport failed.
+            if (
+                isinstance(exc, psycopg.OperationalError)
+                and self._raw.closed
+                and not self._transaction_open
+                and self._is_retryable_read(query)
+            ):
+                self._reconnect()
+                cursor = (
+                    self._raw.execute(query, tuple(parameters))
+                    if parameters is not None
+                    else self._raw.execute(query)
+                )
+            else:
+                raise
+
+        if upper == "COMMIT":
+            self._transaction_open = False
+        elif upper == "ROLLBACK":
+            self._transaction_open = False
+        elif upper == "SET SEARCH_PATH TO PAPER_LEDGER":
+            self._search_path = SCHEMA_NAME
         return _CompatCursor(cursor)
 
     def executescript(self, script: str) -> _CompatCursor:
@@ -215,6 +280,7 @@ class _PostgresConnection:
 
     def close(self) -> None:
         self._raw.close()
+        self._transaction_open = False
 
 
 class PostgresPaperLedger(SQLitePaperLedger):
