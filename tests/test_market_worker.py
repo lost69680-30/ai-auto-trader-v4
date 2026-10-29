@@ -241,3 +241,73 @@ def test_production_poll_does_not_pin_kline_validation_to_request_start_time():
     kline_call = next(call for call in source.calls if call[0] == "klines")
     assert kline_call[-1] is None
     assert result.orders_authorized is False
+
+
+def test_worker_rejects_nonfinite_futures_funding_context():
+    import math
+
+    opened = NOW - timedelta(minutes=2)
+    source = FakeAdapter(candles=(candle(opened, opened + timedelta(minutes=1)),))
+    source.mark = MarkPriceSnapshot(
+        symbol="BTCUSDT", mark_price=101, index_price=100.9,
+        last_funding_rate=math.nan, next_funding_at=NOW + timedelta(hours=8),
+        observed_at=NOW,
+    )
+
+    result = MarketDataWorker(source, config()).poll_once(now=NOW)
+
+    assert result.frames[0].status is FeedStatus.INVALID_DATA
+    assert result.frames[0].closed_candles == ()
+    assert any("funding" in reason.lower() for reason in result.frames[0].reasons)
+    assert result.orders_authorized is False
+
+
+def test_worker_rejects_partial_futures_context():
+    opened = NOW - timedelta(minutes=2)
+    source = FakeAdapter(candles=(candle(opened, opened + timedelta(minutes=1)),))
+    source.mark = MarkPriceSnapshot(
+        symbol="BTCUSDT", mark_price=101, index_price=100.9,
+        last_funding_rate=None, next_funding_at=NOW + timedelta(hours=8),
+        observed_at=NOW,
+    )
+
+    result = MarketDataWorker(source, config()).poll_once(now=NOW)
+
+    assert result.frames[0].status is FeedStatus.INVALID_DATA
+    assert result.frames[0].closed_candles == ()
+    assert any("context" in reason.lower() for reason in result.frames[0].reasons)
+    assert result.orders_authorized is False
+
+
+def test_worker_rejects_future_funding_timestamp_that_is_not_in_future():
+    opened = NOW - timedelta(minutes=2)
+    source = FakeAdapter(candles=(candle(opened, opened + timedelta(minutes=1)),))
+    source.mark = MarkPriceSnapshot(
+        symbol="BTCUSDT", mark_price=101, index_price=100.9,
+        last_funding_rate=0.0001, next_funding_at=NOW - timedelta(seconds=1),
+        observed_at=NOW,
+    )
+
+    result = MarketDataWorker(source, config()).poll_once(now=NOW)
+
+    assert result.frames[0].status is FeedStatus.INVALID_DATA
+    assert result.frames[0].closed_candles == ()
+    assert any("next funding" in reason.lower() for reason in result.frames[0].reasons)
+    assert result.orders_authorized is False
+
+
+def test_worker_rejects_mark_snapshot_that_claims_order_authority():
+    opened = NOW - timedelta(minutes=2)
+    source = FakeAdapter(candles=(candle(opened, opened + timedelta(minutes=1)),))
+    source.mark = MarkPriceSnapshot(
+        symbol="BTCUSDT", mark_price=101, index_price=100.9,
+        last_funding_rate=0.0001, next_funding_at=NOW + timedelta(hours=8),
+        observed_at=NOW, orders_authorized=True,
+    )
+
+    result = MarketDataWorker(source, config()).poll_once(now=NOW)
+
+    assert result.frames[0].status is FeedStatus.INVALID_DATA
+    assert result.frames[0].closed_candles == ()
+    assert any("order" in reason.lower() for reason in result.frames[0].reasons)
+    assert result.orders_authorized is False
