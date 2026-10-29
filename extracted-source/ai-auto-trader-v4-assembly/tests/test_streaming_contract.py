@@ -18,6 +18,9 @@ def test_market_snapshot_event_has_versioned_read_only_contract():
             "symbol": "BTCUSDT",
             "mark_price": 65000.0,
             "mark_observed_at": (now - timedelta(seconds=2)).isoformat(),
+            "index_price": 64990.0,
+            "funding_rate": 0.0001,
+            "next_funding_at": (now + timedelta(hours=8)).isoformat(),
             "status": "HEALTHY",
             "orders_authorized": False,
         },
@@ -31,6 +34,9 @@ def test_market_snapshot_event_has_versioned_read_only_contract():
         "symbol": "BTCUSDT",
         "market_type": "FUTURES",
         "mark_price": 65000.0,
+        "index_price": 64990.0,
+        "funding_rate": 0.0001,
+        "next_funding_at": (now + timedelta(hours=8)).isoformat(),
         "observed_at": (now - timedelta(seconds=2)).isoformat(),
         "status": "HEALTHY",
         "orders_authorized": False,
@@ -59,6 +65,9 @@ def test_market_event_rejects_stale_or_future_data():
             "symbol": "BTCUSDT",
             "mark_price": 65000.0,
             "mark_observed_at": observed.isoformat(),
+            "index_price": 64990.0,
+            "funding_rate": 0.0001,
+            "next_funding_at": (now + timedelta(hours=8)).isoformat(),
             "status": "HEALTHY",
             "orders_authorized": False,
         }
@@ -158,52 +167,18 @@ def test_futures_market_snapshot_rejects_partial_or_expired_funding_context():
     with pytest.raises(ValueError):
         make_market_snapshot_event(expired, now=now)
 
-def test_futures_market_snapshot_preserves_index_and_funding_context():
+
+def test_futures_market_snapshot_rejects_missing_entire_funding_context():
     now = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)
-    next_funding = now + timedelta(hours=8)
-    event = make_market_snapshot_event(
-        {
-            "symbol": "BTCUSDT",
-            "market_type": "FUTURES",
-            "mark_price": 65000.0,
-            "mark_observed_at": (now - timedelta(seconds=2)).isoformat(),
-            "index_price": 64990.0,
-            "funding_rate": 0.0001,
-            "next_funding_at": next_funding.isoformat(),
-            "status": "HEALTHY",
-            "orders_authorized": False,
-        },
-        now=now,
-        max_age_seconds=90,
-    )
-
-    assert event["market_type"] == "FUTURES"
-    assert event["mark_price"] == 65000.0
-    assert event["index_price"] == 64990.0
-    assert event["funding_rate"] == 0.0001
-    assert event["next_funding_at"] == next_funding.isoformat()
-    assert event["orders_authorized"] is False
-
-
-def test_futures_market_snapshot_rejects_partial_or_expired_funding_context():
-    now = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)
-    base = {
-        "symbol": "BTCUSDT",
-        "market_type": "FUTURES",
-        "mark_price": 65000.0,
-        "mark_observed_at": now.isoformat(),
-        "index_price": 64990.0,
-        "funding_rate": 0.0001,
-        "next_funding_at": (now + timedelta(hours=8)).isoformat(),
-        "status": "HEALTHY",
-        "orders_authorized": False,
-    }
-    partial = dict(base)
-    partial["funding_rate"] = None
-    expired = dict(base)
-    expired["next_funding_at"] = (now - timedelta(seconds=1)).isoformat()
-
     with pytest.raises(ValueError):
-        make_market_snapshot_event(partial, now=now)
-    with pytest.raises(ValueError):
-        make_market_snapshot_event(expired, now=now)
+        make_market_snapshot_event(
+            {
+                "symbol": "BTCUSDT",
+                "market_type": "FUTURES",
+                "mark_price": 65000.0,
+                "mark_observed_at": now.isoformat(),
+                "status": "HEALTHY",
+                "orders_authorized": False,
+            },
+            now=now,
+        )
