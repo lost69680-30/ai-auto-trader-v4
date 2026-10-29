@@ -334,6 +334,7 @@ class PaperServiceAnalysisHandler:
                 start_ms = max(0, int(min(cursors) * 1000))
                 end_ms = int(now.timestamp() * 1000)
                 pages = 0
+                blocked_at_by_position: dict[str, float] = {}
                 while start_ms <= end_ms:
                     rows = fetch_history(
                         symbol, start_time_ms=start_ms, end_time_ms=end_ms, limit=1000,
@@ -346,7 +347,6 @@ class PaperServiceAnalysisHandler:
                     if pages > 10:
                         raise ValueError("FundingHistoryBacklogTooLarge")
                     last_stamp_ms = None
-                    blocked_at_by_position: dict[str, float] = {}
                     for event in rows:
                         if not isinstance(event, FundingRateRecord):
                             raise ValueError("MalformedFundingRecord")
