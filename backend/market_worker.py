@@ -174,6 +174,34 @@ class MarketDataWorker:
         reasons: list[str] = []
         if mark.symbol != symbol or not math.isfinite(mark.mark_price) or mark.mark_price <= 0:
             reasons.append("mark-price payload does not match symbol or contains an invalid price")
+        if mark.orders_authorized is not False:
+            reasons.append("market-data snapshot has unexpected order authority")
+
+        # Spot adapters may omit all Futures-only context. Futures snapshots must
+        # provide the complete trio, with valid values, rather than silently
+        # broadcasting partial or malformed funding metadata as a healthy feed.
+        futures_context = (mark.index_price, mark.last_funding_rate, mark.next_funding_at)
+        if any(value is not None for value in futures_context) and not all(
+            value is not None for value in futures_context
+        ):
+            reasons.append("Futures context is incomplete")
+        elif all(value is not None for value in futures_context):
+            if (isinstance(mark.index_price, bool)
+                    or not isinstance(mark.index_price, (int, float))
+                    or not math.isfinite(mark.index_price) or mark.index_price <= 0):
+                reasons.append("index price is invalid")
+            if (isinstance(mark.last_funding_rate, bool)
+                    or not isinstance(mark.last_funding_rate, (int, float))
+                    or not math.isfinite(mark.last_funding_rate)):
+                reasons.append("funding rate is invalid")
+            next_funding_at = mark.next_funding_at
+            if (not isinstance(next_funding_at, datetime)
+                    or next_funding_at.tzinfo is None
+                    or next_funding_at.utcoffset() is None):
+                reasons.append("next funding timestamp is not timezone-aware")
+            elif next_funding_at.astimezone(timezone.utc) <= validation_now:
+                reasons.append("next funding timestamp is not in the future")
+
         if mark.observed_at.tzinfo is None or mark.observed_at.utcoffset() is None:
             reasons.append("mark-price timestamp is not timezone-aware")
         else:
