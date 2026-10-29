@@ -133,7 +133,8 @@ def _fetch_candle_intervals(source, symbol: str, intervals: tuple[str, ...], lim
 def create_app(*, database_path: str, token: str, market_status: Callable[[], dict] | None = None,
                market_items: Callable[[], list[dict]] | None = None,
                market_candles: Callable[[str], dict] | None = None,
-               account_status: Callable[[], dict] | None = None):
+               account_status: Callable[[], dict] | None = None,
+               analysis_status: Callable[[], dict] | None = None):
     """Create WSGI app. A strong API token is mandatory; no permissive defaults."""
     if not isinstance(token, str) or len(token) < 32:
         raise ValueError("API token must be at least 32 characters; configure it as a secret")
@@ -183,17 +184,19 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                             "emergency_stop_reason": ledger.emergency_stop_reason,
                             "open_position_count": len(ledger.open_positions), "feed": feed,
                             "state_storage": state_storage, "server_time": time.time(),
-                            "analysis_runtime": {
-                                "status": "READ_ONLY_MARKET_DATA_ONLY",
+                            "analysis_runtime": (analysis_status() if analysis_status else {
+                                "enabled": False,
+                                "status": "NOT_STARTED",
                                 "research_pipeline": "NOT_STARTED",
                                 "paper_simulation": "NOT_STARTED",
+                                "last_cycle_at": None,
+                                "last_cycle_error": None,
                                 "orders_authorized": False,
                                 "reason": (
-                                    "This deployment runs the validated public market-data poller and "
-                                    "read-only API only; the unattended research-to-paper simulation "
-                                    "worker is not started."
+                                    "Research-to-paper worker is disabled; this service is read-only "
+                                    "market data only."
                                 ),
-                            },
+                            }),
                         }
                     body, status = _json_bytes(payload), "200 OK"
                 except Exception:
@@ -290,6 +293,48 @@ def vars_order(order) -> dict[str, object]:
             "side": order.side, "quantity": order.quantity, "entry_price": order.entry_price,
             "stop_loss": order.stop_loss, "take_profit": order.take_profit,
             "recorded_at": order.recorded_at, "status": order.status}
+
+
+class AnalysisRuntimeHealth:
+    """Thread-safe, fail-closed status for the opt-in paper research runtime."""
+    def __init__(self, enabled: bool) -> None:
+        self._lock = threading.Lock()
+        self._enabled = enabled
+        self._status = "STARTING" if enabled else "NOT_STARTED"
+        self._last_cycle_at = None
+        self._last_cycle_error = None
+        self._reason = "waiting for the first completed paper-analysis cycle" if enabled else (
+            "Research-to-paper worker is disabled; this service is read-only market data only."
+        )
+
+    def publish(self, report) -> None:
+        stamp = datetime.fromtimestamp(report.checked_at, timezone.utc).isoformat()
+        result = getattr(report, "analysis_result", None)
+        result_status = getattr(result, "status", None)
+        with self._lock:
+            self._status = "RUNNING"
+            self._last_cycle_at = stamp
+            self._last_cycle_error = None
+            self._reason = str(result_status or report.analysis_status)[:120]
+
+    def fail(self, exc: Exception) -> None:
+        with self._lock:
+            self._status = "ERROR"
+            self._last_cycle_error = type(exc).__name__
+            self._reason = "paper analysis cycle failed; see redacted server logs"
+
+    def status(self) -> dict:
+        with self._lock:
+            return {
+                "enabled": self._enabled,
+                "status": self._status,
+                "research_pipeline": self._status if self._enabled else "NOT_STARTED",
+                "paper_simulation": self._status if self._enabled else "NOT_STARTED",
+                "last_cycle_at": self._last_cycle_at,
+                "last_cycle_error": self._last_cycle_error,
+                "orders_authorized": False,
+                "reason": self._reason,
+            }
 
 
 class MarketFeedCache:
@@ -412,10 +457,37 @@ def main() -> None:
     else:
         source = BinanceUsdMFuturesAdapter(testnet=testnet)
         logging.info("market data mode=%s", "FUTURES_TESTNET" if testnet else "FUTURES_PRODUCTION_PUBLIC")
-    worker = MarketDataWorker(source, MarketWorkerConfig(
-        symbols=symbols, interval=interval, candle_limit=candle_limit,
-        poll_interval_seconds=poll_interval, max_market_age_seconds=max_age,
-    ))
+    analysis_enabled = os.environ.get("PAPER_RESEARCH_WORKER_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+    analysis_health = AnalysisRuntimeHealth(enabled=analysis_enabled)
+    paper_app = None
+    if analysis_enabled:
+        if market_mode != "futures":
+            raise SystemExit("PAPER_RESEARCH_WORKER_ENABLED requires PAPER_MARKET_DATA_MODE=futures")
+        if "PAPER_MARKET_TESTNET" not in os.environ:
+            raise SystemExit("PAPER_RESEARCH_WORKER_ENABLED requires explicit PAPER_MARKET_TESTNET=true or false")
+        from app.engines.paper_service_app import PaperServiceApplication, PaperServiceConfig
+        try:
+            paper_config = PaperServiceConfig.from_env()
+            expected = (
+                ("symbols", paper_config.symbols_list, symbols),
+                ("candle interval", paper_config.candle_interval, interval),
+                ("candle limit", paper_config.candle_limit, candle_limit),
+                ("poll interval", paper_config.poll_interval_seconds, poll_interval),
+                ("maximum market age", paper_config.max_market_age_seconds, max_age),
+            )
+            mismatches = [name for name, configured, api_value in expected if configured != api_value]
+            if mismatches:
+                raise ValueError("paper and API market configuration must match: " + ", ".join(mismatches))
+            paper_app = PaperServiceApplication.create(source=source, config=paper_config)
+            worker = paper_app.worker
+            logging.warning("opt-in research-to-paper worker enabled; paper-only risk checks remain authoritative")
+        except Exception as exc:
+            raise SystemExit("Research-to-paper runtime startup failed closed: " + _safe_startup_error(exc)) from None
+    else:
+        worker = MarketDataWorker(source, MarketWorkerConfig(
+            symbols=symbols, interval=interval, candle_limit=candle_limit,
+            poll_interval_seconds=poll_interval, max_market_age_seconds=max_age,
+        ))
     analysis_candle_limit = int(os.environ.get("PAPER_ANALYSIS_CANDLE_LIMIT", "500"))
     if not 50 <= analysis_candle_limit <= 500:
         raise SystemExit("PAPER_ANALYSIS_CANDLE_LIMIT must be between 50 and 500")
@@ -448,6 +520,16 @@ def main() -> None:
             try:
                 result = worker.poll_once()
                 cache.publish(result)
+                if paper_app is not None:
+                    try:
+                        report = paper_app.process_poll(result, now=time.time())
+                        analysis_health.publish(report)
+                        logging.info("paper cycle status=%s healthy=%s unhealthy=%s open_positions=%d orders_authorized=False",
+                                     report.analysis_status, report.healthy_symbols, report.unhealthy_symbols,
+                                     report.open_positions)
+                    except Exception as analysis_exc:
+                        analysis_health.fail(analysis_exc)
+                        logging.exception("Paper analysis cycle failed; no live exchange orders are available")
                 logging.info("market feed status=%s healthy=%d unhealthy=%d orders_authorized=False",
                              cache.status()["status"], len(result.healthy_symbols), len(result.unhealthy_symbols))
                 for frame in result.frames:
@@ -470,12 +552,15 @@ def main() -> None:
         with make_server(host, port, create_app(database_path=database, token=token,
                                                 market_status=cache.status, market_items=cache.items,
                                                 market_candles=market_candles,
-                                                account_status=binance_testnet_account.account_summary)) as server:
+                                                account_status=binance_testnet_account.account_summary,
+                                                analysis_status=analysis_health.status)) as server:
             print(f"Read-only paper API listening on {host}:{port}; public market poller active; no execution routes")
             server.serve_forever()
     finally:
         stop.set()
         poller.join(timeout=5)
+        if paper_app is not None:
+            paper_app.close()
 
 
 if __name__ == "__main__":
