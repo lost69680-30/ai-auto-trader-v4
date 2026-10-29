@@ -1,4 +1,5 @@
 from pathlib import Path
+import tomllib
 
 ROOT = Path(__file__).parents[1]
 ANDROID_SOURCE = ROOT / "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
@@ -43,9 +44,11 @@ def test_postgres_paper_ledger_sources_and_driver_are_mirrored():
     root_project = ROOT / "pyproject.toml"
     package_project = ROOT / "extracted-source/ai-auto-trader-v4-assembly/pyproject.toml"
 
-    dependency = 'dependencies = ["psycopg[binary]==3.3.6"]'
-    assert dependency in root_project.read_text(encoding="utf-8")
-    assert dependency in package_project.read_text(encoding="utf-8")
+    for project in (root_project, package_project):
+        dependencies = tomllib.loads(project.read_text(encoding="utf-8"))["project"]["dependencies"]
+        assert "psycopg[binary]==3.3.6" in dependencies
+        assert any(item.startswith("asgiref>=3.8,<4") for item in dependencies)
+        assert any(item.startswith("uvicorn[standard]>=0.30,<1") for item in dependencies)
 
 def test_remote_postgres_ledger_connections_require_encrypted_transport():
     from app.engines.postgres_ssl import postgres_connection_ssl_options
