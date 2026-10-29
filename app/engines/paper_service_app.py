@@ -608,6 +608,17 @@ class PaperServiceApplication:
                  clock: Callable[[], datetime] | None = None) -> "PaperServiceApplication":
         config = PaperServiceConfig.from_env(environ)
         env = os.environ if environ is None else environ
+        market_type = str(env.get("PAPER_MARKET_TYPE", "futures")).strip().lower()
+        if market_type == "spot":
+            # Fail closed: the current analysis pipeline still requires Futures-only
+            # mark/funding fields. Never silently route an explicit Spot request to
+            # the USD-M Futures adapter until the full pipeline uses Spot contracts.
+            raise ValueError(
+                "Spot market mode is not yet supported by the paper analysis pipeline; "
+                "refusing to use the Futures adapter for a Spot request"
+            )
+        if market_type != "futures":
+            raise ValueError("PAPER_MARKET_TYPE must be 'futures' or 'spot'")
         testnet = _parse_market_testnet(env.get("PAPER_MARKET_TESTNET", "true"))
         # This adapter only uses public GET endpoints. Testnet here means market
         # data only; this application has no credentials or exchange-order client.
