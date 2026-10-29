@@ -297,3 +297,25 @@ def test_spot_market_universe_uses_spot_endpoints_and_spot_contract_metadata():
     assert universe.contracts[0].min_notional == pytest.approx(5)
     assert universe.snapshots[0].symbol == "BTCUSDT"
     assert universe.snapshots[0].last_price == pytest.approx(100)
+
+
+def test_spot_server_time_uses_spot_time_endpoint():
+    from backend.market_data_adapter import BinanceSpotMarketDataAdapter
+
+    transport, calls = make_transport({"/api/v3/time": {"serverTime": int(NOW.timestamp() * 1000)}})
+    adapter = BinanceSpotMarketDataAdapter(transport=transport)
+
+    assert adapter.fetch_server_time() == NOW
+    assert calls[0][0] == "/api/v3/time"
+    assert adapter.base_url == "https://data-api.binance.vision"
+
+
+def test_spot_funding_history_is_explicitly_unsupported():
+    from backend.market_data_adapter import BinanceSpotMarketDataAdapter
+
+    def transport(path, params, timeout):
+        raise AssertionError("Spot funding-history call must not hit a Futures endpoint")
+
+    adapter = BinanceSpotMarketDataAdapter(transport=transport)
+    with pytest.raises(NotImplementedError, match="Spot markets do not have funding rates"):
+        adapter.fetch_funding_rate_history("BTCUSDT")
