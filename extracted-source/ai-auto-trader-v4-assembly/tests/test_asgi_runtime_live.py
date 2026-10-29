@@ -3,7 +3,7 @@ import json
 import socket
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import uvicorn
 import websockets
@@ -23,8 +23,12 @@ def _wsgi_ok(environ, start_response):
 def test_real_loopback_websocket_delivers_authenticated_read_only_snapshot():
     snapshot = {
         "symbol": "BTCUSDT",
+        "market_type": "FUTURES",
         "mark_price": 65000.0,
         "mark_observed_at": datetime.now(timezone.utc).isoformat(),
+        "index_price": 64990.0,
+        "funding_rate": 0.0001,
+        "next_funding_at": (datetime.now(timezone.utc) + timedelta(hours=8)).isoformat(),
         "status": "HEALTHY",
         "orders_authorized": False,
     }
@@ -69,7 +73,11 @@ def test_real_loopback_websocket_delivers_authenticated_read_only_snapshot():
         assert event["type"] == "market.snapshot"
         assert event["symbol"] == "BTCUSDT"
         assert event["orders_authorized"] is False
+        assert event["market_type"] == "FUTURES"
         assert event["mark_price"] == 65000.0
+        assert event["index_price"] == 64990.0
+        assert event["funding_rate"] == 0.0001
+        assert event["next_funding_at"] == snapshot["next_funding_at"]
     finally:
         server.should_exit = True
         thread.join(timeout=5)
