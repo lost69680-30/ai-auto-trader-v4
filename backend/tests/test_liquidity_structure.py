@@ -124,3 +124,53 @@ def test_config_rejects_invalid_thresholds():
 def test_duplicate_symbols_fail_closed():
     data = sample_input()
     assert rank_opportunities([data, data], now=NOW, config=LiquidityConfig(lookback_candles=2)) == ()
+
+
+def test_spot_structure_uses_ohlcv_without_futures_funding_fields():
+    from backend.liquidity_structure import SpotMarketStructureInput, rank_spot_opportunities
+
+    data = SpotMarketStructureInput(
+        symbol="BTCUSDT",
+        candles=(
+            candle(100, 102, 99, 101), candle(101, 103, 100, 102),
+            candle(102, 104, 101, 103), candle(103, 106, 102, 105.5, 180),
+        ),
+        timestamp=NOW,
+        reference_level=104.0,
+        previous_close=103.0,
+        volume_baseline=100.0,
+        estimated_round_trip_cost_pct=0.08,
+    )
+    results = rank_spot_opportunities(
+        [data], now=NOW, config=LiquidityConfig(lookback_candles=2)
+    )
+    assert results
+    assert results[0].direction == "LONG"
+    assert "BREAKOUT_UP" in results[0].patterns
+    assert any("no funding data used" in item for item in results[0].evidence)
+    assert results[0].orders_authorized is False
+
+
+def test_spot_structure_rejects_stale_data_and_duplicate_symbols():
+    from datetime import timedelta
+    from backend.liquidity_structure import SpotMarketStructureInput, rank_spot_opportunities
+
+    data = SpotMarketStructureInput(
+        symbol="BTCUSDT",
+        candles=(candle(100, 102, 99, 101), candle(101, 103, 100, 102),
+                 candle(102, 104, 101, 103), candle(103, 106, 102, 105.5, 180)),
+        timestamp=NOW - timedelta(minutes=10),
+        reference_level=104.0,
+        previous_close=103.0,
+        volume_baseline=100.0,
+        estimated_round_trip_cost_pct=0.08,
+    )
+    config = LiquidityConfig(lookback_candles=2)
+    assert rank_spot_opportunities([data], now=NOW, config=config) == ()
+    fresh = SpotMarketStructureInput(
+        symbol=data.symbol, candles=data.candles, timestamp=NOW,
+        reference_level=data.reference_level, previous_close=data.previous_close,
+        volume_baseline=data.volume_baseline,
+        estimated_round_trip_cost_pct=data.estimated_round_trip_cost_pct,
+    )
+    assert rank_spot_opportunities([fresh, fresh], now=NOW, config=config) == ()
