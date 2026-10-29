@@ -87,6 +87,19 @@ def test_retries_a_read_once_when_server_drops_idle_session_during_query(monkeyp
     assert "SELECT 1" in connections[1].queries
 
 
+def test_does_not_replay_side_effecting_select_after_connection_loss(monkeypatch):
+    if ledger.psycopg is None:
+        pytest.skip("psycopg is not installed")
+    first = FakeRawConnection(fail_first_select=True)
+    connections = _install_fake_connect(monkeypatch, first_connection=first)
+    connection = ledger._PostgresConnection("postgresql://paper_user:secret@example.invalid:5432/postgres")
+
+    with pytest.raises(ledger.psycopg.OperationalError):
+        connection.execute("SELECT nextval('paper_sequence')")
+
+    assert len(connections) == 1
+
+
 def test_does_not_reconnect_after_a_connection_is_lost_inside_a_transaction(monkeypatch):
     if ledger.psycopg is None:
         pytest.skip("psycopg is not installed")
