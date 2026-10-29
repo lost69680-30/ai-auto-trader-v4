@@ -1366,6 +1366,26 @@ private fun AnalysisScreen() {
         }
     }
     val loadedMarkets = BackendSession.marketItems.value
+    val spotMode = loadedMarkets.any { it.marketType == "SPOT" }
+    LaunchedEffect(sessionToken, spotMode) {
+        if (sessionToken.length < 32 || !spotMode) {
+            BackendSession.spotResearchItems.value = emptyList()
+            BackendSession.spotResearchRejections.value = emptyList()
+            BackendSession.spotResearchStatus.value = if (spotMode) "NOT CONNECTED" else "NOT AVAILABLE"
+            BackendSession.spotResearchMessage.value =
+                if (spotMode) "Connect the authenticated backend to load Spot research."
+                else "Spot research is available when Spot public market mode is enabled."
+        } else {
+            while (true) {
+                val result = withContext(Dispatchers.IO) { fetchSpotResearch(sessionToken) }
+                BackendSession.spotResearchStatus.value = result.status
+                BackendSession.spotResearchMessage.value = result.message
+                BackendSession.spotResearchItems.value = if (result.safeResponse) result.opportunities else emptyList()
+                BackendSession.spotResearchRejections.value = result.rejections
+                delay(120_000)
+            }
+        }
+    }
     val selectedMarket = loadedMarkets.firstOrNull { normalizeSymbol(it.symbol) == normalizeSymbol(symbol) }
     val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol ?: symbol)
     val candleHistoryByTimeframe = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
@@ -1444,8 +1464,12 @@ private fun AnalysisScreen() {
                 LegendDot("Down candle", Red)
             }
         }
+        LaunchedEffect(selectedMarket?.marketType) {
+            if (selectedMarket?.marketType != "SPOT" && selectedTab == "Spot Research") selectedTab = "Market"
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Market", "Performance").forEach { t ->
+            (if (selectedMarket?.marketType == "SPOT") listOf("Market", "Spot Research", "Performance")
+             else listOf("Market", "Performance")).forEach { t ->
                 Box(Modifier.weight(1f).background(if (selectedTab == t) Gold.copy(alpha = .15f) else Panel, RoundedCornerShape(10.dp))
                     .border(1.dp, if (selectedTab == t) Gold else Grid, RoundedCornerShape(10.dp)).clickable { selectedTab = t }.padding(11.dp), contentAlignment = Alignment.Center) {
                     Text(t, color = if (selectedTab == t) Gold else Muted, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
@@ -1569,6 +1593,51 @@ private fun AnalysisScreen() {
                     "Thresholds are screening heuristics and are not calibrated across instruments or timeframes. This panel does not estimate loss probability, forecast profit, or authorize orders.",
                     color = Muted, fontSize = 11.sp, lineHeight = 16.sp
                 )
+            }
+        } else if (selectedTab == "Spot Research") {
+            SectionTitle("SPOT STRUCTURE RESEARCH · REVIEW ONLY")
+            CardPanel {
+                Text("Status: ${BackendSession.spotResearchStatus.value}", color = Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(BackendSession.spotResearchMessage.value, color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+                Text("Scores rank OHLCV patterns and are not probabilities of profit. This screen does not create orders or paper positions.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+            }
+            val researchItems = BackendSession.spotResearchItems.value
+            if (researchItems.isEmpty()) {
+                CardPanel {
+                    Text("No Spot structure candidates to review.", color = Muted, fontSize = 12.sp)
+                }
+            } else {
+                researchItems.forEach { item ->
+                    CardPanel {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(displaySymbol(item.symbol), color = White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                Text(item.patterns.joinToString(" · "), color = Gold, fontSize = 11.sp, lineHeight = 16.sp)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text("#${item.rank}", color = Muted, fontSize = 10.sp)
+                                Text("${item.score}/100", color = Green, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Text(
+                            when (item.direction) {
+                                "LONG" -> "Long-pattern review only · not a trade signal"
+                                "SHORT" -> "Short pattern only · Spot short selling is not enabled"
+                                else -> "Neutral pattern review only"
+                            },
+                            color = if (item.direction == "LONG") Green else Gold,
+                            fontSize = 11.sp, lineHeight = 16.sp
+                        )
+                        item.evidence.forEach { evidence -> Text("• $evidence", color = Muted, fontSize = 11.sp, lineHeight = 16.sp) }
+                    }
+                }
+            }
+            val rejected = BackendSession.spotResearchRejections.value
+            if (rejected.isNotEmpty()) {
+                SectionTitle("DATA REJECTIONS")
+                CardPanel {
+                    rejected.take(8).forEach { Text("• $it", color = Color(0xFFFFC857), fontSize = 11.sp, lineHeight = 16.sp) }
+                }
             }
         } else {
             SectionTitle("PERFORMANCE ANALYTICS")
