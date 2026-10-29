@@ -1034,9 +1034,10 @@ private fun ReadOnlyBackendConnectionCard() {
                                 val connection = (URL("$base$path").openConnection() as HttpURLConnection)
                                 try {
                                     connection.requestMethod = "GET"
-                                    // Render's free instance may need extra time to wake after inactivity.
+                                    // Render's free instance can take about a minute to wake after inactivity.
+                                    // Keep the authenticated session check alive through a cold start.
                                     connection.connectTimeout = 20000
-                                    connection.readTimeout = 20000
+                                    connection.readTimeout = 75000
                                     connection.setRequestProperty("Authorization", "Bearer $token")
                                     connection.setRequestProperty("Accept", "application/json")
                                     val code = connection.responseCode
