@@ -247,6 +247,7 @@ class PaperServiceAnalysisResult:
     excluded_symbols: tuple[tuple[str, str], ...] = ()
     orders_authorized: bool = False
     funding_sync: FundingSyncReport | None = None
+    eligible_symbols: tuple[str, ...] = ()
 
 
 class PaperServiceAnalysisHandler:
@@ -688,6 +689,7 @@ class PaperServiceAnalysisHandler:
             excluded_symbols=tuple(excluded),
             orders_authorized=False,
             funding_sync=funding_sync,
+            eligible_symbols=tuple(sorted(frame_by_symbol)),
         )
 
 

@@ -314,17 +314,26 @@ class AnalysisRuntimeHealth:
         cycle_status = str(getattr(report, "analysis_status", "UNKNOWN"))
         with self._lock:
             self._last_cycle_at = stamp
-            if cycle_status.startswith("ANALYSIS_FAILED:") or cycle_status == "FUNDING_SYNC_ERROR":
+            error_codes = {
+                "FUNDING_SYNC_ERROR": "FundingSyncError",
+                "MARKET_UNIVERSE_UNAVAILABLE": "MarketUniverseUnavailable",
+                "MARKET_UNIVERSE_REJECTED": "MarketUniverseRejected",
+                "AUTHORIZATION_FLAG_REJECTED": "AuthorizationFlagRejected",
+                "ANALYSIS_RESULT_MISSING": "AnalysisResultMissing",
+                "ANALYSIS_ELIGIBILITY_INVALID": "AnalysisEligibilityInvalid",
+            }
+            if cycle_status.startswith("ANALYSIS_FAILED:") or cycle_status in error_codes:
                 self._status = "ERROR"
                 self._last_cycle_error = (
                     cycle_status.partition(":")[2] or "AnalysisError"
                     if cycle_status.startswith("ANALYSIS_FAILED:")
-                    else "FundingSyncError"
+                    else error_codes[cycle_status]
                 )
                 self._reason = "paper analysis/accounting cycle failed; see redacted server logs"
             elif cycle_status in (
-                "SKIPPED_UNHEALTHY_MARKET_DATA", "AUTHORIZATION_FLAG_REJECTED",
-                "FUNDING_SYNC_DEGRADED",
+                "SKIPPED_UNHEALTHY_MARKET_DATA", "FUNDING_SYNC_DEGRADED",
+                "MARKET_UNIVERSE_STALE", "NO_HEALTHY_ALLOWLISTED_SYMBOLS",
+                "NO_ELIGIBLE_SYMBOLS", "ANALYZED_WITH_EXCLUSIONS",
             ):
                 self._status = "DEGRADED"
                 self._last_cycle_error = None

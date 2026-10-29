@@ -245,3 +245,62 @@ def test_runtime_rejects_candle_that_closes_after_its_mark_observation(tmp_path)
     assert report.healthy_symbols == ()
     assert report.unhealthy_symbols == ("BTCUSDT",)
     ledger.close()
+
+
+def test_runtime_blocks_pending_fill_when_analysis_handler_reports_provider_failure(tmp_path):
+    from types import SimpleNamespace
+    from app.engines.orchestrator import PaperOrderIntent
+
+    ledger = SQLitePaperLedger(tmp_path / "analysis-failure.db")
+    intent = PaperOrderIntent(
+        proposal_id="blocked-on-provider-error", signal_id="provider-error-signal",
+        symbol="BTCUSDT", side="LONG", quantity=0.1, entry_price=100,
+        stop_loss=95, take_profit=110, recorded_at=NOW.timestamp() - 10,
+    )
+    assert ledger.record_intent(intent) == "RECORDED"
+    runtime = PaperRuntime(
+        ledger=ledger, protection=PaperProtectionEngine(ledger),
+        analysis_handler=lambda poll: SimpleNamespace(
+            status="MARKET_UNIVERSE_UNAVAILABLE", reason="public market universe unavailable",
+        ),
+    )
+
+    report = runtime.process_poll(MarketPollResult(NOW, (frame(),), orders_authorized=False), now=NOW.timestamp())
+
+    assert report.analysis_status == "MARKET_UNIVERSE_UNAVAILABLE"
+    assert report.fill_statuses == ()
+    assert ledger.fills == ()
+    assert ledger.orders[0].status == "PENDING_PAPER_SIMULATION"
+    assert report.orders_authorized is False
+    ledger.close()
+
+
+def test_runtime_only_fills_symbols_eligible_after_analysis_exclusions(tmp_path):
+    from types import SimpleNamespace
+    from app.engines.orchestrator import PaperOrderIntent
+
+    ledger = SQLitePaperLedger(tmp_path / "analysis-exclusions.db")
+    for symbol in ("BTCUSDT", "ETHUSDT"):
+        intent = PaperOrderIntent(
+            proposal_id=f"eligible-{symbol}", signal_id=f"eligible-signal-{symbol}",
+            symbol=symbol, side="LONG", quantity=0.1, entry_price=100,
+            stop_loss=95, take_profit=110, recorded_at=NOW.timestamp() - 10,
+        )
+        assert ledger.record_intent(intent) == "RECORDED"
+    runtime = PaperRuntime(
+        ledger=ledger, protection=PaperProtectionEngine(ledger),
+        analysis_handler=lambda poll: SimpleNamespace(
+            status="ANALYZED_WITH_EXCLUSIONS", eligible_symbols=("ETHUSDT",),
+        ),
+    )
+
+    report = runtime.process_poll(
+        MarketPollResult(NOW, (frame("BTCUSDT"), frame("ETHUSDT")), orders_authorized=False),
+        now=NOW.timestamp(),
+    )
+
+    assert report.analysis_status == "ANALYZED_WITH_EXCLUSIONS"
+    assert report.fill_statuses == (("eligible-ETHUSDT", "FILLED"),)
+    assert {position.symbol for position in ledger.open_positions} == {"ETHUSDT"}
+    assert ledger.orders_authorized is False
+    ledger.close()

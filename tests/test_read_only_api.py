@@ -411,3 +411,25 @@ def test_analysis_runtime_health_reports_funding_sync_degraded_and_error():
     assert failed.status()["status"] == "ERROR"
     assert failed.status()["last_cycle_error"] == "FundingSyncError"
     assert failed.status()["orders_authorized"] is False
+
+
+def test_analysis_runtime_health_maps_market_universe_failure_and_empty_eligibility():
+    from types import SimpleNamespace
+    from app.engines.read_only_api import AnalysisRuntimeHealth
+
+    failed = AnalysisRuntimeHealth(enabled=True)
+    failed.publish(SimpleNamespace(
+        checked_at=1793275200.0, analysis_result=None,
+        analysis_status="MARKET_UNIVERSE_UNAVAILABLE",
+    ))
+    assert failed.status()["status"] == "ERROR"
+    assert failed.status()["last_cycle_error"] == "MarketUniverseUnavailable"
+    assert failed.status()["orders_authorized"] is False
+
+    degraded = AnalysisRuntimeHealth(enabled=True)
+    degraded.publish(SimpleNamespace(
+        checked_at=1793275200.0, analysis_result=None,
+        analysis_status="NO_ELIGIBLE_SYMBOLS",
+    ))
+    assert degraded.status()["status"] == "DEGRADED"
+    assert degraded.status()["orders_authorized"] is False
