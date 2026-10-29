@@ -36,6 +36,13 @@
 - Spot funding assumption is now correctly 0 bps per 8 hours; Futures funding must be evaluated separately with Futures-specific data. All report entries retain `orders_authorized=False`.
 - Next research task: diagnose strategy eligibility and activity using training/walk-forward data only, add more symbols/periods and realistic risk/cost metrics, and keep the final holdout untouched until the evaluation protocol is frozen. Do not tune on or claim profitability from this single report.
 
+### Multi-symbol activity diagnostic — 2026-10-29
+
+- GitHub Actions run: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40915995893 (completed successfully); artifact `solo-v4-multi-symbol-research-report` was produced.
+- Four symbols were evaluated using 999 closed hourly Spot candles each: BTCUSDT, ETHUSDT, BNBUSDT, and SOLUSDT. The three walk-forward folds produced no BTC, ETH, or BNB trades; SOL produced one trade in one fold with a -0.239184% net strategy return for that fold. The separate untouched holdout produced zero trades for all four symbols.
+- A new read-only score-threshold sweep measures signal frequency at score thresholds 0, 20, 40, 60, and 80 on walk-forward folds only. In the first fold, threshold 0 showed 42–55 directional consensus candles per symbol; at 20 this fell to 1–15, and at 40 or higher it was zero for BTC, ETH, and BNB, with only two SOL short-consensus candles at 40. At 60 and 80, all four showed zero consensus candles in that fold.
+- **Interpretation:** current score scaling and thresholds appear to suppress almost all consensus candidates. This is a signal-activity finding only, not a profitability result. Do not lower the production threshold just to increase activity. Any future calibration must be pre-registered, trained only on training data, evaluated on separate validation folds, and leave the final holdout untouched.
+
 ## Still open
 
 1. Verify the authenticated REST API and Android display without exposing the bearer token.
