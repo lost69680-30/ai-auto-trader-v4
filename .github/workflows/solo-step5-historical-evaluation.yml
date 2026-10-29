@@ -58,7 +58,7 @@ jobs:
               raise SystemExit(f"Not enough closed hourly candles for the frozen evaluation protocol: need at least 700, got {len(candles)}")
           cfg = WalkForwardConfig(train_bars=500, validation_bars=100, holdout_bars=100, step_bars=100, candle_interval_minutes=60)
           result = evaluate_walk_forward(symbol, candles, config=cfg,
-                    backtest_config=BacktestConfig(candle_interval_minutes=60),
+                    backtest_config=BacktestConfig(candle_interval_minutes=60, funding_bps_per_8h=0.0),
                     research_now=candles[-1].timestamp)
           def metrics(window):
               bt = window.strategy
@@ -88,7 +88,7 @@ jobs:
                                  "holdout_used_for_selection": False},
                     "backtest_assumptions": {"initial_equity": 10000.0, "position_fraction": 0.10,
                                              "fee_bps_per_side": 4.0, "slippage_bps_per_side": 2.0,
-                                             "funding_bps_per_8h": 1.0, "fill_model": "next-open entry and following-open exit"},
+                                             "funding_bps_per_8h": 0.0, "funding_model": "not applicable to Spot; Futures funding requires Futures-specific evaluation", "fill_model": "next-open entry and following-open exit"},
                     "folds": [metrics(w) for w in result.folds],
                     "signal_diagnostics": {
                         "scope": "walk_forward_folds_only",
