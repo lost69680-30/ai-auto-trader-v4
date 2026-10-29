@@ -601,11 +601,23 @@ def main() -> None:
                     "orders_authorized": False,
                 }
 
+            from backend.spot_historical_research import SpotHistoricalResearchService
+            historical_spot_service = SpotHistoricalResearchService(source=source)
+
+            def spot_historical_research_provider(symbol: str, requested_interval: str, limit: int):
+                if symbol not in symbols:
+                    raise ValueError("symbol is not in the configured market allowlist")
+                return historical_spot_service.report(symbol, interval=requested_interval, limit=limit)
+
+        else:
+            spot_historical_research_provider = None
+
         wsgi_api = create_app(database_path=database, token=token,
                               market_status=cache.status, market_items=cache.items,
                               market_candles=market_candles,
                               account_status=binance_testnet_account.account_summary,
-                              spot_research=spot_research_provider)
+                              spot_research=spot_research_provider,
+                              spot_historical_research=spot_historical_research_provider)
         asgi_api = create_streaming_asgi_app(
             http_app=WsgiToAsgi(wsgi_api),
             snapshot_provider=cache.items,
