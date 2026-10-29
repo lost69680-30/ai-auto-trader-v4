@@ -46,7 +46,7 @@ class SpotResearchConfig:
     symbols: tuple[str, ...] = ()
     interval: str = "5m"
     candle_limit: int = 100
-    max_candle_age_seconds: int = 120
+    max_candle_age_seconds: float = 120.0
     lookback_candles: int = 4
     estimated_round_trip_fee_pct: float = 0.0
     scanner: ScannerConfig = ScannerConfig(required_contract_type="SPOT")
@@ -57,8 +57,8 @@ class SpotResearchConfig:
             raise ValueError("unsupported Spot research interval")
         if isinstance(self.candle_limit, bool) or not isinstance(self.candle_limit, int) or not 3 <= self.candle_limit <= 1500:
             raise ValueError("candle_limit must be an integer from 3 through 1500")
-        if isinstance(self.max_candle_age_seconds, bool) or not isinstance(self.max_candle_age_seconds, int) or self.max_candle_age_seconds <= 0:
-            raise ValueError("max_candle_age_seconds must be a positive integer")
+        if isinstance(self.max_candle_age_seconds, bool) or not math.isfinite(self.max_candle_age_seconds) or self.max_candle_age_seconds <= 0:
+            raise ValueError("max_candle_age_seconds must be finite and positive")
         if isinstance(self.lookback_candles, bool) or not isinstance(self.lookback_candles, int) or self.lookback_candles < 2:
             raise ValueError("lookback_candles must be at least 2")
         if len(set(self.symbols)) != len(self.symbols) or any(
