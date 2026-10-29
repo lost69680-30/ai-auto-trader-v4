@@ -5,14 +5,14 @@
 
 ## 1. Verified current state
 
-- The current Render service is the Free web service `ai-auto-trader-v4-backend`, deployed from `main`.
-- Recent startup logs report the existing PostgreSQL ledger and successful integrity checks.
-- Recent feed logs report public Spot market data, 12 healthy symbols, and `orders_authorized=False`.
-- The research-to-paper runtime is opt-in and has not been confirmed running on production.
-- `PAPER_WEBSOCKET_ENABLED` defaults to false. Current production WebSocket connectivity has not been verified.
-- PR #41 adds explicit Spot/Futures typing and end-to-end mark/index/funding propagation. It passed the ASGI, root backend, and assembly PostgreSQL CI runs, but remains unmerged and undeployed: https://github.com/lost69680-30/ai-auto-trader-v4/pull/41
+- Read-only Render inspection on 2026-10-29 confirms service `ai-auto-trader-v4-backend` is on the **Free** plan in Oregon, tracks `main`, and has automatic deploy on commit enabled. The latest live deployment is `2c0122cb3a5d686594cbd723fc7fbe41133aca6e`; its build and deployment succeeded.
+- The service's configured start command still uses `python -m app.engines.read_only_api` and supplies `PAPER_DATABASE_PATH=/tmp/v4data/paper-ledger.sqlite3` as the local fallback path. Recent startup logs explicitly say the ledger selected PostgreSQL and passed integrity checks; this is consistent with `PAPER_DATABASE_URL` taking precedence. No database setting was changed. The Render service summary did not expose environment-variable values, and no secret values were retrieved or printed.
+- The latest available feed log explicitly says `market data mode=SPOT_PUBLIC_ANALYSIS_ONLY; spot last price is not futures mark price`. Earlier inspected feed logs reported 12 healthy symbols and `orders_authorized=False`. This confirms Spot public-data health only.
+- The research-to-paper worker cannot be enabled while market mode is Spot: startup code exits if `PAPER_RESEARCH_WORKER_ENABLED=true` and `PAPER_MARKET_DATA_MODE` is not `futures`. Given the observed Spot startup, the research worker is not active on this deployed configuration.
+- `PAPER_WEBSOCKET_ENABLED` defaults to false. The current Render environment flag could not be read from the service metadata, and the targeted WebSocket log query returned a temporary Render log-service error, so production WebSocket enablement remains **unverified**, not assumed false.
+- PR #41 adds explicit Spot/Futures typing and end-to-end mark/index/funding propagation. It passed the latest ASGI, root backend, and assembly PostgreSQL CI runs, but remains unmerged and undeployed: https://github.com/lost69680-30/ai-auto-trader-v4/pull/41
 
-A healthy public Spot feed is not proof that Futures funding, paper analysis, WebSockets, scheduled reports, or restart recovery are active.
+A healthy public Spot feed is not proof that Futures funding, paper analysis, WebSockets, scheduled reports, or restart recovery are active. No production service settings, environment variables, secrets, or deployment actions were changed by this inspection.
 
 ## 2. Required runtime configuration — staging only
 
@@ -94,17 +94,17 @@ Official Render details: https://render.com/docs/free and https://render.com/cha
 | Provider / plan | Published pricing / limit | Suitability for Solo |
 |---|---|---|
 | Current Render Free | $0; spins down after 15 minutes with no inbound HTTP or WebSocket messages; no persistent disk or one-off jobs. Free filesystem changes are lost on restart/redeploy/spin-down. | Good for a low-cost API preview, not a guaranteed continuously running worker. Supabase Postgres remains external and should remain unchanged. |
-| Northflank Developer Sandbox | Free plan advertises 2 services, 2 jobs, 1 database/addon and up to $20/month of Northflank Cloud resources, with no sleeping. The same official documentation says all users must add a payment method before creating resources and says free tier is not for production; usage is billed by the second. | Best low-cost technical **staging** candidate for WebSockets/jobs, but not approved for creation: card requirement, resource overages, and production suitability must be resolved first. |
+| Northflank Developer Sandbox | Pricing page advertises 2 services, 2 jobs, 1 database and up to $20/month of cloud resources with no sleeping. However, the official pricing page says “No card needed” while the billing docs say users must add a payment method before creating resources. Usage is billed by the second. | Candidate for technical **staging** only; do not create anything until the payment-method conflict, billing behavior after included free resources, and production suitability are confirmed in the actual account. |
 | Railway Free | $0, with $5 credit for the first 30-day trial and then $1/month resources; up to 0.5 GB RAM per service after trial. Hobby is $5 minimum monthly usage and usage above included credits is billable. | Free plan is too constrained to assume suitability for Solo's always-running analysis plus WebSockets; do not migrate based on the trial allowance. |
-| Fly.io shared compute | Official price table lists roughly $8.08/month for a 1 GB shared-cpu-4x machine, before additional storage/egress as applicable. | A low-cost always-on candidate, but not a zero-charge migration; storage, network, operational setup, and billing controls need full review. |
+| Fly.io shared compute | The updated official price effective October 1, 2026 lists $8.78/month for a 1 GB shared-cpu-4x machine, before storage and egress as applicable. | A low-cost always-on candidate, but not a zero-charge migration; storage, network, operational setup, and billing controls need full review. |
 
 Sources (official provider pages):
 - Render free limits: https://render.com/docs/free
-- Northflank pricing: https://northflank.com/pricing
+- Northflank pricing (currently conflicts with the billing docs on card requirements): https://northflank.com/pricing
 - Northflank billing requirements: https://northflank.com/docs/v1/application/billing/pricing-on-northflank
 - Northflank WebSocket ports: https://northflank.com/docs/v1/application/network/configure-ports
 - Railway pricing: https://railway.com/pricing
-- Fly.io pricing: https://fly.io/pricing/
+- Fly.io updated pricing effective October 1, 2026: https://fly.io/pricing-update/
 
 ### Current recommendation
 
