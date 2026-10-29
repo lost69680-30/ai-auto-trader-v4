@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -15,6 +16,7 @@ from backend.streaming_contract import authenticate_stream_token, make_market_sn
 
 logger = logging.getLogger(__name__)
 MAX_STREAM_SNAPSHOTS_PER_TICK = 100
+MAX_CLIENT_SEND_SECONDS = 2.0
 
 
 def _bearer_token(scope: Mapping[str, Any]) -> str:
@@ -57,10 +59,11 @@ def create_streaming_asgi_app(
             or any(not isinstance(symbol, str) or not symbol or symbol != symbol.upper()
                    or not symbol.isalnum() for symbol in allowed_symbols)):
         raise ValueError("a non-empty uppercase alphanumeric symbol allowlist is required")
-    if max_age_seconds <= 0:
-        raise ValueError("max_age_seconds must be positive")
-    if poll_interval_seconds < 0.25 or poll_interval_seconds > 60:
-        raise ValueError("poll_interval_seconds must be between 0.25 and 60 seconds")
+    if not math.isfinite(max_age_seconds) or max_age_seconds <= 0:
+        raise ValueError("max_age_seconds must be finite and positive")
+    if (not math.isfinite(poll_interval_seconds)
+            or poll_interval_seconds < 0.25 or poll_interval_seconds > 60):
+        raise ValueError("poll_interval_seconds must be finite and between 0.25 and 60 seconds")
 
     async def app(scope, receive, send):
         if scope.get("type") != "websocket":
@@ -99,10 +102,13 @@ def create_streaming_asgi_app(
                             )
                         except (TypeError, ValueError):
                             continue
-                        await send({
-                            "type": "websocket.send",
-                            "text": json.dumps(event, separators=(",", ":"), allow_nan=False),
-                        })
+                        await asyncio.wait_for(
+                            send({
+                                "type": "websocket.send",
+                                "text": json.dumps(event, separators=(",", ":"), allow_nan=False),
+                            }),
+                            timeout=MAX_CLIENT_SEND_SECONDS,
+                        )
 
                 try:
                     message = await asyncio.wait_for(receive(), timeout=poll_interval_seconds)
