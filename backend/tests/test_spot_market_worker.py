@@ -54,12 +54,12 @@ def test_spot_worker_emits_last_price_without_futures_fields():
 
 def test_spot_worker_rejects_candle_gap():
     rows = list(candles())
-    last = rows[-1]
-    rows[-1] = MarketCandle(
-        symbol=last.symbol, open_time=last.open_time + timedelta(minutes=5),
-        close_time=last.close_time + timedelta(minutes=5), open=last.open,
-        high=last.high, low=last.low, close=last.close, volume=last.volume,
-        quote_volume=last.quote_volume, trades=last.trades, is_closed=True,
+    middle = rows[-2]
+    rows[-2] = MarketCandle(
+        symbol=middle.symbol, open_time=middle.open_time - timedelta(minutes=1),
+        close_time=middle.close_time - timedelta(minutes=1), open=middle.open,
+        high=middle.high, low=middle.low, close=middle.close, volume=middle.volume,
+        quote_volume=middle.quote_volume, trades=middle.trades, is_closed=True,
     )
     result = SpotMarketDataWorker(
         FakeSpotSource(rows=tuple(rows)),
