@@ -10,7 +10,7 @@
 - The latest available feed log explicitly says `market data mode=SPOT_PUBLIC_ANALYSIS_ONLY; spot last price is not futures mark price`. Earlier inspected feed logs reported 12 healthy symbols and `orders_authorized=False`. This confirms Spot public-data health only.
 - The research-to-paper worker cannot be enabled while market mode is Spot: startup code exits if `PAPER_RESEARCH_WORKER_ENABLED=true` and `PAPER_MARKET_DATA_MODE` is not `futures`. Given the observed Spot startup, the research worker is not active on this deployed configuration.
 - `PAPER_WEBSOCKET_ENABLED` defaults to false. The current Render environment flag could not be read from the service metadata, and the targeted WebSocket log query returned a temporary Render log-service error, so production WebSocket enablement remains **unverified**, not assumed false.
-- PR #41 adds explicit Spot/Futures typing and end-to-end mark/index/funding propagation. It passed the latest ASGI, root backend, and assembly PostgreSQL CI runs, but remains unmerged and undeployed: https://github.com/lost69680-30/ai-auto-trader-v4/pull/41
+- PR #41 adds explicit Spot/Futures typing, end-to-end mark/index/funding propagation, and a server-side WebSocket cadence guard so client messages cannot accelerate snapshot emission. Its latest ASGI, root backend, and assembly PostgreSQL CI runs passed, but the PR remains unmerged and undeployed: https://github.com/lost69680-30/ai-auto-trader-v4/pull/41
 
 A healthy public Spot feed is not proof that Futures funding, paper analysis, WebSockets, scheduled reports, or restart recovery are active. No production service settings, environment variables, secrets, or deployment actions were changed by this inspection.
 
@@ -67,9 +67,9 @@ Validate all values before enabling the worker:
 Do not use production Render or the production Supabase ledger for the initial test.
 
 1. Run the existing CI suites on the exact candidate commit. The current PR #41 candidate has passed:
-   - ASGI focused tests, end-to-end worker-to-WebSocket loopback test, full Python suite, and compile: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40946941650 — passed (36 focused tests, 383 full-suite tests).
-   - PostgreSQL integration plus root full backend suite: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40946941606 — passed (6 PostgreSQL integration tests, 384 full-suite tests).
-   - Assembly PostgreSQL integration and full backend suite: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40946941657 — passed (384 full-suite tests).
+   - ASGI focused tests, end-to-end worker-to-WebSocket loopback test, full Python suite, and compile: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40948623694 — passed (37 focused tests, 384 full-suite tests).
+   - PostgreSQL integration plus root full backend suite: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40948623747 — passed (6 PostgreSQL integration tests, 385 full-suite tests).
+   - Assembly PostgreSQL integration and full backend suite: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40948623819 — passed (385 full-suite tests).
 2. Deploy the candidate only to an isolated staging service after its full cost and database isolation are confirmed.
 3. Start with a small, explicitly allowlisted Futures Testnet symbol set. Use a disposable staging ledger/database, not production Supabase. Never reuse the production `PAPER_DATABASE_URL` for tests that can create paper ledger records.
 4. Confirm startup logs identify the selected public market source, PostgreSQL (or explicitly isolated test storage), and `orders_authorized=False`. Do not share log lines that might include secrets.
