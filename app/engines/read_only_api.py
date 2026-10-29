@@ -304,16 +304,37 @@ class MarketFeedCache:
     def publish(self, result) -> None:
         rows: list[dict[str, object]] = []
         unhealthy = []
+        market_type = getattr(result, "market_type", "FUTURES")
         for frame in result.frames:
-            if frame.status.value != "HEALTHY" or frame.mark_price is None:
-                unhealthy.append(f"{frame.symbol}:{frame.status.value}")
+            if frame.status != "HEALTHY" and getattr(frame.status, "value", None) != "HEALTHY":
+                unhealthy.append(f"{frame.symbol}:{getattr(frame.status, 'value', frame.status)}")
+                continue
+            if market_type == "SPOT":
+                if frame.last_price is None or frame.last_observed_at is None:
+                    unhealthy.append(f"{frame.symbol}:INVALID_DATA")
+                    continue
+                row = {
+                    "symbol": frame.symbol, "market_type": "SPOT",
+                    "last_price": frame.last_price,
+                    "last_observed_at": frame.last_observed_at.isoformat(),
+                    "checked_at": frame.checked_at.isoformat(),
+                    "status": "HEALTHY",
+                    "candles": [{"open_time": c.open_time.isoformat(), "close_time": c.close_time.isoformat(),
+                        "open": c.open, "high": c.high, "low": c.low, "close": c.close,
+                        "volume": c.volume, "is_closed": c.is_closed} for c in frame.closed_candles[-100:]],
+                    "orders_authorized": False,
+                }
+                rows.append(row)
+                continue
+            if frame.mark_price is None:
+                unhealthy.append(f"{frame.symbol}:INVALID_DATA")
                 continue
             rows.append({
-                "symbol": frame.symbol,
+                "symbol": frame.symbol, "market_type": "FUTURES",
                 "mark_price": frame.mark_price,
                 "mark_observed_at": frame.mark_observed_at.isoformat() if frame.mark_observed_at else None,
                 "checked_at": frame.checked_at.isoformat(),
-                "status": frame.status.value,
+                "status": getattr(frame.status, "value", frame.status),
                 "funding_rate": frame.funding_rate,
                 "candles": [{"open_time": c.open_time.isoformat(), "close_time": c.close_time.isoformat(),
                     "open": c.open, "high": c.high, "low": c.low, "close": c.close,
@@ -356,6 +377,7 @@ def main() -> None:
     from backend.market_data_adapter import BinanceSpotMarketDataAdapter, BinanceUsdMFuturesAdapter
     from backend.binance_spot_testnet_account import BinanceSpotTestnetAccountClient
     from backend.market_worker import MarketDataWorker, MarketWorkerConfig
+    from backend.spot_market_worker import SpotMarketDataWorker, SpotMarketWorkerConfig
 
     token = os.environ.get("PAPER_API_TOKEN", "")
     database = os.environ.get("PAPER_DATABASE_PATH", "./data/paper-ledger.sqlite3")
@@ -407,14 +429,18 @@ def main() -> None:
     binance_testnet_account = BinanceSpotTestnetAccountClient()
     if market_mode == "spot":
         source = BinanceSpotMarketDataAdapter()
-        logging.info("market data mode=SPOT_PUBLIC_ANALYSIS_ONLY; spot last price is not futures mark price")
+        worker = SpotMarketDataWorker(source, SpotMarketWorkerConfig(
+            symbols=symbols, interval=interval, candle_limit=candle_limit,
+            max_market_age_seconds=max_age, poll_interval_seconds=poll_interval,
+        ))
+        logging.info("market data mode=SPOT_PUBLIC_ANALYSIS_ONLY; Spot last price is distinct from Futures mark price")
     else:
         source = BinanceUsdMFuturesAdapter(testnet=testnet)
+        worker = MarketDataWorker(source, MarketWorkerConfig(
+            symbols=symbols, interval=interval, candle_limit=candle_limit,
+            poll_interval_seconds=poll_interval, max_market_age_seconds=max_age,
+        ))
         logging.info("market data mode=%s", "FUTURES_TESTNET" if testnet else "FUTURES_PRODUCTION_PUBLIC")
-    worker = MarketDataWorker(source, MarketWorkerConfig(
-        symbols=symbols, interval=interval, candle_limit=candle_limit,
-        poll_interval_seconds=poll_interval, max_market_age_seconds=max_age,
-    ))
     analysis_candle_limit = int(os.environ.get("PAPER_ANALYSIS_CANDLE_LIMIT", "500"))
     if not 50 <= analysis_candle_limit <= 500:
         raise SystemExit("PAPER_ANALYSIS_CANDLE_LIMIT must be between 50 and 500")
