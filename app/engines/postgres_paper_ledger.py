@@ -188,7 +188,15 @@ class _PostgresConnection:
 
     @staticmethod
     def _is_retryable_read(query: str) -> bool:
-        return bool(re.match(r"^SELECT\b", query.lstrip(), re.IGNORECASE))
+        if not re.match(r"^SELECT\b", query.lstrip(), re.IGNORECASE):
+            return False
+        # SELECT may still invoke state-changing functions. Do not replay sequence,
+        # advisory-lock, notification, large-object, or session-setting operations.
+        side_effect_functions = (
+            r"\b(?:nextval|setval|pg_advisory_[a-z_]+|pg_notify|set_config|"
+            r"lo_create|lo_unlink|lo_import|lo_export)\s*\("
+        )
+        return re.search(side_effect_functions, query, re.IGNORECASE) is None
 
     def execute(self, statement: str, parameters: Iterable[Any] | None = None) -> _CompatCursor:
         query = statement.strip()
