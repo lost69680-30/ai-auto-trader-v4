@@ -362,3 +362,59 @@ def test_service_config_rejects_daily_loss_and_position_caps_above_policy(tmp_pa
             slippage_bps=2.0,
         )
 
+
+
+def test_service_uses_postgres_ledger_when_database_url_is_configured(tmp_path, monkeypatch):
+    import app.engines.paper_service_app as service_module
+
+    sqlite_for_test = tmp_path / "fake-postgres-ledger.sqlite"
+    ignored_sqlite_path = tmp_path / "must-not-create" / "paper.sqlite"
+    monkeypatch.setenv("PAPER_DATABASE_URL", "postgresql://test.invalid/paper")
+    monkeypatch.setattr(
+        service_module, "PostgresPaperLedger",
+        lambda dsn: SQLitePaperLedger(sqlite_for_test),
+        raising=False,
+    )
+    cfg = replace(config(tmp_path), database_path=str(ignored_sqlite_path))
+
+    app = PaperServiceApplication.create(
+        source=FakeSource(), config=cfg, clock=lambda: NOW,
+    )
+    try:
+        assert app.ledger.database_path == str(sqlite_for_test)
+        assert not ignored_sqlite_path.parent.exists()
+    finally:
+        app.close()
+
+
+def test_service_fails_closed_when_configured_postgres_url_is_empty(tmp_path, monkeypatch):
+    import app.engines.paper_service_app as service_module
+
+    ignored_sqlite_path = tmp_path / "must-not-create" / "paper.sqlite"
+    monkeypatch.setenv("PAPER_DATABASE_URL", " ")
+    cfg = replace(config(tmp_path), database_path=str(ignored_sqlite_path))
+
+    with pytest.raises(RuntimeError, match="PAPER_DATABASE_URL"):
+        PaperServiceApplication.create(
+            source=FakeSource(), config=cfg, clock=lambda: NOW,
+        )
+    assert not ignored_sqlite_path.parent.exists()
+
+
+def test_service_does_not_fall_back_to_sqlite_when_postgres_initialization_fails(tmp_path, monkeypatch):
+    import app.engines.paper_service_app as service_module
+
+    ignored_sqlite_path = tmp_path / "must-not-create" / "paper.sqlite"
+    monkeypatch.setenv("PAPER_DATABASE_URL", "postgresql://test.invalid/paper")
+
+    def fail_postgres(_dsn):
+        raise RuntimeError("test database unavailable")
+
+    monkeypatch.setattr(service_module, "PostgresPaperLedger", fail_postgres, raising=False)
+    cfg = replace(config(tmp_path), database_path=str(ignored_sqlite_path))
+
+    with pytest.raises(RuntimeError, match="test database unavailable"):
+        PaperServiceApplication.create(
+            source=FakeSource(), config=cfg, clock=lambda: NOW,
+        )
+    assert not ignored_sqlite_path.parent.exists()
