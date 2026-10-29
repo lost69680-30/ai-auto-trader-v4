@@ -70,3 +70,39 @@ def test_stream_token_authentication_is_constant_time_safe_and_fail_closed():
     assert not authenticate_stream_token(TOKEN, "wrong")
     assert not authenticate_stream_token("", TOKEN)
     assert not authenticate_stream_token("short", TOKEN)
+
+
+def test_spot_market_snapshot_uses_last_price_and_never_futures_fields():
+    now = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)
+    event = make_market_snapshot_event(
+        {
+            "symbol": "BTCUSDT",
+            "market_type": "SPOT",
+            "last_price": 65000.0,
+            "last_observed_at": (now - timedelta(seconds=2)).isoformat(),
+            "status": "HEALTHY",
+            "orders_authorized": False,
+        },
+        now=now,
+        max_age_seconds=90,
+    )
+    assert event["market_type"] == "SPOT"
+    assert event["last_price"] == 65000.0
+    assert "mark_price" not in event
+    assert event["orders_authorized"] is False
+
+
+def test_spot_snapshot_rejects_futures_only_price_fields():
+    now = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)
+    with pytest.raises(ValueError):
+        make_market_snapshot_event(
+            {
+                "symbol": "BTCUSDT",
+                "market_type": "SPOT",
+                "mark_price": 65000.0,
+                "mark_observed_at": now.isoformat(),
+                "status": "HEALTHY",
+                "orders_authorized": False,
+            },
+            now=now,
+        )
