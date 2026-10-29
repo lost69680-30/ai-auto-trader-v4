@@ -212,7 +212,12 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                         if (not isinstance(payload, dict)
                                 or payload.get("market_type") != "SPOT"
                                 or payload.get("orders_authorized") is not False
-                                or not isinstance(payload.get("opportunities"), list)):
+                                or not isinstance(payload.get("opportunities"), list)
+                                or any(
+                                    not isinstance(item, dict)
+                                    or item.get("orders_authorized") is not False
+                                    for item in payload.get("opportunities", [])
+                                )):
                             raise ValueError("Spot research provider returned an invalid or unsafe response")
                         body, status = _json_bytes(payload), "200 OK"
                 except Exception:
