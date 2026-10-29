@@ -8,6 +8,7 @@ from backend.market_data_adapter import (
     MarkPriceSnapshot,
 )
 from backend.market_worker import FeedStatus, MarketDataWorker, MarketWorkerConfig
+from backend.streaming_contract import make_market_snapshot_event
 
 
 NOW = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)
@@ -86,6 +87,14 @@ def test_futures_mark_index_and_funding_context_reaches_read_only_api():
     assert item["funding_rate"] == 0.0001
     assert item["next_funding_at"] == (NOW + timedelta(hours=8)).isoformat()
     assert item["orders_authorized"] is False
+
+    event = make_market_snapshot_event(item, now=NOW)
+    assert event["market_type"] == "FUTURES"
+    assert event["mark_price"] == 101.25
+    assert event["index_price"] == 101.10
+    assert event["funding_rate"] == 0.0001
+    assert event["next_funding_at"] == (NOW + timedelta(hours=8)).isoformat()
+    assert event["orders_authorized"] is False
 
 
 def test_worker_rejects_nonfinite_futures_funding_context():
@@ -204,6 +213,13 @@ def test_spot_snapshot_is_labeled_as_last_price_in_read_only_api():
     assert item["funding_rate"] is None
     assert item["next_funding_at"] is None
     assert item["orders_authorized"] is False
+
+    event = make_market_snapshot_event(item, now=now)
+    assert event["market_type"] == "SPOT"
+    assert event["last_price"] == 101.25
+    assert "mark_price" not in event
+    assert "funding_rate" not in event
+    assert event["orders_authorized"] is False
 
 def test_worker_rejects_futures_snapshot_missing_all_futures_context():
     source = FakeAdapter(MarkPriceSnapshot(
