@@ -290,3 +290,58 @@ def test_status_discloses_that_full_research_to_paper_runtime_is_not_started(tmp
     assert runtime["paper_simulation"] == "NOT_STARTED"
     assert runtime["orders_authorized"] is False
     assert "not started" in runtime["reason"].lower()
+
+
+
+def test_api_exposes_injected_analysis_runtime_status(tmp_path):
+    from app.engines.read_only_api import create_app
+
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    expected = {
+        "enabled": True,
+        "status": "RUNNING",
+        "research_pipeline": "RUNNING",
+        "paper_simulation": "RUNNING",
+        "last_cycle_at": "2026-10-29T12:00:00+00:00",
+        "last_cycle_error": None,
+        "orders_authorized": False,
+        "reason": "OK",
+    }
+    app = create_app(database_path=db, token=TOKEN, analysis_status=lambda: expected)
+    status, _, body = request(app, auth="Bearer " + TOKEN)
+    assert status.startswith("200")
+    assert body["analysis_runtime"] == expected
+
+
+def test_analysis_runtime_health_only_reports_running_after_a_cycle():
+    from types import SimpleNamespace
+    from app.engines.read_only_api import AnalysisRuntimeHealth
+
+    health = AnalysisRuntimeHealth(enabled=True)
+    initial = health.status()
+    assert initial["status"] == "STARTING"
+    assert initial["last_cycle_at"] is None
+    assert initial["orders_authorized"] is False
+
+    report = SimpleNamespace(
+        checked_at=1793275200.0,
+        analysis_result=SimpleNamespace(status="OK"),
+        analysis_status="HEALTHY",
+    )
+    health.publish(report)
+    completed = health.status()
+    assert completed["status"] == "RUNNING"
+    assert completed["research_pipeline"] == "RUNNING"
+    assert completed["paper_simulation"] == "RUNNING"
+    assert completed["last_cycle_at"] is not None
+    assert completed["last_cycle_error"] is None
+    assert completed["orders_authorized"] is False
+
+    health.fail(RuntimeError("sensitive internal detail"))
+    failed = health.status()
+    assert failed["status"] == "ERROR"
+    assert failed["last_cycle_error"] == "RuntimeError"
+    assert "sensitive internal detail" not in str(failed)
+    assert failed["orders_authorized"] is False
