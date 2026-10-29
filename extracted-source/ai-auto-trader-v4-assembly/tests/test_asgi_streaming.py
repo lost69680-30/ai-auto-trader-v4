@@ -1,7 +1,7 @@
 import asyncio
 import backend.asgi_streaming as streaming
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from backend.asgi_streaming import create_streaming_asgi_app
 
@@ -52,6 +52,9 @@ def test_websocket_emits_only_validated_read_only_snapshots():
         "symbol": "BTCUSDT",
         "mark_price": 65000.0,
         "mark_observed_at": datetime.now(timezone.utc).isoformat(),
+        "index_price": 64990.0,
+        "funding_rate": 0.0001,
+        "next_funding_at": (datetime.now(timezone.utc) + timedelta(hours=8)).isoformat(),
         "status": "HEALTHY",
         "orders_authorized": False,
     }
@@ -82,6 +85,9 @@ def test_websocket_does_not_emit_stale_or_unhealthy_snapshots():
         "symbol": "BTCUSDT",
         "mark_price": 65000.0,
         "mark_observed_at": "2020-01-01T00:00:00+00:00",
+        "index_price": 64990.0,
+        "funding_rate": 0.0001,
+        "next_funding_at": (datetime.now(timezone.utc) + timedelta(hours=8)).isoformat(),
         "status": "HEALTHY",
         "orders_authorized": False,
     }
@@ -106,6 +112,9 @@ def test_websocket_never_emits_symbols_outside_configured_allowlist():
         "symbol": "ETHUSDT",
         "mark_price": 3000.0,
         "mark_observed_at": datetime.now(timezone.utc).isoformat(),
+        "index_price": 64990.0,
+        "funding_rate": 0.0001,
+        "next_funding_at": (datetime.now(timezone.utc) + timedelta(hours=8)).isoformat(),
         "status": "HEALTHY",
         "orders_authorized": False,
     }
@@ -154,6 +163,9 @@ def test_slow_websocket_client_cannot_block_stream_forever(monkeypatch):
         "symbol": "BTCUSDT",
         "mark_price": 65000.0,
         "mark_observed_at": datetime.now(timezone.utc).isoformat(),
+        "index_price": 64990.0,
+        "funding_rate": 0.0001,
+        "next_funding_at": (datetime.now(timezone.utc) + timedelta(hours=8)).isoformat(),
         "status": "HEALTHY",
         "orders_authorized": False,
     }
