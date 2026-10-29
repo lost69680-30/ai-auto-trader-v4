@@ -319,3 +319,15 @@ def test_spot_funding_history_is_explicitly_unsupported():
     adapter = BinanceSpotMarketDataAdapter(transport=transport)
     with pytest.raises(NotImplementedError, match="Spot markets do not have funding rates"):
         adapter.fetch_funding_rate_history("BTCUSDT")
+
+
+
+def test_spot_mark_price_is_not_misrepresented_as_futures_mark_or_funding_data():
+    from backend.market_data_adapter import BinanceSpotMarketDataAdapter
+
+    def transport(path, params, timeout):
+        raise AssertionError("Spot adapter must not fetch or fabricate Futures mark/funding data")
+
+    adapter = BinanceSpotMarketDataAdapter(transport=transport)
+    with pytest.raises(NotImplementedError, match="Spot markets do not provide Futures mark price or funding data"):
+        adapter.fetch_mark_price("BTCUSDT")
