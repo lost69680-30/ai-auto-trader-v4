@@ -29,6 +29,7 @@ def test_market_snapshot_event_has_versioned_read_only_contract():
         "schema_version": 1,
         "type": "market.snapshot",
         "symbol": "BTCUSDT",
+        "market_type": "FUTURES",
         "mark_price": 65000.0,
         "observed_at": (now - timedelta(seconds=2)).isoformat(),
         "status": "HEALTHY",
