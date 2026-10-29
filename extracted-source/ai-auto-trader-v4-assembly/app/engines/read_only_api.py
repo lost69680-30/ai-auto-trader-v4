@@ -393,12 +393,18 @@ class MarketFeedCache:
                     or frame.orders_authorized is not False):
                 unhealthy.append(f"{frame.symbol}:{frame.status.value}")
                 continue
+            futures_context = (frame.index_price, frame.funding_rate, frame.next_funding_at)
+            if frame.market_type not in ("SPOT", "FUTURES"):
+                unhealthy.append(f"{frame.symbol}:UNKNOWN_MARKET_TYPE")
+                continue
+            if frame.market_type == "FUTURES" and not all(value is not None for value in futures_context):
+                unhealthy.append(f"{frame.symbol}:INCOMPLETE_FUTURES_CONTEXT")
+                continue
+            if frame.market_type == "SPOT" and any(value is not None for value in futures_context):
+                unhealthy.append(f"{frame.symbol}:SPOT_HAS_FUTURES_CONTEXT")
+                continue
             mark_observed_at = frame.mark_observed_at.isoformat() if frame.mark_observed_at else None
-            has_futures_context = (
-                frame.index_price is not None
-                and frame.funding_rate is not None
-                and frame.next_funding_at is not None
-            )
+            has_futures_context = frame.market_type == "FUTURES"
             rows.append({
                 "symbol": frame.symbol,
                 # Retain mark_price for current Android clients during migration;
