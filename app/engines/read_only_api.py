@@ -228,6 +228,35 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                         "rejections": [],
                         "orders_authorized": False,
                     }), "503 Service Unavailable"
+            elif path == "/api/v1/spot/backtest":
+                try:
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    symbol = query.get("symbol", [""])[0]
+                    interval = query.get("interval", ["5m"])[0]
+                    raw_limit = query.get("limit", ["500"])[0]
+                    if not raw_limit.isdigit():
+                        raise ValueError("invalid limit")
+                    limit = int(raw_limit)
+                    allowed_intervals = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w"}
+                    if (not symbol or symbol != symbol.strip().upper()
+                            or interval not in allowed_intervals or not 30 <= limit <= 1500):
+                        raise ValueError("invalid Spot backtest parameters")
+                    if spot_historical_research is None:
+                        body, status = _json_bytes({"status": "NOT_CONFIGURED", "market_type": "SPOT",
+                            "orders_authorized": False, "positions_created": False}), "503 Service Unavailable"
+                    else:
+                        payload = spot_historical_research(symbol, interval, limit)
+                        if (not isinstance(payload, dict) or payload.get("market_type") != "SPOT"
+                                or payload.get("orders_authorized") is not False
+                                or payload.get("positions_created") is not False):
+                            raise ValueError("unsafe historical Spot research response")
+                        body, status = _json_bytes(payload), "200 OK"
+                except ValueError:
+                    body, status = _json_bytes({"error": "invalid_request", "orders_authorized": False,
+                        "positions_created": False}), "400 Bad Request"
+                except Exception:
+                    body, status = _json_bytes({"status": "UNAVAILABLE", "market_type": "SPOT",
+                        "orders_authorized": False, "positions_created": False}), "503 Service Unavailable"
             elif path == "/api/v1/markets/candles":
                 try:
                     query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
