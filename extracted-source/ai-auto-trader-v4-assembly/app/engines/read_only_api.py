@@ -506,12 +506,12 @@ def main() -> None:
                 logging.info("market feed status=%s healthy=%d unhealthy=%d orders_authorized=False",
                              cache.status()["status"], len(result.healthy_symbols), len(result.unhealthy_symbols))
                 for frame in result.frames:
-                    if frame.status.value != "HEALTHY":
+                    frame_status = getattr(frame.status, "value", frame.status)
+                    if frame_status != "HEALTHY":
                         # Reasons are validation diagnostics only; never log credentials or headers.
-                        logging.warning("market symbol=%s status=%s reasons=%s retry_count=%d orders_authorized=False",
-                                        frame.symbol, frame.status.value,
-                                        "; ".join(frame.reasons) or "no detailed reason supplied",
-                                        frame.retry_count)
+                        logging.warning("market symbol=%s status=%s reasons=%s orders_authorized=False",
+                                        frame.symbol, frame_status,
+                                        "; ".join(frame.reasons) or "no detailed reason supplied")
                 delay = worker.next_delay_seconds
             except Exception as exc:
                 cache.fail(f"market polling failed: {type(exc).__name__}")
