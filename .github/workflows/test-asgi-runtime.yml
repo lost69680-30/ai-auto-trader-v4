@@ -1,0 +1,59 @@
+name: ASGI runtime tests
+
+on:
+  pull_request:
+    paths:
+      - "backend/asgi_runtime.py"
+      - "backend/asgi_streaming.py"
+      - "backend/streaming_contract.py"
+      - "app/engines/read_only_api.py"
+      - "tests/test_asgi_runtime.py"
+      - "tests/test_asgi_runtime_live.py"
+      - "tests/test_asgi_streaming.py"
+      - "tests/test_streaming_contract.py"
+      - "pyproject.toml"
+      - ".github/workflows/test-asgi-runtime.yml"
+      - "extracted-source/ai-auto-trader-v4-assembly/**"
+  push:
+    branches:
+      - "fix/asgi-runtime-opt-in"
+    paths:
+      - "backend/asgi_runtime.py"
+      - "backend/asgi_streaming.py"
+      - "backend/streaming_contract.py"
+      - "app/engines/read_only_api.py"
+      - "tests/test_asgi_runtime.py"
+      - "tests/test_asgi_runtime_live.py"
+      - "tests/test_asgi_streaming.py"
+      - "tests/test_streaming_contract.py"
+      - "pyproject.toml"
+      - ".github/workflows/test-asgi-runtime.yml"
+      - "extracted-source/ai-auto-trader-v4-assembly/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: asgi-runtime-tests
+  cancel-in-progress: false
+
+jobs:
+  asgi-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install project and test dependencies
+        run: python -m pip install -e ".[test]"
+      - name: Run focused ASGI and streaming tests
+        run: python -m pytest -q tests/test_asgi_runtime.py tests/test_asgi_runtime_live.py tests/test_asgi_streaming.py tests/test_streaming_contract.py
+      - name: Run full Python regression suite
+        run: python -m pytest -q
+      - name: Compile backend and API modules
+        run: python -m compileall -q backend app
