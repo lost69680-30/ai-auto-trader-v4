@@ -446,3 +446,16 @@ def test_read_only_api_requires_valid_explicit_testnet_boolean_value():
     assert _parse_market_testnet("0") is False
     with pytest.raises(ValueError, match="PAPER_MARKET_TESTNET"):
         _parse_market_testnet("truue")
+
+
+def test_audit_endpoint_returns_empty_list_for_empty_sqlite_ledger(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+
+    status, _, body = request(app, path="/api/v1/audit", auth="Bearer " + TOKEN)
+
+    assert status.startswith("200")
+    assert body["items"] == []
+    assert body["orders_authorized"] is False
