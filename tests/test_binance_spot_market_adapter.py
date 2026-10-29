@@ -29,15 +29,14 @@ def test_spot_adapter_uses_documented_spot_public_endpoints_and_keeps_orders_dis
 
 
 def test_spot_last_price_observation_time_uses_local_receive_time_not_24h_window_close_time():
-    from datetime import timedelta
     from datetime import datetime as dt
     before = dt.now(timezone.utc)
     adapter = BinanceSpotMarketDataAdapter(transport=lambda path, params, timeout: {
         "symbol": "BTCUSDT", "lastPrice": "102",
-        # The 24-hour ticker's closeTime can be ahead of the worker clock.
-        "closeTime": int((before + timedelta(minutes=5)).timestamp() * 1000),
+        # Observation time must use local receive time, not the 24-hour window close.
+        "closeTime": int((before.timestamp() + 300) * 1000),
     })
-    price = adapter.fetch_mark_price("BTCUSDT")
+    price = adapter.fetch_spot_price("BTCUSDT")
     after = dt.now(timezone.utc)
 
     assert before <= price.observed_at <= after
