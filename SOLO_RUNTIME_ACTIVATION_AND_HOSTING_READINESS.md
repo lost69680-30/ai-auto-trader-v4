@@ -67,9 +67,9 @@ Validate all values before enabling the worker:
 Do not use production Render or the production Supabase ledger for the initial test.
 
 1. Run the existing CI suites on the exact candidate commit. The current PR #41 candidate has passed:
-   - ASGI/streaming, live loopback WebSocket, full Python suite, and compile: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40944659604
-   - PostgreSQL integration plus root full backend suite: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40944659426
-   - Assembly PostgreSQL integration and full backend suite: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40944659312
+   - ASGI focused tests, end-to-end worker-to-WebSocket loopback test, full Python suite, and compile: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40946941650 — passed (36 focused tests, 383 full-suite tests).
+   - PostgreSQL integration plus root full backend suite: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40946941606 — passed (6 PostgreSQL integration tests, 384 full-suite tests).
+   - Assembly PostgreSQL integration and full backend suite: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40946941657 — passed (384 full-suite tests).
 2. Deploy the candidate only to an isolated staging service after its full cost and database isolation are confirmed.
 3. Start with a small, explicitly allowlisted Futures Testnet symbol set. Use a disposable staging ledger/database, not production Supabase. Never reuse the production `PAPER_DATABASE_URL` for tests that can create paper ledger records.
 4. Confirm startup logs identify the selected public market source, PostgreSQL (or explicitly isolated test storage), and `orders_authorized=False`. Do not share log lines that might include secrets.
