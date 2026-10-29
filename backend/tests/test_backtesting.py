@@ -30,6 +30,12 @@ def test_backtest_is_reproducible_and_never_authorizes_orders():
     assert first.trade_count == len(first.trades)
 
 
+def test_spot_backtest_default_does_not_charge_futures_funding():
+    # Public Spot OHLCV has no funding payments; those belong to Futures-specific
+    # evaluation and must not silently reduce Spot strategy results.
+    assert BacktestConfig().funding_bps_per_8h == 0.0
+
+
 def test_costs_reduce_net_pnl_for_same_price_path():
     rows = candles([100 + i * 0.8 for i in range(50)])
     free = run_backtest("BTCUSDT", rows,
@@ -69,13 +75,10 @@ def test_metrics_are_finite_and_losses_are_accounted_for():
     assert result.orders_authorized is False
 
 
-
 def test_backtest_rejects_missing_candle_intervals_fail_closed():
     rows = candles([100 + i * 0.4 for i in range(60)])
     del rows[25]  # A missing bar preserves timestamp order but creates a 2-minute gap.
-
     result = run_backtest("BTCUSDT", rows, research_now=NOW)
-
     assert result.trade_count == 0
     assert result.trades == ()
     assert result.ending_equity == result.initial_equity
@@ -85,14 +88,9 @@ def test_backtest_rejects_missing_candle_intervals_fail_closed():
 
 def test_backtest_enforces_configured_candle_interval():
     rows = candles([100 + i * 0.6 for i in range(60)], step_minutes=1)
-
     result = run_backtest(
-        "BTCUSDT",
-        rows,
-        config=BacktestConfig(candle_interval_minutes=5),
-        research_now=NOW,
+        "BTCUSDT", rows, config=BacktestConfig(candle_interval_minutes=5), research_now=NOW,
     )
-
     assert result.trade_count == 0
     assert result.trades == ()
     assert result.ending_equity == result.initial_equity
@@ -102,17 +100,11 @@ def test_backtest_enforces_configured_candle_interval():
 
 def test_backtest_accepts_contiguous_non_minute_interval():
     rows = candles([100 + i * 0.3 for i in range(60)], step_minutes=5)
-
     result = run_backtest(
-        "BTCUSDT",
-        rows,
-        config=BacktestConfig(candle_interval_minutes=5),
-        research_now=NOW,
+        "BTCUSDT", rows, config=BacktestConfig(candle_interval_minutes=5), research_now=NOW,
     )
-
     assert not any("gap" in warning.lower() or "interval" in warning.lower() for warning in result.warnings)
     assert result.orders_authorized is False
-
 
 
 def test_backtest_start_timestamp_uses_prior_candles_only_as_warmup():
