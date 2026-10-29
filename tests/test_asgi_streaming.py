@@ -1,4 +1,5 @@
 import asyncio
+import backend.asgi_streaming as streaming
 import json
 from datetime import datetime, timezone
 
@@ -144,3 +145,34 @@ def test_websocket_rejects_weak_server_token_at_construction():
         assert "32 characters" in str(exc)
     else:
         raise AssertionError("weak server token must be rejected")
+
+
+
+def test_slow_websocket_client_cannot_block_stream_forever(monkeypatch):
+    monkeypatch.setattr(streaming, "MAX_CLIENT_SEND_SECONDS", 0.01)
+    snapshot = {
+        "symbol": "BTCUSDT",
+        "mark_price": 65000.0,
+        "mark_observed_at": datetime.now(timezone.utc).isoformat(),
+        "status": "HEALTHY",
+        "orders_authorized": False,
+    }
+    app = create_streaming_asgi_app(
+        http_app=lambda scope, receive, send: None,
+        snapshot_provider=lambda: [snapshot],
+        token=TOKEN,
+        allowed_symbols={"BTCUSDT"},
+    )
+    sent = []
+
+    async def receive():
+        return {"type": "websocket.connect"}
+
+    async def send(message):
+        if message.get("type") == "websocket.send":
+            await asyncio.sleep(0.05)
+        sent.append(message)
+
+    asyncio.run(app(websocket_scope(TOKEN), receive, send))
+    assert any(message["type"] == "websocket.accept" for message in sent)
+    assert not any(message["type"] == "websocket.send" for message in sent)
