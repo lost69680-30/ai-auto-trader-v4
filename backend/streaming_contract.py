@@ -58,26 +58,40 @@ def make_market_snapshot_event(
     if snapshot.get("orders_authorized") is not False:
         raise ValueError("stream events must explicitly preserve orders_authorized=False")
 
-    raw_price = snapshot.get("mark_price")
+    market_type = snapshot.get("market_type", "FUTURES")
+    if market_type == "SPOT":
+        raw_price = snapshot.get("last_price")
+        price_field = "last_price"
+        timestamp_field = "last_observed_at"
+    elif market_type == "FUTURES":
+        raw_price = snapshot.get("mark_price")
+        price_field = "mark_price"
+        timestamp_field = "mark_observed_at"
+    else:
+        raise ValueError("market_type must be SPOT or FUTURES")
     if isinstance(raw_price, bool) or not isinstance(raw_price, (int, float)):
-        raise ValueError("mark_price must be numeric")
+        raise ValueError(f"{price_field} must be numeric")
     price = float(raw_price)
     if not math.isfinite(price) or price <= 0:
-        raise ValueError("mark_price must be finite and positive")
+        raise ValueError(f"{price_field} must be finite and positive")
 
-    observed = _aware_datetime(snapshot.get("mark_observed_at"))
+    observed = _aware_datetime(snapshot.get(timestamp_field))
     age_seconds = (checked_at - observed).total_seconds()
     if age_seconds < -1.0:
         raise ValueError("future-dated market snapshots are rejected")
     if age_seconds > max_age_seconds:
         raise ValueError("stale market snapshots are rejected")
 
-    return {
+    event = {
         "schema_version": 1,
         "type": "market.snapshot",
         "symbol": symbol,
-        "mark_price": price,
         "observed_at": observed.isoformat(),
         "status": "HEALTHY",
         "orders_authorized": False,
     }
+    if market_type == "SPOT":
+        event.update({"market_type": "SPOT", "last_price": price})
+    else:
+        event["mark_price"] = price
+    return event
