@@ -188,3 +188,52 @@ def test_slow_websocket_client_cannot_block_stream_forever(monkeypatch):
     asyncio.run(app(websocket_scope(TOKEN), receive, send))
     assert any(message["type"] == "websocket.accept" for message in sent)
     assert not any(message["type"] == "websocket.send" for message in sent)
+
+def test_websocket_client_message_spam_does_not_accelerate_snapshot_loop():
+    snapshot = {
+        "symbol": "BTCUSDT",
+        "market_type": "FUTURES",
+        "mark_price": 65000.0,
+        "mark_observed_at": datetime.now(timezone.utc).isoformat(),
+        "index_price": 64990.0,
+        "funding_rate": 0.0001,
+        "next_funding_at": (datetime.now(timezone.utc) + timedelta(hours=8)).isoformat(),
+        "status": "HEALTHY",
+        "orders_authorized": False,
+    }
+    provider_calls = 0
+    sent = []
+    incoming = [
+        {"type": "websocket.connect"},
+        {"type": "websocket.receive", "text": "ignored-1"},
+        {"type": "websocket.receive", "text": "ignored-2"},
+        {"type": "websocket.receive", "text": "ignored-3"},
+        {"type": "websocket.disconnect", "code": 1000},
+    ]
+
+    def provider():
+        nonlocal provider_calls
+        provider_calls += 1
+        return [snapshot]
+
+    async def receive():
+        if incoming:
+            return incoming.pop(0)
+        return {"type": "websocket.disconnect", "code": 1000}
+
+    async def send(message):
+        sent.append(message)
+
+    app = create_streaming_asgi_app(
+        http_app=lambda scope, receive, send: None,
+        snapshot_provider=provider,
+        token=TOKEN,
+        allowed_symbols={"BTCUSDT"},
+        max_age_seconds=90,
+        poll_interval_seconds=0.25,
+    )
+    asyncio.run(app(websocket_scope(TOKEN), receive, send))
+
+    payloads = [message for message in sent if message.get("type") == "websocket.send"]
+    assert len(payloads) == 1
+    assert provider_calls == 1
