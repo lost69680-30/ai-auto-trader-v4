@@ -467,10 +467,16 @@ def test_funding_sync_does_not_invent_missing_historical_mark_price(tmp_path, mo
 
     class MissingMarkSource(FakeSource):
         def fetch_funding_rate_history(self, symbol, *, start_time_ms=None, end_time_ms=None, limit=1000):
-            return (FundingRateRecord(
-                "BTCUSDT", 0.001, NOW - timedelta(hours=1), mark_price=None,
-                orders_authorized=False,
-            ),)
+            return (
+                FundingRateRecord(
+                    "BTCUSDT", 0.001, NOW - timedelta(hours=1), mark_price=None,
+                    orders_authorized=False,
+                ),
+                FundingRateRecord(
+                    "BTCUSDT", 0.002, NOW - timedelta(minutes=30), mark_price=100.0,
+                    orders_authorized=False,
+                ),
+            )
 
     monkeypatch.delenv("PAPER_DATABASE_URL", raising=False)
     app = PaperServiceApplication.create(source=MissingMarkSource(), config=config(tmp_path), clock=lambda: NOW)
