@@ -290,7 +290,7 @@ def test_worker_rejects_future_funding_timestamp_that_is_not_in_future():
 
     result = MarketDataWorker(source, config()).poll_once(now=NOW)
 
-    assert result.frames[0].status is FeedStatus.INVALID_DATA
+    assert result.frames[0].status is FeedStatus.STALE
     assert result.frames[0].closed_candles == ()
     assert any("next funding" in reason.lower() for reason in result.frames[0].reasons)
     assert result.orders_authorized is False
