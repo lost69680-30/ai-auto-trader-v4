@@ -426,3 +426,27 @@ def test_service_rejects_empty_configured_postgres_url_instead_of_falling_back(m
 
     with pytest.raises(ValueError, match="PAPER_DATABASE_URL"):
         service_module.PaperServiceApplication.from_env(environ=env)
+
+
+
+def test_service_refuses_spot_mode_until_analysis_pipeline_has_spot_contract(monkeypatch):
+    from app.engines import paper_service_app as service_module
+
+    monkeypatch.setattr(service_module.PaperServiceApplication, "create",
+        classmethod(lambda cls, **kwargs: pytest.fail("unsupported Spot mode must fail before service creation")))
+    env = {
+        "PAPER_SYMBOLS": "BTCUSDT",
+        "PAPER_SIMULATED_EQUITY": "1000",
+        "PAPER_RISK_FRACTION": "0.005",
+        "PAPER_MAX_POSITION_NOTIONAL": "100",
+        "PAPER_MAX_DAILY_LOSS": "20",
+        "PAPER_MAX_OPEN_POSITIONS": "2",
+        "PAPER_MAX_RISK_PER_TRADE": "5",
+        "PAPER_ESTIMATED_ROUND_TRIP_COST_PCT": "0.12",
+        "PAPER_FEE_RATE": "0.0004",
+        "PAPER_SLIPPAGE_BPS": "2",
+        "PAPER_MARKET_TYPE": "spot",
+    }
+
+    with pytest.raises(ValueError, match="Spot.*not yet supported"):
+        service_module.PaperServiceApplication.from_env(environ=env)
