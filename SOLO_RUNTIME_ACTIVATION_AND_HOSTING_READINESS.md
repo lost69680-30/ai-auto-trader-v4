@@ -5,12 +5,12 @@
 
 ## 1. Verified current state
 
-- Read-only Render inspection on 2026-10-29 confirms service `ai-auto-trader-v4-backend` is on the **Free** plan in Oregon, tracks `main`, and has automatic deploy on commit enabled. The latest live deployment is `2c0122cb3a5d686594cbd723fc7fbe41133aca6e`; its build and deployment succeeded.
+- Read-only Render inspection confirms production service `ai-auto-trader-v4-backend` remains on the **Free** plan in Oregon, tracks `main`, and has automatic deploy on commit enabled. After PR #41 was merged, production commit `1b93f30677f82a3028a1f85055166da839549cd5` deployed successfully at `2026-10-29T20:58:45Z`.
 - The service's configured start command still uses `python -m app.engines.read_only_api` and supplies `PAPER_DATABASE_PATH=/tmp/v4data/paper-ledger.sqlite3` as the local fallback path. Recent startup logs explicitly say the ledger selected PostgreSQL and passed integrity checks; this is consistent with `PAPER_DATABASE_URL` taking precedence. No database setting was changed. The Render service summary did not expose environment-variable values, and no secret values were retrieved or printed.
 - The latest available feed log explicitly says `market data mode=SPOT_PUBLIC_ANALYSIS_ONLY; spot last price is not futures mark price`. Earlier inspected feed logs reported 12 healthy symbols and `orders_authorized=False`. This confirms Spot public-data health only.
 - The research-to-paper worker cannot be enabled while market mode is Spot: startup code exits if `PAPER_RESEARCH_WORKER_ENABLED=true` and `PAPER_MARKET_DATA_MODE` is not `futures`. Given the observed Spot startup, the research worker is not active on this deployed configuration.
 - `PAPER_WEBSOCKET_ENABLED` defaults to false. The current Render environment flag could not be read from the service metadata, and the targeted WebSocket log query returned a temporary Render log-service error, so production WebSocket enablement remains **unverified**, not assumed false.
-- PR #41 adds explicit Spot/Futures typing, end-to-end mark/index/funding propagation, and a server-side WebSocket cadence guard so client messages cannot accelerate snapshot emission. Its latest ASGI, root backend, and assembly PostgreSQL CI runs passed, but the PR remains unmerged and undeployed: https://github.com/lost69680-30/ai-auto-trader-v4/pull/41
+- PR #41 is now merged into `main` as `1b93f30677f82a3028a1f85055166da839549cd5`: https://github.com/lost69680-30/ai-auto-trader-v4/pull/41. The post-merge GitHub Actions run passed backend/Android contract tests, package parity, Python compilation, Android unit tests, and the Solo debug APK build/upload. Production startup logs still report Spot public market data, PostgreSQL ledger selected with integrity checks passed, 12 healthy symbols, and `orders_authorized=False`. No production market-mode or WebSocket flags were changed.
 
 A healthy public Spot feed is not proof that Futures funding, paper analysis, WebSockets, scheduled reports, or restart recovery are active. No production service settings, environment variables, secrets, or deployment actions were changed by this inspection.
 
@@ -66,16 +66,16 @@ Validate all values before enabling the worker:
 
 Do not use production Render or the production Supabase ledger for the initial test.
 
-1. Run the existing CI suites on the exact candidate commit. The current PR #41 candidate has passed:
+1. Run the existing CI suites on the exact candidate commit. The merged PR #41 commit passed its pre-merge suites, and the post-merge `test-and-build` workflow also passed:
    - ASGI focused tests, end-to-end worker-to-WebSocket loopback test, full Python suite, and compile: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40948623694 — passed (37 focused tests, 384 full-suite tests).
    - PostgreSQL integration plus root full backend suite: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40948623747 — passed (6 PostgreSQL integration tests, 385 full-suite tests).
    - Assembly PostgreSQL integration and full backend suite: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40948623819 — passed (385 full-suite tests).
-2. Deploy the candidate only to an isolated staging service after its full cost and database isolation are confirmed.
+2. The isolated Free Render staging service is now deployed on branch `fix/futures-context-mainline`: https://solo-futures-websocket-staging.onrender.com. The post-deploy logs confirm `FUTURES_TESTNET`, authenticated read-only WebSocket endpoint startup, and completed paper-analysis cycles. This is a partial smoke test, not full release validation.
 3. Start with a small, explicitly allowlisted Futures Testnet symbol set. Use a disposable staging ledger/database, not production Supabase. Never reuse the production `PAPER_DATABASE_URL` for tests that can create paper ledger records.
 4. Confirm startup logs identify the selected public market source, PostgreSQL (or explicitly isolated test storage), and `orders_authorized=False`. Do not share log lines that might include secrets.
 5. Call authenticated `/api/v1/status` without displaying the token. Confirm `analysis_runtime.enabled=true`, then wait for an actual completed cycle before interpreting its state as `RUNNING`. `STARTING`, `DEGRADED`, and `ERROR` are not success.
 6. Authenticate to `/ws/v1/markets` with a test client and confirm a fresh event contains `market_type=FUTURES`, `mark_price`, `index_price`, `funding_rate`, and a future `next_funding_at`, plus `orders_authorized=false`. Verify invalid/stale snapshots are dropped and unauthenticated clients are rejected.
-7. Restart the staging process and verify PostgreSQL state persists; verify pending process-local intents are cancelled and not resumed blindly. Confirm no real exchange orders or API-key permissions are used.
+7. **Still pending:** connect the isolated staging service to the isolated staging PostgreSQL database, then restart the staging process and verify state persists; verify pending process-local intents are cancelled and not resumed blindly. Confirm no real exchange orders or API-key permissions are used. The current hosted smoke service still uses an ephemeral SQLite path, so do not rely on it for restart recovery.
 8. Observe several cycles and review memory, reconnects, data freshness, symbol exclusions, risk rejection reasons, ledger writes, and restart behavior before any production decision.
 
 A loopback WebSocket test in GitHub Actions does not prove that a deployed Render WebSocket is reachable or enabled.
@@ -108,4 +108,19 @@ Sources (official provider pages):
 
 ### Current recommendation
 
-Do not migrate or provision a provider on the strength of a free banner alone. Keep the existing Render + Supabase + GitHub setup unchanged while PR #41 is reviewed and staging is designed. If continuous background work is a hard requirement, select an always-on plan only after the owner explicitly approves the monthly cost and billing protections; no resource has been created and no payment method has been added as part of this work.
+Keep the existing production Render + Supabase + GitHub setup unchanged. The no-charge staging resources now exist:
+- Supabase staging project `solo-ai-auto-trader-staging` (`gryjtjobkmredawmymwy`) is ACTIVE_HEALTHY in `eu-central-1`; the private `paper_ledger` schema has been applied and all nine tables have RLS enabled and empty state.
+- Render staging service `solo-futures-websocket-staging` is live on `fix/futures-context-mainline`; logs show a healthy Futures Testnet feed for BTCUSDT/ETHUSDT and completed paper cycles, all with `orders_authorized=False`.
+- The staging service is still using its ephemeral local SQLite ledger because a safe database connection string/pooler host has not been obtained through the available management tools. The Supabase staging project is not yet connected. External authenticated WebSocket handshake and restart persistence are also unverified.
+- A separate Free Render Postgres test instance exists but is unused and expires `2026-11-28T20:54:47Z`; it is not connected to either service. No paid plan was activated and no production DB schema/data/secrets changed.
+
+For the complete target workload, compare staying on Render with a paid non-sleeping service against external hosts only after memory/CPU behavior and the final monthly budget are confirmed. Do not enable the Futures worker or WebSocket in production until the staging database connection, external WebSocket handshake, and restart/persistence tests pass.
+
+
+## 6. Current rollout record — 2026-10-29
+
+- PR #41 (Spot/Futures market context and WebSocket pacing) is merged as `1b93f30677f82a3028a1f85055166da839549cd5` and Render production is live on that commit.
+- Post-merge CI: offline backtest/safety tests passed; read-only market-data/analysis safety tests passed; `test-and-build` passed including Android unit tests and debug APK artifact upload. Run: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40953626320
+- Download artifact: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40953626320 (artifact `solo-v4-extended-timeframes-debug-apk`, expires 2026-11-12).
+- Production feed mode remains `SPOT_PUBLIC_ANALYSIS_ONLY`; this deploy did not enable production Futures analysis or WebSockets. Logs report 12 healthy public-market symbols, PostgreSQL ledger selected/integrity passed, and `orders_authorized=False`.
+- Hosted staging reports Futures Testnet mode and repeated paper-analysis cycles with healthy BTCUSDT/ETHUSDT, but currently warns its ledger is ephemeral. It must not be described as persistence-verified.
