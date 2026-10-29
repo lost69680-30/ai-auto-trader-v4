@@ -774,6 +774,92 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
     }
 }
 
+
+private fun fetchSpotResearch(token: String): SpotResearchFetchResult {
+    val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
+    if (!base.startsWith("https://") || token.length < 32) {
+        return SpotResearchFetchResult(false, "NOT CONNECTED",
+            "Connect the authenticated HTTPS backend to load Spot research.", emptyList(), emptyList())
+    }
+    val connection = try {
+        URL("$base/api/v1/spot/research").openConnection() as HttpURLConnection
+    } catch (e: Exception) {
+        return SpotResearchFetchResult(false, "OFFLINE",
+            "Spot research request could not be opened (${e.javaClass.simpleName}).", emptyList(), emptyList())
+    }
+    return try {
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 20000
+        connection.readTimeout = 45000
+        connection.setRequestProperty("Authorization", "Bearer $token")
+        connection.setRequestProperty("Accept", "application/json")
+        connection.useCaches = false
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        val json = try { JSONObject(body) } catch (_: Exception) {
+            return SpotResearchFetchResult(false, "INVALID RESPONSE",
+                "Spot research endpoint returned unreadable JSON.", emptyList(), emptyList())
+        }
+        if (code !in 200..299) {
+            val status = json.optString("status", "UNAVAILABLE")
+            return SpotResearchFetchResult(false, status,
+                "Spot research is unavailable (HTTP $code · $status).", emptyList(), emptyList())
+        }
+        if (json.optString("market_type") != "SPOT" || json.optBoolean("orders_authorized", true)) {
+            return SpotResearchFetchResult(false, "BLOCKED",
+                "Spot research response did not confirm Spot mode and disabled order authorization.",
+                emptyList(), emptyList())
+        }
+        val opportunitiesJson = json.optJSONArray("opportunities") ?: JSONArray()
+        val opportunities = mutableListOf<SpotResearchOpportunity>()
+        for (i in 0 until opportunitiesJson.length()) {
+            val row = opportunitiesJson.optJSONObject(i) ?: continue
+            val symbol = row.optString("symbol").trim()
+            val direction = row.optString("direction").uppercase(Locale.ROOT)
+            val score = row.optDouble("score", Double.NaN)
+            val rank = row.optInt("rank", 0)
+            if (symbol.isBlank() || !score.isFinite() || score !in 0.0..100.0 ||
+                rank <= 0 || row.optString("status") != "REVIEW" ||
+                row.optBoolean("orders_authorized", true) ||
+                direction !in setOf("LONG", "SHORT", "NEUTRAL")) {
+                return SpotResearchFetchResult(false, "BLOCKED",
+                    "Spot research contained an invalid or unsafe candidate; results were rejected.",
+                    emptyList(), emptyList())
+            }
+            val patterns = row.optJSONArray("patterns") ?: JSONArray()
+            val evidence = row.optJSONArray("evidence") ?: JSONArray()
+            opportunities += SpotResearchOpportunity(
+                symbol, direction, score, rank,
+                (0 until patterns.length()).mapNotNull { patterns.optString(it).takeIf(String::isNotBlank) },
+                (0 until evidence.length()).mapNotNull { evidence.optString(it).takeIf(String::isNotBlank) },
+                row.optString("status"),
+            )
+        }
+        val rejectionsJson = json.optJSONArray("rejections") ?: JSONArray()
+        val rejections = (0 until rejectionsJson.length()).mapNotNull { index ->
+            val row = rejectionsJson.optJSONObject(index) ?: return@mapNotNull null
+            val symbol = row.optString("symbol").ifBlank { "Unknown symbol" }
+            val reason = row.optString("reason").ifBlank { "Data rejected" }
+            "$symbol: $reason"
+        }
+        val status = json.optString("status", "UNKNOWN")
+        val message = when (status) {
+            "REVIEW_CANDIDATES" -> "OHLCV structure candidates only; no trade or profit prediction is authorized."
+            "NO_REVIEW_CANDIDATES" -> "No qualifying Spot structure candidates were found in the validated data."
+            "PARTIAL_DATA" -> "Some Spot data was unavailable or rejected; results may be incomplete."
+            else -> "Spot research status: $status."
+        }
+        SpotResearchFetchResult(true, status, message, opportunities, rejections)
+    } catch (e: Exception) {
+        SpotResearchFetchResult(false, "UNAVAILABLE",
+            "Spot research request failed (${e.javaClass.simpleName}); retrying automatically.",
+            emptyList(), emptyList())
+    } finally {
+        connection.disconnect()
+    }
+}
+
 private fun fetchCandleHistory(token: String, symbol: String): Map<String, List<MarketCandle>> {
     val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
     if (!base.startsWith("https://") || token.length < 32 || normalizeSymbol(symbol).isBlank()) return emptyMap()
