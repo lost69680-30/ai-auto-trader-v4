@@ -311,11 +311,21 @@ class AnalysisRuntimeHealth:
         stamp = datetime.fromtimestamp(report.checked_at, timezone.utc).isoformat()
         result = getattr(report, "analysis_result", None)
         result_status = getattr(result, "status", None)
+        cycle_status = str(getattr(report, "analysis_status", "UNKNOWN"))
         with self._lock:
-            self._status = "RUNNING"
             self._last_cycle_at = stamp
-            self._last_cycle_error = None
-            self._reason = str(result_status or report.analysis_status)[:120]
+            if cycle_status.startswith("ANALYSIS_FAILED:"):
+                self._status = "ERROR"
+                self._last_cycle_error = cycle_status.partition(":")[2] or "AnalysisError"
+                self._reason = "paper analysis cycle failed; see redacted server logs"
+            elif cycle_status in ("SKIPPED_UNHEALTHY_MARKET_DATA", "AUTHORIZATION_FLAG_REJECTED"):
+                self._status = "DEGRADED"
+                self._last_cycle_error = None
+                self._reason = cycle_status[:120]
+            else:
+                self._status = "RUNNING"
+                self._last_cycle_error = None
+                self._reason = str(result_status or cycle_status)[:120]
 
     def fail(self, exc: Exception) -> None:
         with self._lock:
