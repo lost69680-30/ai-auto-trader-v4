@@ -111,3 +111,24 @@ def test_signal_activity_diagnostics_do_not_create_consensus_in_flat_market():
     assert report["eligible_consensus_candles"] == {"LONG": 0, "SHORT": 0}
     assert report["qualified_same_direction_count_distribution"]["0"] == 11
     assert report["orders_authorized"] is False
+
+
+
+def test_score_threshold_sweep_is_diagnostic_only_and_never_authorizes_orders():
+    from backend.strategy_diagnostics import diagnose_strategy_threshold_sweep
+
+    rows = candles_from_closes([100 + i * 0.1 for i in range(40)])
+    report = diagnose_strategy_threshold_sweep(
+        "BTCUSDT", rows, signal_start_index=29, signal_end_index_exclusive=40,
+        thresholds=(0.0, 20.0, 40.0, 60.0),
+    )
+
+    assert report["evaluated_signal_candles"] == 11
+    assert [item["minimum_score"] for item in report["thresholds"]] == [0.0, 20.0, 40.0, 60.0]
+    assert all(item["orders_authorized"] is False for item in report["thresholds"])
+    assert report["orders_authorized"] is False
+    counts = [item["consensus_candles"] for item in report["thresholds"]]
+    assert all(counts[index]["LONG"] >= counts[index + 1]["LONG"]
+               for index in range(len(counts) - 1))
+    assert all(counts[index]["SHORT"] >= counts[index + 1]["SHORT"]
+               for index in range(len(counts) - 1))
