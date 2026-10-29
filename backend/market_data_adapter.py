@@ -69,6 +69,7 @@ class MarkPriceSnapshot:
     next_funding_at: datetime | None
     observed_at: datetime
     orders_authorized: bool = False
+    market_type: str = "FUTURES"
 
 
 Transport = Callable[[str, Mapping[str, object], float], object]
@@ -453,5 +454,5 @@ class BinanceSpotMarketDataAdapter(BinanceUsdMFuturesAdapter):
         return MarkPriceSnapshot(
             symbol=symbol, mark_price=price, index_price=None,
             last_funding_rate=None, next_funding_at=None,
-            observed_at=observed_at, orders_authorized=False,
+            observed_at=observed_at, orders_authorized=False, market_type="SPOT",
         )
