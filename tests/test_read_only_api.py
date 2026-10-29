@@ -290,3 +290,38 @@ def test_status_discloses_that_full_research_to_paper_runtime_is_not_started(tmp
     assert runtime["paper_simulation"] == "NOT_STARTED"
     assert runtime["orders_authorized"] is False
     assert "not started" in runtime["reason"].lower()
+
+
+def test_spot_research_endpoint_is_authenticated_and_never_authorizes_orders(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(
+        database_path=db,
+        token=TOKEN,
+        spot_research=lambda: {
+            "status": "REVIEW_CANDIDATES",
+            "market_type": "SPOT",
+            "opportunities": [{"symbol": "BTCUSDT", "status": "REVIEW", "orders_authorized": False}],
+            "rejections": [],
+            "orders_authorized": False,
+        },
+    )
+    status, _, body = request(app, path="/api/v1/spot/research")
+    assert status.startswith("401")
+    status, _, body = request(app, path="/api/v1/spot/research", auth="Bearer " + TOKEN)
+    assert status.startswith("200")
+    assert body["market_type"] == "SPOT"
+    assert body["opportunities"][0]["orders_authorized"] is False
+    assert body["orders_authorized"] is False
+
+
+def test_spot_research_endpoint_fails_closed_when_not_configured(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+    status, _, body = request(app, path="/api/v1/spot/research", auth="Bearer " + TOKEN)
+    assert status.startswith("503")
+    assert body["opportunities"] == []
+    assert body["orders_authorized"] is False
