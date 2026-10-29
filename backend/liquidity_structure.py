@@ -221,3 +221,112 @@ def rank_opportunities(
         )
         for index, result in enumerate(found, start=1)
     )
+
+
+@dataclass(frozen=True, slots=True)
+class SpotMarketStructureInput:
+    """Spot-only structure input: intentionally has no funding-rate fields."""
+    symbol: str
+    candles: tuple[Candle, ...]
+    timestamp: datetime
+    reference_level: float
+    previous_close: float
+    volume_baseline: float
+    estimated_round_trip_cost_pct: float
+
+
+def rank_spot_opportunities(
+    inputs: Iterable[SpotMarketStructureInput],
+    *,
+    now: datetime | None = None,
+    config: LiquidityConfig | None = None,
+) -> tuple[RankedOpportunity, ...]:
+    """Rank Spot structure from OHLCV only; never reads or fabricates Futures funding."""
+    config = config or LiquidityConfig()
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
+    batch = tuple(inputs)
+    symbols = [item.symbol.strip().upper() for item in batch]
+    if len(symbols) != len(set(symbols)):
+        return ()
+    found: list[RankedOpportunity] = []
+    for item in batch:
+        if (not item.symbol.strip() or len(item.candles) < config.lookback_candles + 1
+                or item.timestamp.tzinfo is None or item.timestamp.utcoffset() is None):
+            continue
+        age = (now.astimezone(timezone.utc) - item.timestamp.astimezone(timezone.utc)).total_seconds()
+        if age > config.max_data_age_seconds or age < -config.max_future_skew_seconds:
+            continue
+        scalars = (item.reference_level, item.previous_close, item.volume_baseline,
+                   item.estimated_round_trip_cost_pct)
+        if (not all(math.isfinite(v) for v in scalars) or item.reference_level <= 0
+                or item.previous_close <= 0 or item.volume_baseline <= 0
+                or not 0 <= item.estimated_round_trip_cost_pct <= config.max_round_trip_cost_pct):
+            continue
+        valid = True
+        for row in item.candles:
+            values = (row.open, row.high, row.low, row.close, row.volume)
+            if (not all(math.isfinite(v) for v in values) or min(row.open, row.high, row.low, row.close) <= 0
+                    or row.volume < 0 or row.high < max(row.open, row.close, row.low)
+                    or row.low > min(row.open, row.close, row.high)):
+                valid = False
+                break
+        if not valid:
+            continue
+        current = item.candles[-1]
+        history = item.candles[-(config.lookback_candles + 1):-1]
+        prior_high = max(row.high for row in history)
+        prior_low = min(row.low for row in history)
+        patterns: list[str] = []
+        evidence: list[str] = []
+        long_points = short_points = 0.0
+        if current.high > prior_high and current.close < prior_high:
+            patterns.append("LIQUIDITY_SWEEP_HIGH")
+            evidence.append("price swept prior high and closed back below")
+            short_points += 34
+        if current.low < prior_low and current.close > prior_low:
+            patterns.append("LIQUIDITY_SWEEP_LOW")
+            evidence.append("price swept prior low and closed back above")
+            long_points += 34
+        volume_multiple = current.volume / item.volume_baseline
+        if current.close > prior_high and volume_multiple >= config.breakout_volume_multiple:
+            patterns.append("BREAKOUT_UP")
+            evidence.append(f"close broke prior high with {volume_multiple:.2f}x baseline volume")
+            long_points += 32 + min(8.0, (volume_multiple - config.breakout_volume_multiple) * 8.0)
+        if current.close < prior_low and volume_multiple >= config.breakout_volume_multiple:
+            patterns.append("BREAKOUT_DOWN")
+            evidence.append(f"close broke prior low with {volume_multiple:.2f}x baseline volume")
+            short_points += 32 + min(8.0, (volume_multiple - config.breakout_volume_multiple) * 8.0)
+        if item.previous_close < item.reference_level < current.close and current.low <= item.reference_level:
+            patterns.append("RECLAIM_UP")
+            evidence.append("price crossed and reclaimed reference level from below")
+            long_points += 24
+        if item.previous_close > item.reference_level > current.close and current.high >= item.reference_level:
+            patterns.append("RECLAIM_DOWN")
+            evidence.append("price crossed and reclaimed reference level from above")
+            short_points += 24
+        if not patterns:
+            continue
+        if long_points > short_points:
+            direction, raw_score = "LONG", long_points
+        elif short_points > long_points:
+            direction, raw_score = "SHORT", short_points
+        else:
+            direction, raw_score = "NEUTRAL", max(long_points, short_points)
+        score = max(0.0, min(100.0, raw_score - min(30.0, item.estimated_round_trip_cost_pct * 15.0)))
+        if score < config.minimum_score:
+            continue
+        found.append(RankedOpportunity(
+            symbol=item.symbol.strip().upper(), direction=direction, score=round(score, 2),
+            rank=0, patterns=tuple(patterns), evidence=tuple(evidence) + ("Spot OHLCV only; no funding data used",),
+            timestamp=item.timestamp, estimated_round_trip_cost_pct=item.estimated_round_trip_cost_pct,
+            status="REVIEW", orders_authorized=False,
+        ))
+    found.sort(key=lambda row: (-row.score, row.symbol, row.direction, row.patterns))
+    return tuple(RankedOpportunity(
+        symbol=row.symbol, direction=row.direction, score=row.score, rank=index,
+        patterns=row.patterns, evidence=row.evidence, timestamp=row.timestamp,
+        estimated_round_trip_cost_pct=row.estimated_round_trip_cost_pct,
+        status=row.status, orders_authorized=False,
+    ) for index, row in enumerate(found, start=1))
