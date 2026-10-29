@@ -271,9 +271,12 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                             payload = {"items": [dict(e) for e in ledger.funding_events],
                                        "orders_authorized": False, "state_storage": state_storage}
                         else:
+                            audit_events = ledger.audit_events
+                            if callable(audit_events):
+                                audit_events = audit_events()
                             payload = {"items": [{"event_id": e.event_id, "event_type": e.event_type,
                                 "proposal_id": e.proposal_id, "occurred_at": e.occurred_at,
-                                "payload": dict(e.payload)} for e in ledger.audit_events()],
+                                "payload": dict(e.payload)} for e in audit_events],
                                 "orders_authorized": False, "state_storage": state_storage}
                     body, status = _json_bytes(payload), "200 OK"
                 except Exception:
