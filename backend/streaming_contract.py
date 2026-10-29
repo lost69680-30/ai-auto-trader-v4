@@ -82,16 +82,46 @@ def make_market_snapshot_event(
     if age_seconds > max_age_seconds:
         raise ValueError("stale market snapshots are rejected")
 
+    index_raw = snapshot.get("index_price")
+    funding_raw = snapshot.get("funding_rate")
+    next_funding_raw = snapshot.get("next_funding_at")
+    futures_context = (index_raw, funding_raw, next_funding_raw)
+    if market_type == "SPOT":
+        if any(value is not None for value in futures_context):
+            raise ValueError("Spot snapshots must not include Futures-only context")
+        normalized_futures_context = None
+    else:
+        context_present = tuple(value is not None for value in futures_context)
+        if not all(context_present):
+            raise ValueError("Futures index/funding context is required and must be complete")
+        if (isinstance(index_raw, bool) or not isinstance(index_raw, (int, float))
+                or not math.isfinite(index_raw) or index_raw <= 0):
+            raise ValueError("index_price must be finite and positive")
+        if (isinstance(funding_raw, bool) or not isinstance(funding_raw, (int, float))
+                or not math.isfinite(funding_raw)):
+            raise ValueError("funding_rate must be finite")
+        next_funding = _aware_datetime(next_funding_raw)
+        if next_funding <= checked_at:
+            raise ValueError("next_funding_at must be in the future")
+        normalized_futures_context = {
+            "index_price": float(index_raw),
+            "funding_rate": float(funding_raw),
+            "next_funding_at": next_funding.isoformat(),
+        }
+
     event = {
         "schema_version": 1,
         "type": "market.snapshot",
         "symbol": symbol,
+        "market_type": market_type,
         "observed_at": observed.isoformat(),
         "status": "HEALTHY",
         "orders_authorized": False,
     }
     if market_type == "SPOT":
-        event.update({"market_type": "SPOT", "last_price": price})
+        event["last_price"] = price
     else:
         event["mark_price"] = price
+        if normalized_futures_context is not None:
+            event.update(normalized_futures_context)
     return event

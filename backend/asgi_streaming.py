@@ -110,13 +110,21 @@ def create_streaming_asgi_app(
                             timeout=MAX_CLIENT_SEND_SECONDS,
                         )
 
-                try:
-                    message = await asyncio.wait_for(receive(), timeout=poll_interval_seconds)
-                except asyncio.TimeoutError:
-                    continue
-                if message.get("type") == "websocket.disconnect":
-                    return
-                # Client messages are intentionally ignored; this is a one-way feed.
+                # Client messages must not accelerate the stream loop. Drain and
+                # ignore them until the next scheduled tick, or return on disconnect.
+                loop = asyncio.get_running_loop()
+                next_tick = loop.time() + poll_interval_seconds
+                while True:
+                    remaining = next_tick - loop.time()
+                    if remaining <= 0:
+                        break
+                    try:
+                        message = await asyncio.wait_for(receive(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        break
+                    if message.get("type") == "websocket.disconnect":
+                        return
+                    # Client messages are intentionally ignored; this is a one-way feed.
         except Exception:
             logger.warning("WebSocket stream ended unexpectedly; orders remain unauthorized")
             return
