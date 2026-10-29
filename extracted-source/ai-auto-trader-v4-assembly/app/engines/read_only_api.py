@@ -132,7 +132,8 @@ def _fetch_candle_intervals(source, symbol: str, intervals: tuple[str, ...], lim
 def create_app(*, database_path: str, token: str, market_status: Callable[[], dict] | None = None,
                market_items: Callable[[], list[dict]] | None = None,
                market_candles: Callable[[str], dict] | None = None,
-               account_status: Callable[[], dict] | None = None):
+               account_status: Callable[[], dict] | None = None,
+               spot_research: Callable[[], dict] | None = None):
     """Create WSGI app. A strong API token is mandatory; no permissive defaults."""
     if not isinstance(token, str) or len(token) < 32:
         raise ValueError("API token must be at least 32 characters; configure it as a secret")
@@ -197,6 +198,30 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                     body, status = _json_bytes(payload), "200 OK"
                 except Exception:
                     body, status = _json_bytes({"error": "ledger_unavailable", "orders_authorized": False}), "503 Service Unavailable"
+            elif path == "/api/v1/spot/research":
+                try:
+                    if spot_research is None:
+                        body, status = _json_bytes({
+                            "status": "NOT_CONFIGURED",
+                            "opportunities": [],
+                            "rejections": [],
+                            "orders_authorized": False,
+                        }), "503 Service Unavailable"
+                    else:
+                        payload = spot_research()
+                        if (not isinstance(payload, dict)
+                                or payload.get("market_type") != "SPOT"
+                                or payload.get("orders_authorized") is not False
+                                or not isinstance(payload.get("opportunities"), list)):
+                            raise ValueError("Spot research provider returned an invalid or unsafe response")
+                        body, status = _json_bytes(payload), "200 OK"
+                except Exception:
+                    body, status = _json_bytes({
+                        "status": "UNAVAILABLE",
+                        "opportunities": [],
+                        "rejections": [],
+                        "orders_authorized": False,
+                    }), "503 Service Unavailable"
             elif path == "/api/v1/markets/candles":
                 try:
                     query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
@@ -304,16 +329,37 @@ class MarketFeedCache:
     def publish(self, result) -> None:
         rows: list[dict[str, object]] = []
         unhealthy = []
+        market_type = getattr(result, "market_type", "FUTURES")
         for frame in result.frames:
-            if frame.status.value != "HEALTHY" or frame.mark_price is None:
-                unhealthy.append(f"{frame.symbol}:{frame.status.value}")
+            if frame.status != "HEALTHY" and getattr(frame.status, "value", None) != "HEALTHY":
+                unhealthy.append(f"{frame.symbol}:{getattr(frame.status, 'value', frame.status)}")
+                continue
+            if market_type == "SPOT":
+                if frame.last_price is None or frame.last_observed_at is None:
+                    unhealthy.append(f"{frame.symbol}:INVALID_DATA")
+                    continue
+                row = {
+                    "symbol": frame.symbol, "market_type": "SPOT",
+                    "last_price": frame.last_price,
+                    "last_observed_at": frame.last_observed_at.isoformat(),
+                    "checked_at": frame.checked_at.isoformat(),
+                    "status": "HEALTHY",
+                    "candles": [{"open_time": c.open_time.isoformat(), "close_time": c.close_time.isoformat(),
+                        "open": c.open, "high": c.high, "low": c.low, "close": c.close,
+                        "volume": c.volume, "is_closed": c.is_closed} for c in frame.closed_candles[-100:]],
+                    "orders_authorized": False,
+                }
+                rows.append(row)
+                continue
+            if frame.mark_price is None:
+                unhealthy.append(f"{frame.symbol}:INVALID_DATA")
                 continue
             rows.append({
-                "symbol": frame.symbol,
+                "symbol": frame.symbol, "market_type": "FUTURES",
                 "mark_price": frame.mark_price,
                 "mark_observed_at": frame.mark_observed_at.isoformat() if frame.mark_observed_at else None,
                 "checked_at": frame.checked_at.isoformat(),
-                "status": frame.status.value,
+                "status": getattr(frame.status, "value", frame.status),
                 "funding_rate": frame.funding_rate,
                 "candles": [{"open_time": c.open_time.isoformat(), "close_time": c.close_time.isoformat(),
                     "open": c.open, "high": c.high, "low": c.low, "close": c.close,
@@ -356,6 +402,7 @@ def main() -> None:
     from backend.market_data_adapter import BinanceSpotMarketDataAdapter, BinanceUsdMFuturesAdapter
     from backend.binance_spot_testnet_account import BinanceSpotTestnetAccountClient
     from backend.market_worker import MarketDataWorker, MarketWorkerConfig
+    from backend.spot_market_worker import SpotMarketDataWorker, SpotMarketWorkerConfig
 
     token = os.environ.get("PAPER_API_TOKEN", "")
     database = os.environ.get("PAPER_DATABASE_PATH", "./data/paper-ledger.sqlite3")
@@ -407,14 +454,18 @@ def main() -> None:
     binance_testnet_account = BinanceSpotTestnetAccountClient()
     if market_mode == "spot":
         source = BinanceSpotMarketDataAdapter()
-        logging.info("market data mode=SPOT_PUBLIC_ANALYSIS_ONLY; spot last price is not futures mark price")
+        worker = SpotMarketDataWorker(source, SpotMarketWorkerConfig(
+            symbols=symbols, interval=interval, candle_limit=candle_limit,
+            max_market_age_seconds=max_age, poll_interval_seconds=poll_interval,
+        ))
+        logging.info("market data mode=SPOT_PUBLIC_ANALYSIS_ONLY; Spot last price is distinct from Futures mark price")
     else:
         source = BinanceUsdMFuturesAdapter(testnet=testnet)
+        worker = MarketDataWorker(source, MarketWorkerConfig(
+            symbols=symbols, interval=interval, candle_limit=candle_limit,
+            poll_interval_seconds=poll_interval, max_market_age_seconds=max_age,
+        ))
         logging.info("market data mode=%s", "FUTURES_TESTNET" if testnet else "FUTURES_PRODUCTION_PUBLIC")
-    worker = MarketDataWorker(source, MarketWorkerConfig(
-        symbols=symbols, interval=interval, candle_limit=candle_limit,
-        poll_interval_seconds=poll_interval, max_market_age_seconds=max_age,
-    ))
     analysis_candle_limit = int(os.environ.get("PAPER_ANALYSIS_CANDLE_LIMIT", "500"))
     if not 50 <= analysis_candle_limit <= 500:
         raise SystemExit("PAPER_ANALYSIS_CANDLE_LIMIT must be between 50 and 500")
@@ -470,10 +521,56 @@ def main() -> None:
         import uvicorn
         from backend.asgi_streaming import create_streaming_asgi_app
 
+        spot_research_provider = None
+        if market_mode == "spot":
+            from backend.spot_market_research import SpotMarketResearchService, SpotResearchConfig
+            spot_research_service = SpotMarketResearchService(
+                source=source,
+                config=SpotResearchConfig(
+                    symbols=symbols,
+                    interval=interval,
+                    candle_limit=analysis_candle_limit,
+                    max_candle_age_seconds=max_age,
+                ),
+            )
+
+            def spot_research_provider():
+                report = spot_research_service.analyze_once()
+                return {
+                    "status": report.status,
+                    "market_type": "SPOT",
+                    "observed_at": report.observed_at.isoformat(),
+                    "market_scan": {
+                        "candidates": [
+                            {"symbol": row.symbol, "score": row.score, "decision": row.decision,
+                             "reasons": list(row.reasons)}
+                            for row in report.market_scan.candidates
+                        ],
+                        "rejections": [
+                            {"symbol": row.symbol, "reason": row.reason}
+                            for row in report.market_scan.rejections
+                        ],
+                    },
+                    "opportunities": [
+                        {"symbol": row.symbol, "direction": row.direction, "score": row.score,
+                         "rank": row.rank, "patterns": list(row.patterns), "evidence": list(row.evidence),
+                         "timestamp": row.timestamp.isoformat(),
+                         "estimated_round_trip_cost_pct": row.estimated_round_trip_cost_pct,
+                         "status": row.status, "orders_authorized": False}
+                        for row in report.opportunities
+                    ],
+                    "rejections": [
+                        {"symbol": row.symbol, "reason": row.reason}
+                        for row in report.rejections
+                    ],
+                    "orders_authorized": False,
+                }
+
         wsgi_api = create_app(database_path=database, token=token,
                               market_status=cache.status, market_items=cache.items,
                               market_candles=market_candles,
-                              account_status=binance_testnet_account.account_summary)
+                              account_status=binance_testnet_account.account_summary,
+                              spot_research=spot_research_provider)
         asgi_api = create_streaming_asgi_app(
             http_app=WsgiToAsgi(wsgi_api),
             snapshot_provider=cache.items,
