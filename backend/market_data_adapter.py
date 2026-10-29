@@ -64,9 +64,9 @@ class FundingRateRecord:
 class MarkPriceSnapshot:
     symbol: str
     mark_price: float
-    index_price: float
-    last_funding_rate: float
-    next_funding_at: datetime
+    index_price: float | None
+    last_funding_rate: float | None
+    next_funding_at: datetime | None
     observed_at: datetime
     orders_authorized: bool = False
 
@@ -451,7 +451,7 @@ class BinanceSpotMarketDataAdapter(BinanceUsdMFuturesAdapter):
             raise MarketDataError("spot last price must be positive")
         observed_at = datetime.now(timezone.utc)
         return MarkPriceSnapshot(
-            symbol=symbol, mark_price=price, index_price=price,
-            last_funding_rate=0.0, next_funding_at=observed_at,
+            symbol=symbol, mark_price=price, index_price=None,
+            last_funding_rate=None, next_funding_at=None,
             observed_at=observed_at, orders_authorized=False,
         )
