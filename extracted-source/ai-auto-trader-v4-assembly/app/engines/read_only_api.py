@@ -249,7 +249,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                         if (not isinstance(payload, dict) or payload.get("market_type") != "SPOT"
                                 or payload.get("orders_authorized") is not False
                                 or payload.get("positions_created") is not False):
-                            raise ValueError("unsafe historical Spot research response")
+                            raise RuntimeError("unsafe historical Spot research response")
                         body, status = _json_bytes(payload), "200 OK"
                 except ValueError:
                     body, status = _json_bytes({"error": "invalid_request", "orders_authorized": False,
