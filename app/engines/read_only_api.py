@@ -186,7 +186,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                             "state_storage": state_storage, "server_time": time.time(),
                             "analysis_runtime": (analysis_status() if analysis_status else {
                                 "enabled": False,
-                                "status": "NOT_STARTED",
+                                "status": "READ_ONLY_MARKET_DATA_ONLY",
                                 "research_pipeline": "NOT_STARTED",
                                 "paper_simulation": "NOT_STARTED",
                                 "last_cycle_at": None,
@@ -304,7 +304,7 @@ class AnalysisRuntimeHealth:
         self._last_cycle_at = None
         self._last_cycle_error = None
         self._reason = "waiting for the first completed paper-analysis cycle" if enabled else (
-            "Research-to-paper worker is disabled; this service is read-only market data only."
+            "Research-to-paper worker is not started (disabled); this service is read-only market data only."
         )
 
     def publish(self, report) -> None:
