@@ -87,6 +87,8 @@ class MarketFrame:
     retry_count: int
     orders_authorized: bool = False
     funding_rate: float | None = None
+    index_price: float | None = None
+    next_funding_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +174,33 @@ class MarketDataWorker:
         reasons: list[str] = []
         if mark.symbol != symbol or not math.isfinite(mark.mark_price) or mark.mark_price <= 0:
             reasons.append("mark-price payload does not match symbol or contains an invalid price")
+        if mark.orders_authorized is not False:
+            reasons.append("market-data snapshot has unexpected order authority")
+
+        # Spot adapters explicitly omit Futures-only fields. If any Futures
+        # field is supplied, require a complete, valid context before forwarding.
+        futures_context = (mark.index_price, mark.last_funding_rate, mark.next_funding_at)
+        if any(value is not None for value in futures_context) and not all(
+            value is not None for value in futures_context
+        ):
+            reasons.append("Futures context is incomplete")
+        elif all(value is not None for value in futures_context):
+            if (isinstance(mark.index_price, bool)
+                    or not isinstance(mark.index_price, (int, float))
+                    or not math.isfinite(mark.index_price) or mark.index_price <= 0):
+                reasons.append("index price is invalid")
+            if (isinstance(mark.last_funding_rate, bool)
+                    or not isinstance(mark.last_funding_rate, (int, float))
+                    or not math.isfinite(mark.last_funding_rate)):
+                reasons.append("funding rate is invalid")
+            next_funding_at = mark.next_funding_at
+            if (not isinstance(next_funding_at, datetime)
+                    or next_funding_at.tzinfo is None
+                    or next_funding_at.utcoffset() is None):
+                reasons.append("next funding timestamp is not timezone-aware")
+            elif next_funding_at.astimezone(timezone.utc) <= validation_now:
+                reasons.append("next funding timestamp is not in the future")
+
         if mark.observed_at.tzinfo is None or mark.observed_at.utcoffset() is None:
             reasons.append("mark-price timestamp is not timezone-aware")
         else:
@@ -223,14 +252,16 @@ class MarketDataWorker:
         return self._frame(
             symbol, FeedStatus.HEALTHY, now, mark.mark_price, mark.observed_at,
             closed, (), funding_rate=mark.last_funding_rate,
+            index_price=mark.index_price, next_funding_at=mark.next_funding_at,
         )
 
-    def _frame(self, symbol, status, now, mark_price, mark_observed_at, candles, reasons, *, funding_rate=None):
+    def _frame(self, symbol, status, now, mark_price, mark_observed_at, candles, reasons, *,
+               funding_rate=None, index_price=None, next_funding_at=None):
         return MarketFrame(
             symbol=symbol, status=status, checked_at=now, mark_price=mark_price,
             mark_observed_at=mark_observed_at, closed_candles=candles,
             reasons=tuple(reasons), retry_count=self._retry_counts[symbol], orders_authorized=False,
-            funding_rate=funding_rate,
+            funding_rate=funding_rate, index_price=index_price, next_funding_at=next_funding_at,
         )
 
     def run_forever(
