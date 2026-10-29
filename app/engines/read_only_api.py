@@ -389,16 +389,31 @@ class MarketFeedCache:
         rows: list[dict[str, object]] = []
         unhealthy = []
         for frame in result.frames:
-            if frame.status.value != "HEALTHY" or frame.mark_price is None:
+            if (frame.status.value != "HEALTHY" or frame.mark_price is None
+                    or frame.orders_authorized is not False):
                 unhealthy.append(f"{frame.symbol}:{frame.status.value}")
                 continue
+            mark_observed_at = frame.mark_observed_at.isoformat() if frame.mark_observed_at else None
+            has_futures_context = (
+                frame.index_price is not None
+                and frame.funding_rate is not None
+                and frame.next_funding_at is not None
+            )
             rows.append({
                 "symbol": frame.symbol,
+                # Retain mark_price for current Android clients during migration;
+                # market_type/price_type make the Spot-vs-Futures meaning explicit.
                 "mark_price": frame.mark_price,
-                "mark_observed_at": frame.mark_observed_at.isoformat() if frame.mark_observed_at else None,
+                "last_price": None if has_futures_context else frame.mark_price,
+                "mark_observed_at": mark_observed_at,
+                "last_observed_at": None if has_futures_context else mark_observed_at,
+                "market_type": "FUTURES" if has_futures_context else "SPOT",
+                "price_type": "FUTURES_MARK_PRICE" if has_futures_context else "SPOT_LAST_PRICE",
                 "checked_at": frame.checked_at.isoformat(),
                 "status": frame.status.value,
-                "funding_rate": frame.funding_rate,
+                "index_price": frame.index_price if has_futures_context else None,
+                "funding_rate": frame.funding_rate if has_futures_context else None,
+                "next_funding_at": frame.next_funding_at.isoformat() if has_futures_context else None,
                 "candles": [{"open_time": c.open_time.isoformat(), "close_time": c.close_time.isoformat(),
                     "open": c.open, "high": c.high, "low": c.low, "close": c.close,
                     "volume": c.volume, "is_closed": c.is_closed} for c in frame.closed_candles[-100:]],
