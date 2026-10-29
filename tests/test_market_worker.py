@@ -311,3 +311,22 @@ def test_worker_rejects_mark_snapshot_that_claims_order_authority():
     assert result.frames[0].closed_candles == ()
     assert any("order" in reason.lower() for reason in result.frames[0].reasons)
     assert result.orders_authorized is False
+
+
+def test_worker_allows_spot_snapshot_without_futures_only_context():
+    opened = NOW - timedelta(minutes=2)
+    source = FakeAdapter(candles=(candle(opened, opened + timedelta(minutes=1)),))
+    source.mark = MarkPriceSnapshot(
+        symbol="BTCUSDT", mark_price=101, index_price=None,
+        last_funding_rate=None, next_funding_at=None, observed_at=NOW,
+    )
+
+    result = MarketDataWorker(source, config()).poll_once(now=NOW)
+
+    frame = result.frames[0]
+    assert frame.status is FeedStatus.HEALTHY
+    assert frame.index_price is None
+    assert frame.funding_rate is None
+    assert frame.next_funding_at is None
+    assert frame.orders_authorized is False
+    assert result.orders_authorized is False
