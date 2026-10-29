@@ -69,7 +69,7 @@ def test_walk_forward_rejects_short_history_and_future_candles():
     with pytest.raises(ValueError, match="not enough"):
         evaluate_spot_walk_forward(
             "BTCUSDT", candles(100), train_bars=40, validation_bars=40,
-            holdout_bars=40, step_bars=20, research_now=NOW,
+            holdout_bars=40, step_bars=40, research_now=NOW,
         )
     rows = candles(360)
     row = rows[-1]
