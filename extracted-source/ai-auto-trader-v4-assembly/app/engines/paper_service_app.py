@@ -346,6 +346,7 @@ class PaperServiceAnalysisHandler:
                     if pages > 10:
                         raise ValueError("FundingHistoryBacklogTooLarge")
                     last_stamp_ms = None
+                    blocked_at_by_position: dict[str, float] = {}
                     for event in rows:
                         if not isinstance(event, FundingRateRecord):
                             raise ValueError("MalformedFundingRecord")
@@ -370,10 +371,18 @@ class PaperServiceAnalysisHandler:
                             and (position.closed_at is None or event_time.timestamp() <= float(position.closed_at))
                         )
                         for position in eligible_positions:
+                            proposal_id = position.proposal_id
+                            event_stamp = event_time.timestamp()
+                            # Do not book later cash flows for this position while an
+                            # earlier event lacks a verified mark; otherwise the latest
+                            # recorded timestamp could hide the unresolved gap forever.
+                            if proposal_id in blocked_at_by_position:
+                                continue
                             events_seen += 1
                             mark = event.mark_price
                             if mark is None:
                                 events_skipped_missing_mark += 1
+                                blocked_at_by_position[proposal_id] = event_stamp
                                 continue
                             if (isinstance(mark, bool) or not self._finite_number(mark) or float(mark) <= 0):
                                 raise ValueError("InvalidHistoricalFundingMark")
