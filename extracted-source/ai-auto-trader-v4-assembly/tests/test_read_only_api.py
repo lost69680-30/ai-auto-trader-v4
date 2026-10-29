@@ -1,6 +1,7 @@
 import json
 import io
-from datetime import datetime
+from types import SimpleNamespace
+from datetime import datetime, timezone
 
 import pytest
 
@@ -346,3 +347,32 @@ def test_spot_research_endpoint_rejects_any_order_authorized_opportunity(tmp_pat
     assert status.startswith("503")
     assert body["orders_authorized"] is False
     assert body["opportunities"] == []
+
+
+def test_spot_market_feed_cache_preserves_last_price_semantics():
+    from app.engines.read_only_api import MarketFeedCache
+
+    now = datetime.now(timezone.utc)
+    frame = SimpleNamespace(
+        symbol="BTCUSDT",
+        status="HEALTHY",
+        last_price=65000.0,
+        last_observed_at=now,
+        checked_at=now,
+        closed_candles=(),
+        reasons=(),
+        orders_authorized=False,
+    )
+    result = SimpleNamespace(
+        market_type="SPOT",
+        checked_at=now,
+        frames=(frame,),
+    )
+    cache = MarketFeedCache(max_age_seconds=90)
+    cache.publish(result)
+    items = cache.items()
+    assert cache.status()["status"] == "HEALTHY"
+    assert items[0]["market_type"] == "SPOT"
+    assert items[0]["last_price"] == 65000.0
+    assert "mark_price" not in items[0]
+    assert items[0]["orders_authorized"] is False
