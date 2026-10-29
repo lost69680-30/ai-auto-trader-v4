@@ -100,6 +100,7 @@ def test_websocket_does_not_emit_stale_or_unhealthy_snapshots():
     payloads = [message for message in sent if message["type"] == "websocket.send"]
     assert payloads == []
 
+
 def test_websocket_never_emits_symbols_outside_configured_allowlist():
     snapshot = {
         "symbol": "ETHUSDT",
@@ -117,6 +118,7 @@ def test_websocket_never_emits_symbols_outside_configured_allowlist():
     )
     sent = run_asgi(websocket_scope(TOKEN), [{"type": "websocket.connect"}], app)
     assert not [message for message in sent if message["type"] == "websocket.send"]
+
 
 def test_websocket_rejects_duplicate_authorization_headers():
     app = create_streaming_asgi_app(
@@ -144,3 +146,44 @@ def test_websocket_rejects_weak_server_token_at_construction():
         assert "32 characters" in str(exc)
     else:
         raise AssertionError("weak server token must be rejected")
+
+
+def test_client_frames_cannot_accelerate_snapshot_polling():
+    calls = 0
+    snapshot = {
+        "symbol": "BTCUSDT",
+        "mark_price": 65000.0,
+        "mark_observed_at": datetime.now(timezone.utc).isoformat(),
+        "status": "HEALTHY",
+        "orders_authorized": False,
+    }
+
+    def provider():
+        nonlocal calls
+        calls += 1
+        return [snapshot]
+
+    app = create_streaming_asgi_app(
+        http_app=lambda scope, receive, send: None,
+        snapshot_provider=provider,
+        token=TOKEN,
+        allowed_symbols={"BTCUSDT"},
+        poll_interval_seconds=5,
+    )
+    incoming = [
+        {"type": "websocket.connect"},
+        {"type": "websocket.receive", "text": "unexpected client frame"},
+    ]
+    sent = []
+
+    async def receive():
+        if incoming:
+            return incoming.pop(0)
+        return {"type": "websocket.disconnect", "code": 1000}
+
+    async def send(message):
+        sent.append(message)
+
+    asyncio.run(app(websocket_scope(TOKEN), receive, send))
+    assert calls == 1
+    assert any(message.get("type") == "websocket.close" and message.get("code") == 4400 for message in sent)
