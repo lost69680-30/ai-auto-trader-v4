@@ -553,3 +553,75 @@ def test_incomplete_funding_accounting_blocks_pending_paper_fills(tmp_path, monk
         assert len(app.ledger.fills) == 1
     finally:
         app.close()
+
+
+def test_service_restart_cancels_unrecoverable_pending_intents_but_preserves_ledger(tmp_path, monkeypatch):
+    from app.engines.orchestrator import PaperOrderIntent
+
+    monkeypatch.delenv("PAPER_DATABASE_URL", raising=False)
+    cfg = config(tmp_path)
+    first = PaperServiceApplication.create(source=FakeSource(), config=cfg, clock=lambda: NOW)
+    intent = PaperOrderIntent(
+        proposal_id="restart-pending", signal_id="restart-signal", symbol="BTCUSDT",
+        side="LONG", quantity=0.1, entry_price=100.0, stop_loss=90.0,
+        take_profit=110.0, recorded_at=(NOW - timedelta(seconds=10)).timestamp(),
+    )
+    assert first.ledger.record_intent(intent) == "RECORDED"
+    first.close()
+
+    restarted_at = NOW + timedelta(seconds=1)
+    recovered = PaperServiceApplication.create(
+        source=FakeSource(), config=cfg, clock=lambda: restarted_at,
+    )
+    try:
+        pending = next(order for order in recovered.ledger.orders if order.proposal_id == intent.proposal_id)
+        assert pending.status == "CANCELLED"
+        assert recovered.ledger.fills == ()
+        assert recovered.ledger.orders_authorized is False
+        assert any(event.event_type == "PAPER_ORDER_CANCELLED_ON_SERVICE_START"
+                   for event in recovered.ledger.audit_events)
+    finally:
+        recovered.close()
+
+
+def test_emergency_stop_and_open_position_survive_service_restart(tmp_path, monkeypatch):
+    from app.engines.orchestrator import PaperOrderIntent
+
+    monkeypatch.delenv("PAPER_DATABASE_URL", raising=False)
+    cfg = config(tmp_path)
+    first = PaperServiceApplication.create(source=FakeSource(), config=cfg, clock=lambda: NOW)
+    intent = PaperOrderIntent(
+        proposal_id="restart-open", signal_id="restart-open-signal", symbol="BTCUSDT",
+        side="LONG", quantity=0.1, entry_price=100.0, stop_loss=90.0,
+        take_profit=110.0, recorded_at=(NOW - timedelta(hours=2)).timestamp(),
+    )
+    assert first.ledger.record_intent(intent) == "RECORDED"
+    fill = first.ledger.simulate_fill(
+        intent.proposal_id, market_price=100.0,
+        filled_at=(NOW - timedelta(hours=1)).timestamp(), fee_rate=0.0, slippage_bps=0.0,
+    )
+    assert fill.status == "FILLED"
+    first.activate_emergency_stop(reason="restart recovery test", now=NOW)
+    first.close()
+
+    restarted_at = NOW + timedelta(seconds=1)
+    recovered = PaperServiceApplication.create(
+        source=FakeSource(), config=cfg, clock=lambda: restarted_at,
+    )
+    try:
+        assert recovered.ledger.emergency_stop_active is True
+        assert len(recovered.ledger.open_positions) == 1
+        assert recovered.ledger.orders_authorized is False
+
+        poll_at = restarted_at + timedelta(seconds=1)
+        report = recovered.process_poll(
+            MarketPollResult(poll_at, (good_frame(poll_at),), orders_authorized=False),
+            now=poll_at.timestamp(),
+        )
+        assert report.orders_authorized is False
+        assert report.protection_status == "EMERGENCY_STOP_ACTIVE"
+        assert report.open_positions == 0
+        assert recovered.ledger.positions[0].status == "CLOSED"
+        assert recovered.ledger.emergency_stop_active is True
+    finally:
+        recovered.close()
