@@ -63,10 +63,29 @@ internal data class MarketCandle(
 
 private data class MarketInstrument(
     val symbol: String,
+    val marketType: String,
     val price: Double,
     val priceObservedAt: String,
     val priceLabel: String,
     val candles: List<MarketCandle>,
+)
+
+private data class SpotResearchOpportunity(
+    val symbol: String,
+    val direction: String,
+    val score: Double,
+    val rank: Int,
+    val patterns: List<String>,
+    val evidence: List<String>,
+    val status: String,
+)
+
+private data class SpotResearchFetchResult(
+    val safeResponse: Boolean,
+    val status: String,
+    val message: String,
+    val opportunities: List<SpotResearchOpportunity>,
+    val rejections: List<String>,
 )
 
 internal data class TestnetAccountDiagnostic(
@@ -204,6 +223,10 @@ private object BackendSession {
     val marketItems = mutableStateOf<List<MarketInstrument>>(emptyList())
     val marketLoading = mutableStateOf(false)
     val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+    val spotResearchStatus = mutableStateOf("NOT AVAILABLE")
+    val spotResearchMessage = mutableStateOf("Spot research is available when Spot public market mode is enabled.")
+    val spotResearchItems = mutableStateOf<List<SpotResearchOpportunity>>(emptyList())
+    val spotResearchRejections = mutableStateOf<List<String>>(emptyList())
     // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
     val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
 }
@@ -249,7 +272,7 @@ private fun parseMarketItems(array: JSONArray): List<MarketInstrument> {
         }
         if (candles.isNotEmpty()) {
             result += MarketInstrument(
-                symbol, price, observedAt,
+                symbol, marketType, price, observedAt,
                 if (isSpot) "Spot last price" else "Futures mark price",
                 candles.takeLast(100),
             )
@@ -748,6 +771,92 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
     } catch (_: Exception) {
         MarketFetchResult(-1, false, "OFFLINE / ERROR", "OFFLINE", emptyList(),
             "Market request failed. Check internet access and the backend deployment.", false)
+    }
+}
+
+
+private fun fetchSpotResearch(token: String): SpotResearchFetchResult {
+    val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
+    if (!base.startsWith("https://") || token.length < 32) {
+        return SpotResearchFetchResult(false, "NOT CONNECTED",
+            "Connect the authenticated HTTPS backend to load Spot research.", emptyList(), emptyList())
+    }
+    val connection = try {
+        URL("$base/api/v1/spot/research").openConnection() as HttpURLConnection
+    } catch (e: Exception) {
+        return SpotResearchFetchResult(false, "OFFLINE",
+            "Spot research request could not be opened (${e.javaClass.simpleName}).", emptyList(), emptyList())
+    }
+    return try {
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 20000
+        connection.readTimeout = 45000
+        connection.setRequestProperty("Authorization", "Bearer $token")
+        connection.setRequestProperty("Accept", "application/json")
+        connection.useCaches = false
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        val json = try { JSONObject(body) } catch (_: Exception) {
+            return SpotResearchFetchResult(false, "INVALID RESPONSE",
+                "Spot research endpoint returned unreadable JSON.", emptyList(), emptyList())
+        }
+        if (code !in 200..299) {
+            val status = json.optString("status", "UNAVAILABLE")
+            return SpotResearchFetchResult(false, status,
+                "Spot research is unavailable (HTTP $code · $status).", emptyList(), emptyList())
+        }
+        if (json.optString("market_type") != "SPOT" || json.optBoolean("orders_authorized", true)) {
+            return SpotResearchFetchResult(false, "BLOCKED",
+                "Spot research response did not confirm Spot mode and disabled order authorization.",
+                emptyList(), emptyList())
+        }
+        val opportunitiesJson = json.optJSONArray("opportunities") ?: JSONArray()
+        val opportunities = mutableListOf<SpotResearchOpportunity>()
+        for (i in 0 until opportunitiesJson.length()) {
+            val row = opportunitiesJson.optJSONObject(i) ?: continue
+            val symbol = row.optString("symbol").trim()
+            val direction = row.optString("direction").uppercase(Locale.ROOT)
+            val score = row.optDouble("score", Double.NaN)
+            val rank = row.optInt("rank", 0)
+            if (symbol.isBlank() || !score.isFinite() || score !in 0.0..100.0 ||
+                rank <= 0 || row.optString("status") != "REVIEW" ||
+                row.optBoolean("orders_authorized", true) ||
+                direction !in setOf("LONG", "SHORT", "NEUTRAL")) {
+                return SpotResearchFetchResult(false, "BLOCKED",
+                    "Spot research contained an invalid or unsafe candidate; results were rejected.",
+                    emptyList(), emptyList())
+            }
+            val patterns = row.optJSONArray("patterns") ?: JSONArray()
+            val evidence = row.optJSONArray("evidence") ?: JSONArray()
+            opportunities += SpotResearchOpportunity(
+                symbol, direction, score, rank,
+                (0 until patterns.length()).mapNotNull { patterns.optString(it).takeIf(String::isNotBlank) },
+                (0 until evidence.length()).mapNotNull { evidence.optString(it).takeIf(String::isNotBlank) },
+                row.optString("status"),
+            )
+        }
+        val rejectionsJson = json.optJSONArray("rejections") ?: JSONArray()
+        val rejections = (0 until rejectionsJson.length()).mapNotNull { index ->
+            val row = rejectionsJson.optJSONObject(index) ?: return@mapNotNull null
+            val symbol = row.optString("symbol").ifBlank { "Unknown symbol" }
+            val reason = row.optString("reason").ifBlank { "Data rejected" }
+            "$symbol: $reason"
+        }
+        val status = json.optString("status", "UNKNOWN")
+        val message = when (status) {
+            "REVIEW_CANDIDATES" -> "OHLCV structure candidates only; no trade or profit prediction is authorized."
+            "NO_REVIEW_CANDIDATES" -> "No qualifying Spot structure candidates were found in the validated data."
+            "PARTIAL_DATA" -> "Some Spot data was unavailable or rejected; results may be incomplete."
+            else -> "Spot research status: $status."
+        }
+        SpotResearchFetchResult(true, status, message, opportunities, rejections)
+    } catch (e: Exception) {
+        SpotResearchFetchResult(false, "UNAVAILABLE",
+            "Spot research request failed (${e.javaClass.simpleName}); retrying automatically.",
+            emptyList(), emptyList())
+    } finally {
+        connection.disconnect()
     }
 }
 
@@ -1257,6 +1366,26 @@ private fun AnalysisScreen() {
         }
     }
     val loadedMarkets = BackendSession.marketItems.value
+    val spotMode = loadedMarkets.any { it.marketType == "SPOT" }
+    LaunchedEffect(sessionToken, spotMode) {
+        if (sessionToken.length < 32 || !spotMode) {
+            BackendSession.spotResearchItems.value = emptyList()
+            BackendSession.spotResearchRejections.value = emptyList()
+            BackendSession.spotResearchStatus.value = if (spotMode) "NOT CONNECTED" else "NOT AVAILABLE"
+            BackendSession.spotResearchMessage.value =
+                if (spotMode) "Connect the authenticated backend to load Spot research."
+                else "Spot research is available when Spot public market mode is enabled."
+        } else {
+            while (true) {
+                val result = withContext(Dispatchers.IO) { fetchSpotResearch(sessionToken) }
+                BackendSession.spotResearchStatus.value = result.status
+                BackendSession.spotResearchMessage.value = result.message
+                BackendSession.spotResearchItems.value = if (result.safeResponse) result.opportunities else emptyList()
+                BackendSession.spotResearchRejections.value = result.rejections
+                delay(120_000)
+            }
+        }
+    }
     val selectedMarket = loadedMarkets.firstOrNull { normalizeSymbol(it.symbol) == normalizeSymbol(symbol) }
     val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol ?: symbol)
     val candleHistoryByTimeframe = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
@@ -1335,8 +1464,12 @@ private fun AnalysisScreen() {
                 LegendDot("Down candle", Red)
             }
         }
+        LaunchedEffect(selectedMarket?.marketType) {
+            if (selectedMarket?.marketType != "SPOT" && selectedTab == "Spot Research") selectedTab = "Market"
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Market", "Performance").forEach { t ->
+            (if (selectedMarket?.marketType == "SPOT") listOf("Market", "Spot Research", "Performance")
+             else listOf("Market", "Performance")).forEach { t ->
                 Box(Modifier.weight(1f).background(if (selectedTab == t) Gold.copy(alpha = .15f) else Panel, RoundedCornerShape(10.dp))
                     .border(1.dp, if (selectedTab == t) Gold else Grid, RoundedCornerShape(10.dp)).clickable { selectedTab = t }.padding(11.dp), contentAlignment = Alignment.Center) {
                     Text(t, color = if (selectedTab == t) Gold else Muted, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
@@ -1460,6 +1593,51 @@ private fun AnalysisScreen() {
                     "Thresholds are screening heuristics and are not calibrated across instruments or timeframes. This panel does not estimate loss probability, forecast profit, or authorize orders.",
                     color = Muted, fontSize = 11.sp, lineHeight = 16.sp
                 )
+            }
+        } else if (selectedTab == "Spot Research") {
+            SectionTitle("SPOT STRUCTURE RESEARCH · REVIEW ONLY")
+            CardPanel {
+                Text("Status: ${BackendSession.spotResearchStatus.value}", color = Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(BackendSession.spotResearchMessage.value, color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+                Text("Scores rank OHLCV patterns and are not probabilities of profit. This screen does not create orders or paper positions.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+            }
+            val researchItems = BackendSession.spotResearchItems.value
+            if (researchItems.isEmpty()) {
+                CardPanel {
+                    Text("No Spot structure candidates to review.", color = Muted, fontSize = 12.sp)
+                }
+            } else {
+                researchItems.forEach { item ->
+                    CardPanel {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(displaySymbol(item.symbol), color = White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                Text(item.patterns.joinToString(" · "), color = Gold, fontSize = 11.sp, lineHeight = 16.sp)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text("#${item.rank}", color = Muted, fontSize = 10.sp)
+                                Text("${item.score}/100", color = Green, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Text(
+                            when (item.direction) {
+                                "LONG" -> "Long-pattern review only · not a trade signal"
+                                "SHORT" -> "Short pattern only · Spot short selling is not enabled"
+                                else -> "Neutral pattern review only"
+                            },
+                            color = if (item.direction == "LONG") Green else Gold,
+                            fontSize = 11.sp, lineHeight = 16.sp
+                        )
+                        item.evidence.forEach { evidence -> Text("• $evidence", color = Muted, fontSize = 11.sp, lineHeight = 16.sp) }
+                    }
+                }
+            }
+            val rejected = BackendSession.spotResearchRejections.value
+            if (rejected.isNotEmpty()) {
+                SectionTitle("DATA REJECTIONS")
+                CardPanel {
+                    rejected.take(8).forEach { Text("• $it", color = Color(0xFFFFC857), fontSize = 11.sp, lineHeight = 16.sp) }
+                }
             }
         } else {
             SectionTitle("PERFORMANCE ANALYTICS")
