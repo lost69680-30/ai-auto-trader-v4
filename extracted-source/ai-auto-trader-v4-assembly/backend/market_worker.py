@@ -89,6 +89,7 @@ class MarketFrame:
     funding_rate: float | None = None
     index_price: float | None = None
     next_funding_at: datetime | None = None
+    market_type: str = "FUTURES"
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,14 +178,17 @@ class MarketDataWorker:
         if mark.orders_authorized is not False:
             reasons.append("market-data snapshot has unexpected order authority")
 
-        # Spot adapters explicitly omit Futures-only fields. If any Futures
-        # field is supplied, require a complete, valid context before forwarding.
+        # Require an explicit market type. Futures feeds must provide all
+        # Futures-only fields; Spot feeds must not synthesize any of them.
         futures_context = (mark.index_price, mark.last_funding_rate, mark.next_funding_at)
-        if any(value is not None for value in futures_context) and not all(
-            value is not None for value in futures_context
-        ):
+        if not isinstance(mark.market_type, str) or mark.market_type not in ("SPOT", "FUTURES"):
+            reasons.append("market-data snapshot has an unknown market type")
+        elif mark.market_type == "SPOT":
+            if any(value is not None for value in futures_context):
+                reasons.append("Spot snapshot contains Futures-only context")
+        elif not all(value is not None for value in futures_context):
             reasons.append("Futures context is incomplete")
-        elif all(value is not None for value in futures_context):
+        else:
             if (isinstance(mark.index_price, bool)
                     or not isinstance(mark.index_price, (int, float))
                     or not math.isfinite(mark.index_price) or mark.index_price <= 0):
@@ -246,22 +250,25 @@ class MarketDataWorker:
             else:
                 status = FeedStatus.INVALID_DATA
             self._retry_counts[symbol] = 0
-            return self._frame(symbol, status, now, None, mark.observed_at, (), tuple(reasons))
+            return self._frame(symbol, status, now, None, mark.observed_at, (), tuple(reasons),
+                               market_type=mark.market_type)
 
         self._retry_counts[symbol] = 0
         return self._frame(
             symbol, FeedStatus.HEALTHY, now, mark.mark_price, mark.observed_at,
             closed, (), funding_rate=mark.last_funding_rate,
             index_price=mark.index_price, next_funding_at=mark.next_funding_at,
+            market_type=mark.market_type,
         )
 
     def _frame(self, symbol, status, now, mark_price, mark_observed_at, candles, reasons, *,
-               funding_rate=None, index_price=None, next_funding_at=None):
+               funding_rate=None, index_price=None, next_funding_at=None, market_type="FUTURES"):
         return MarketFrame(
             symbol=symbol, status=status, checked_at=now, mark_price=mark_price,
             mark_observed_at=mark_observed_at, closed_candles=candles,
             reasons=tuple(reasons), retry_count=self._retry_counts[symbol], orders_authorized=False,
             funding_rate=funding_rate, index_price=index_price, next_funding_at=next_funding_at,
+            market_type=market_type,
         )
 
     def run_forever(
