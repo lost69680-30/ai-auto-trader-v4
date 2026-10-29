@@ -71,7 +71,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gradle -p "$PROJECT_DIR" :android:app:testDebugUnitTest :android:app:assembleDebug --no-daemon --max-workers=2
+          # The Gradle property is required: build.gradle.kts defaults this URL to blank.
+          # This is a public backend URL, not a credential; bearer tokens stay out of the APK.
+          gradle -p "$PROJECT_DIR" :android:app:testDebugUnitTest :android:app:assembleDebug \
+            -PpaperApiBaseUrl=https://ai-auto-trader-v4-backend.onrender.com \
+            --no-daemon --max-workers=2
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
