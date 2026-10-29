@@ -133,7 +133,8 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                market_items: Callable[[], list[dict]] | None = None,
                market_candles: Callable[[str], dict] | None = None,
                account_status: Callable[[], dict] | None = None,
-               spot_research: Callable[[], dict] | None = None):
+               spot_research: Callable[[], dict] | None = None,
+               spot_historical_research: Callable[[str, str, int], dict] | None = None):
     """Create WSGI app. A strong API token is mandatory; no permissive defaults."""
     if not isinstance(token, str) or len(token) < 32:
         raise ValueError("API token must be at least 32 characters; configure it as a secret")
