@@ -431,6 +431,30 @@ class BinanceSpotMarketDataAdapter(BinanceUsdMFuturesAdapter):
                          timeout_seconds=timeout_seconds, transport=transport)
         self.kline_path = "/api/v3/klines"
 
+    def fetch_server_time(self) -> datetime:
+        """Fetch the Spot API server time from its public, unauthenticated endpoint."""
+        path = "/api/v3/time"
+        payload = self._get(path)
+        if not isinstance(payload, Mapping):
+            raise MarketDataError(f"unexpected response shape from {path}")
+        raw_timestamp = payload.get("serverTime")
+        if isinstance(raw_timestamp, bool) or not isinstance(raw_timestamp, (int, str)):
+            raise MarketDataError("invalid timestamp field: serverTime")
+        try:
+            timestamp_ms = int(raw_timestamp)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise MarketDataError("invalid timestamp field: serverTime") from exc
+        if timestamp_ms <= 0:
+            raise MarketDataError("invalid timestamp field: serverTime")
+        return _epoch_ms(timestamp_ms, "serverTime")
+
+    def fetch_funding_rate_history(
+        self, symbol: str, *, start_time_ms: int | None = None,
+        end_time_ms: int | None = None, limit: int = 1000,
+    ) -> tuple[FundingRateRecord, ...]:
+        """Reject Futures-only funding queries instead of calling Futures endpoints."""
+        raise NotImplementedError("Spot markets do not have funding rates")
+
     def fetch_market_universe(self, *, now: datetime | None = None) -> MarketUniverse:
         """Build scanner snapshots from Spot exchangeInfo, 24h ticker and book ticker."""
         supplied_clock = now is not None
