@@ -86,3 +86,11 @@ def test_insufficient_history_is_warning_not_a_profit_claim():
     assert result.trade_count == 0
     assert result.orders_authorized is False
     assert any("insufficient history" in warning.lower() for warning in result.warnings)
+
+
+def test_walk_forward_rejects_overlapping_validation_windows():
+    with pytest.raises(ValueError, match="disjoint"):
+        evaluate_spot_walk_forward(
+            "BTCUSDT", candles(360), train_bars=120, validation_bars=40,
+            holdout_bars=40, step_bars=20, research_now=NOW,
+        )
