@@ -22,6 +22,7 @@ from app.core.models import RiskLimits
 from app.engines.complete_analysis_pipeline import AnalysisPipelineReport, CompleteAnalysisPipeline
 from app.engines.orchestrator import TradingOrchestrator
 from app.engines.paper_ledger import SQLitePaperLedger
+from app.engines.postgres_paper_ledger import PostgresPaperLedger
 from app.engines.paper_runtime import PaperRuntime, PaperRuntimeReport
 from app.engines.paper_signal_cycle import PaperSignalCycle
 from app.engines.paper_sizing import build_paper_orchestration_request
@@ -550,9 +551,17 @@ class PaperServiceApplication:
         clock: Callable[[], datetime] | None = None,
     ) -> "PaperServiceApplication":
         clock = clock or (lambda: datetime.now(timezone.utc))
-        path = Path(config.database_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        ledger = SQLitePaperLedger(path)
+        # An explicitly configured PostgreSQL URL is authoritative. Never create
+        # a local SQLite ledger as a fallback if the URL is empty or PostgreSQL fails.
+        database_url = os.environ.get("PAPER_DATABASE_URL")
+        if database_url is not None:
+            if not database_url.strip():
+                raise RuntimeError("PAPER_DATABASE_URL is configured but empty; refusing local SQLite fallback.")
+            ledger = PostgresPaperLedger(database_url.strip())
+        else:
+            path = Path(config.database_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            ledger = SQLitePaperLedger(path)
         try:
             ledger.verify_integrity()
             startup_stamp = clock()
