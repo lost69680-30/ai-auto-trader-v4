@@ -30,7 +30,9 @@ from app.engines.price_planner import PricePlanRequest, PricePlanningConfig
 from app.engines.protection import PaperProtectionEngine
 from app.engines.research_pipeline import ResearchPipelineResult, analyze_research_universe
 from backend.liquidity_structure import Candle as LiquidityCandle, LiquidityConfig, MarketStructureInput
-from backend.market_data_adapter import BinanceUsdMFuturesAdapter, MarketCandle, MarketUniverse
+from backend.market_data_adapter import (
+    BinanceUsdMFuturesAdapter, FundingRateRecord, MarketCandle, MarketUniverse,
+)
 from backend.market_worker import (
     FeedStatus, MarketDataWorker, MarketPollResult, MarketWorkerConfig,
 )
@@ -222,6 +224,16 @@ class PaperServiceConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class FundingSyncReport:
+    status: str
+    events_seen: int = 0
+    events_recorded: int = 0
+    events_duplicate: int = 0
+    events_skipped_missing_mark: int = 0
+    reason: str = "OK"
+
+
+@dataclass(frozen=True, slots=True)
 class PaperServiceAnalysisResult:
     status: str
     reason: str
@@ -229,6 +241,7 @@ class PaperServiceAnalysisResult:
     pipeline_report: AnalysisPipelineReport | None
     excluded_symbols: tuple[tuple[str, str], ...] = ()
     orders_authorized: bool = False
+    funding_sync: FundingSyncReport | None = None
 
 
 class PaperServiceAnalysisHandler:
@@ -251,6 +264,8 @@ class PaperServiceAnalysisHandler:
         self._policy = {item.symbol: item for item in config.symbols}
         self._previous_funding: dict[str, float] = {}
         self._plan_request_cache: dict[tuple[str, str, datetime], PricePlanRequest] = {}
+        self._last_funding_sync_at: datetime | None = None
+        self._last_funding_sync_report: FundingSyncReport | None = None
 
     @staticmethod
     def _aware(value: object) -> bool:
@@ -266,6 +281,130 @@ class PaperServiceAnalysisHandler:
     def _finite_number(value: object) -> bool:
         return (isinstance(value, (int, float)) and not isinstance(value, bool)
                 and math.isfinite(value))
+
+    def _sync_funding_events(self, *, now: datetime) -> FundingSyncReport:
+        """Reconcile public historical funding into paper positions, never live accounts.
+
+        Funding events are idempotent per position and exchange funding timestamp.
+        Missing historical mark prices are not estimated from current prices.
+        """
+        if not self._aware(now):
+            return FundingSyncReport("ERROR", reason="InvalidClock")
+        now = now.astimezone(timezone.utc)
+        if (self._last_funding_sync_at is not None and self._last_funding_sync_report is not None
+                and 0 <= (now - self._last_funding_sync_at).total_seconds() < 60):
+            return self._last_funding_sync_report
+
+        positions = tuple(self._ledger.positions)
+        if not positions:
+            report = FundingSyncReport("NO_POSITIONS")
+            self._last_funding_sync_at = None
+            self._last_funding_sync_report = report
+            return report
+
+        fetch_history = getattr(self._source, "fetch_funding_rate_history", None)
+        if not callable(fetch_history):
+            report = FundingSyncReport("ERROR", reason="FundingHistoryUnavailable")
+            self._last_funding_sync_at = now
+            self._last_funding_sync_report = report
+            return report
+
+        recorded_events = tuple(self._ledger.funding_events)
+        latest_by_position: dict[str, float] = {}
+        for event in recorded_events:
+            proposal_id = event.get("proposal_id")
+            stamp = event.get("occurred_at")
+            if isinstance(proposal_id, str) and self._finite_number(stamp):
+                latest_by_position[proposal_id] = max(latest_by_position.get(proposal_id, -1.0), float(stamp))
+
+        events_seen = events_recorded = events_duplicate = events_skipped_missing_mark = 0
+        try:
+            symbols = sorted({position.symbol for position in positions if position.symbol in self._policy})
+            for symbol in symbols:
+                symbol_positions = tuple(position for position in positions if position.symbol == symbol)
+                cursors = []
+                for position in symbol_positions:
+                    cursor = max(float(position.opened_at), latest_by_position.get(position.proposal_id, float(position.opened_at) - 0.001) + 0.001)
+                    cursors.append(cursor)
+                start_ms = max(0, int(min(cursors) * 1000))
+                end_ms = int(now.timestamp() * 1000)
+                pages = 0
+                while start_ms <= end_ms:
+                    rows = fetch_history(
+                        symbol, start_time_ms=start_ms, end_time_ms=end_ms, limit=1000,
+                    )
+                    if not isinstance(rows, (tuple, list)):
+                        raise ValueError("MalformedFundingHistory")
+                    if not rows:
+                        break
+                    pages += 1
+                    if pages > 10:
+                        raise ValueError("FundingHistoryBacklogTooLarge")
+                    last_stamp_ms = None
+                    for event in rows:
+                        if not isinstance(event, FundingRateRecord):
+                            raise ValueError("MalformedFundingRecord")
+                        if event.symbol != symbol or event.orders_authorized is not False:
+                            raise ValueError("FundingRecordRejected")
+                        if not self._aware(event.funding_time):
+                            raise ValueError("InvalidFundingTimestamp")
+                        event_time = event.funding_time.astimezone(timezone.utc)
+                        stamp_ms = int(event_time.timestamp() * 1000)
+                        if stamp_ms < start_ms or stamp_ms > end_ms or event_time > now:
+                            raise ValueError("FundingTimestampOutOfRange")
+                        if last_stamp_ms is not None and stamp_ms <= last_stamp_ms:
+                            raise ValueError("FundingHistoryNotStrictlyIncreasing")
+                        last_stamp_ms = stamp_ms
+                        if (isinstance(event.funding_rate, bool)
+                                or not self._finite_number(event.funding_rate)):
+                            raise ValueError("InvalidFundingRate")
+
+                        eligible_positions = tuple(
+                            position for position in symbol_positions
+                            if float(position.opened_at) <= event_time.timestamp()
+                            and (position.closed_at is None or event_time.timestamp() <= float(position.closed_at))
+                        )
+                        for position in eligible_positions:
+                            events_seen += 1
+                            mark = event.mark_price
+                            if mark is None:
+                                events_skipped_missing_mark += 1
+                                continue
+                            if (isinstance(mark, bool) or not self._finite_number(mark) or float(mark) <= 0):
+                                raise ValueError("InvalidHistoricalFundingMark")
+                            funding_id = f"public-funding:{symbol}:{stamp_ms}:{position.proposal_id}"
+                            result = self._ledger.record_funding_payment(
+                                position.proposal_id,
+                                funding_id=funding_id,
+                                funding_rate=float(event.funding_rate),
+                                mark_price=float(mark),
+                                occurred_at=event_time.timestamp(),
+                            )
+                            if result == "RECORDED":
+                                events_recorded += 1
+                            elif result == "DUPLICATE":
+                                events_duplicate += 1
+                            else:
+                                raise ValueError("FundingLedgerConflict")
+                    if len(rows) < 1000:
+                        break
+                    if last_stamp_ms is None or last_stamp_ms < start_ms:
+                        raise ValueError("FundingPaginationDidNotAdvance")
+                    start_ms = last_stamp_ms + 1
+            status = "DEGRADED" if events_skipped_missing_mark else "OK"
+            reason = "HistoricalFundingMarkMissing" if events_skipped_missing_mark else "OK"
+            report = FundingSyncReport(
+                status, events_seen, events_recorded, events_duplicate,
+                events_skipped_missing_mark, reason,
+            )
+        except Exception as exc:
+            report = FundingSyncReport(
+                "ERROR", events_seen, events_recorded, events_duplicate,
+                events_skipped_missing_mark, type(exc).__name__,
+            )
+        self._last_funding_sync_at = now
+        self._last_funding_sync_report = report
+        return report
 
     def __call__(self, poll: MarketPollResult) -> PaperServiceAnalysisResult:
         now = self._clock()
