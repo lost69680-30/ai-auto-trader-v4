@@ -433,3 +433,16 @@ def test_analysis_runtime_health_maps_market_universe_failure_and_empty_eligibil
     ))
     assert degraded.status()["status"] == "DEGRADED"
     assert degraded.status()["orders_authorized"] is False
+
+
+def test_read_only_api_requires_valid_explicit_testnet_boolean_value():
+    from app.engines.read_only_api import _parse_market_testnet
+
+    assert _parse_market_testnet("true") is True
+    assert _parse_market_testnet("yes") is True
+    assert _parse_market_testnet("1") is True
+    assert _parse_market_testnet("false") is False
+    assert _parse_market_testnet("no") is False
+    assert _parse_market_testnet("0") is False
+    with pytest.raises(ValueError, match="PAPER_MARKET_TESTNET"):
+        _parse_market_testnet("truue")
