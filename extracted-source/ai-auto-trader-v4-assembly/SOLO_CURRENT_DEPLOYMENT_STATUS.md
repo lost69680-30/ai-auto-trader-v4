@@ -26,6 +26,16 @@
 - Important limitations remain: simplified next-open fills and one-bar holds; estimated fees/slippage; no complete spread/market-impact model; no full stop/liquidation/margin simulation; and the buy-and-hold benchmark is simplified. A successful workflow or synthetic test does not demonstrate profitability.
 - Before interpreting results, inspect the actual workflow run and artifact, record the dataset window/fingerprint and assumptions, verify costs and point-in-time data handling, and compare net returns, drawdown, volatility, tail losses, turnover, and trade distribution across multiple symbols/periods. Do not alter the frozen protocol after seeing holdout results.
 
+
+### First real Spot evaluation — 2026-10-29
+
+- GitHub Actions run: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/40904747675 (completed successfully); artifact `solo-v4-historical-evaluation-report` was produced.
+- Dataset: BTCUSDT hourly Spot, 999 closed candles from 2026-09-18 00:00 UTC through 2026-10-29 14:00 UTC. Evaluation used the frozen 500-bar warmup, three 100-bar walk-forward windows, and a separate 100-bar final holdout.
+- **Strategy activity result: zero trades in all three walk-forward windows and zero trades in the untouched holdout.** Net strategy return and drawdown are therefore both 0%; these are not evidence of profitable performance. The diagnostic shows no eligible same-direction consensus candles at the configured score threshold; only a small number of individual assessments qualified.
+- Simplified buy-and-hold returns were -0.028921%, -0.457728%, and +1.817147% across the three walk-forward windows; final holdout buy-and-hold was +0.997636%. These figures are historical reference points only and do not include a complete market-impact/spread model.
+- Spot funding assumption is now correctly 0 bps per 8 hours; Futures funding must be evaluated separately with Futures-specific data. All report entries retain `orders_authorized=False`.
+- Next research task: diagnose strategy eligibility and activity using training/walk-forward data only, add more symbols/periods and realistic risk/cost metrics, and keep the final holdout untouched until the evaluation protocol is frozen. Do not tune on or claim profitability from this single report.
+
 ## Still open
 
 1. Verify the authenticated REST API and Android display without exposing the bearer token.
