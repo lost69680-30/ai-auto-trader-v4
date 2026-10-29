@@ -6,7 +6,7 @@ never requests Futures mark prices or funding rates.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import math
 from typing import Protocol
@@ -188,10 +188,18 @@ class SpotMarketResearchService:
                 volume_baseline=volume_baseline,
                 estimated_round_trip_cost_pct=cost_pct,
             )
+            structure_config = replace(
+                self.config.structure,
+                lookback_candles=self.config.lookback_candles,
+            )
             opportunities.extend(rank_spot_opportunities(
-                [item], now=requested_at, config=self.config.structure
+                [item], now=requested_at, config=structure_config
             ))
         opportunities.sort(key=lambda row: (-row.score, row.symbol))
+        opportunities = [
+            replace(row, rank=index)
+            for index, row in enumerate(opportunities, start=1)
+        ]
         status = "REVIEW_CANDIDATES" if opportunities else ("NO_REVIEW_CANDIDATES" if not rejections else "PARTIAL_DATA")
         return SpotResearchReport(
             status=status, observed_at=requested_at, market_scan=scan,
