@@ -92,25 +92,22 @@ def make_market_snapshot_event(
         normalized_futures_context = None
     else:
         context_present = tuple(value is not None for value in futures_context)
-        if any(context_present) and not all(context_present):
-            raise ValueError("Futures index/funding context must be complete")
-        if not any(context_present):
-            normalized_futures_context = None
-        else:
-            if (isinstance(index_raw, bool) or not isinstance(index_raw, (int, float))
-                    or not math.isfinite(index_raw) or index_raw <= 0):
-                raise ValueError("index_price must be finite and positive")
-            if (isinstance(funding_raw, bool) or not isinstance(funding_raw, (int, float))
-                    or not math.isfinite(funding_raw)):
-                raise ValueError("funding_rate must be finite")
-            next_funding = _aware_datetime(next_funding_raw)
-            if next_funding <= checked_at:
-                raise ValueError("next_funding_at must be in the future")
-            normalized_futures_context = {
-                "index_price": float(index_raw),
-                "funding_rate": float(funding_raw),
-                "next_funding_at": next_funding.isoformat(),
-            }
+        if not all(context_present):
+            raise ValueError("Futures index/funding context is required and must be complete")
+        if (isinstance(index_raw, bool) or not isinstance(index_raw, (int, float))
+                or not math.isfinite(index_raw) or index_raw <= 0):
+            raise ValueError("index_price must be finite and positive")
+        if (isinstance(funding_raw, bool) or not isinstance(funding_raw, (int, float))
+                or not math.isfinite(funding_raw)):
+            raise ValueError("funding_rate must be finite")
+        next_funding = _aware_datetime(next_funding_raw)
+        if next_funding <= checked_at:
+            raise ValueError("next_funding_at must be in the future")
+        normalized_futures_context = {
+            "index_price": float(index_raw),
+            "funding_rate": float(funding_raw),
+            "next_funding_at": next_funding.isoformat(),
+        }
 
     event = {
         "schema_version": 1,
