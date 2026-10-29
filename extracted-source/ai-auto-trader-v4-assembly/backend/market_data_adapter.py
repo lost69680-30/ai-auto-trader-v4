@@ -552,19 +552,7 @@ class BinanceSpotMarketDataAdapter(BinanceUsdMFuturesAdapter):
         return MarketUniverse(tuple(contracts), tuple(snapshots), fetched_at, orders_authorized=False)
 
     def fetch_mark_price(self, symbol: str) -> MarkPriceSnapshot:
-        """Return Spot last trade price; the inherited record shape is compatibility only."""
-        if not isinstance(symbol, str) or not symbol or symbol != symbol.upper().strip():
-            raise ValueError("symbol must be non-empty, trimmed and uppercase-normalized")
-        path = "/api/v3/ticker/24hr"
-        payload = self._get(path, {"symbol": symbol})
-        if not isinstance(payload, Mapping) or payload.get("symbol") != symbol:
-            raise MarketDataError("unexpected response shape from /api/v3/ticker/24hr")
-        price = _number(payload.get("lastPrice"), "lastPrice")
-        if price <= 0:
-            raise MarketDataError("spot last price must be positive")
-        observed_at = datetime.now(timezone.utc)
-        return MarkPriceSnapshot(
-            symbol=symbol, mark_price=price, index_price=price,
-            last_funding_rate=0.0, next_funding_at=observed_at,
-            observed_at=observed_at, orders_authorized=False,
+        """Reject Futures-only mark/index/funding semantics on Spot markets."""
+        raise NotImplementedError(
+            "Spot markets do not provide Futures mark price or funding data"
         )
