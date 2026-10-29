@@ -203,10 +203,14 @@ class PaperRuntime(Generic[T]):
             try:
                 analysis_result = self._analysis_handler(filtered_poll)
                 reported_status = getattr(analysis_result, "status", None)
-                if reported_status in ("FUNDING_SYNC_DEGRADED", "FUNDING_SYNC_ERROR"):
+                if reported_status is None and isinstance(analysis_result, str):
+                    reported_status = analysis_result
+                if reported_status in ("ANALYZED", "ANALYZED_WITH_EXCLUSIONS"):
                     analysis_status = reported_status
+                elif reported_status is None:
+                    analysis_status = "ANALYSIS_RESULT_MISSING"
                 else:
-                    analysis_status = "ANALYZED"
+                    analysis_status = str(reported_status)[:120]
             except Exception as exc:
                 analysis_status = f"ANALYSIS_FAILED:{type(exc).__name__}"
         elif poll.orders_authorized is not False:
@@ -217,12 +221,24 @@ class PaperRuntime(Generic[T]):
         frames_by_symbol = {frame.symbol: frame for frame in healthy}
         prices = {f.symbol: float(f.mark_price) for f in healthy}
         observed_by_symbol = {f.symbol: self._aware_timestamp(f.mark_observed_at) for f in healthy}
+        fill_prices = prices
+        if analysis_status == "ANALYZED_WITH_EXCLUSIONS":
+            eligible = getattr(analysis_result, "eligible_symbols", None)
+            if (not isinstance(eligible, (tuple, list, set, frozenset))
+                    or any(not isinstance(symbol, str) or not symbol
+                           or symbol != symbol.strip().upper() for symbol in eligible)):
+                analysis_status = "ANALYSIS_ELIGIBILITY_INVALID"
+                fill_prices = {}
+            else:
+                allowed_symbols = set(eligible)
+                fill_prices = {symbol: price for symbol, price in prices.items()
+                               if symbol in allowed_symbols}
         fills: list[tuple[str, str]] = []
-        # A pending paper intent must not fill if the analysis/accounting cycle
-        # failed or was explicitly degraded; a fresh quote alone is not enough.
-        if analysis_status == "ANALYZED" and not self._ledger.emergency_stop_active:
+        # A pending paper intent must not fill if analysis failed or degraded;
+        # a fresh quote alone is not enough. Excluded symbols cannot fill either.
+        if analysis_status in ("ANALYZED", "ANALYZED_WITH_EXCLUSIONS") and not self._ledger.emergency_stop_active:
             for proposal_id, order in pending_before_analysis.items():
-                if order.symbol not in prices:
+                if order.symbol not in fill_prices:
                     continue
                 observed_at = observed_by_symbol[order.symbol]
                 # Never simulate a fill using a quote that predates the intent.
