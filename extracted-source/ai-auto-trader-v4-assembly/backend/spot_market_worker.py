@@ -28,6 +28,7 @@ class SpotMarketWorkerConfig:
     interval: str = "1m"
     candle_limit: int = 100
     max_market_age_seconds: float = 90.0
+    poll_interval_seconds: float = 5.0
 
     def __post_init__(self) -> None:
         if not self.symbols or any(not isinstance(s, str) or not s or s != s.upper().strip()
@@ -41,6 +42,8 @@ class SpotMarketWorkerConfig:
             raise ValueError("candle_limit must be an integer from 2 through 1500")
         if not math.isfinite(self.max_market_age_seconds) or self.max_market_age_seconds <= 0:
             raise ValueError("max_market_age_seconds must be finite and positive")
+        if not math.isfinite(self.poll_interval_seconds) or self.poll_interval_seconds < 1.0:
+            raise ValueError("poll_interval_seconds must be finite and at least 1 second")
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +81,10 @@ class SpotMarketDataWorker:
     def __init__(self, source: SpotMarketDataSource, config: SpotMarketWorkerConfig) -> None:
         self.source = source
         self.config = config
+
+    @property
+    def next_delay_seconds(self) -> float:
+        return self.config.poll_interval_seconds
 
     def poll_once(self, *, now: datetime | None = None) -> SpotMarketPollResult:
         explicit_now = now is not None
