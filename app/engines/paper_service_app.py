@@ -414,6 +414,14 @@ class PaperServiceAnalysisHandler:
         if poll.orders_authorized is not False:
             return PaperServiceAnalysisResult("AUTHORIZATION_FLAG_REJECTED", "Poll cannot authorize orders.", None, None)
 
+        funding_sync = self._sync_funding_events(now=now)
+        if funding_sync.status in ("ERROR", "DEGRADED") and self._ledger.positions:
+            status = "FUNDING_SYNC_ERROR" if funding_sync.status == "ERROR" else "FUNDING_SYNC_DEGRADED"
+            return PaperServiceAnalysisResult(
+                status, "Funding accounting is incomplete; new paper analysis is blocked.",
+                None, None, funding_sync=funding_sync,
+            )
+
         frames_by_symbol: dict[str, object] = {}
         excluded: list[tuple[str, str]] = []
         allowlisted_frames = [frame for frame in poll.frames if getattr(frame, "symbol", None) in self._policy]
@@ -665,6 +673,7 @@ class PaperServiceAnalysisHandler:
             pipeline_report=pipeline_report,
             excluded_symbols=tuple(excluded),
             orders_authorized=False,
+            funding_sync=funding_sync,
         )
 
 
