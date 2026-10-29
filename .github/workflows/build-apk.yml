@@ -13,6 +13,17 @@ on:
       - 'extracted-source/ai-auto-trader-v4-assembly/backend/spot_historical_research.py'
       - 'app/engines/read_only_api.py'
       - 'backend/spot_historical_research.py'
+  pull_request:
+    paths:
+      - '.github/workflows/build-apk.yml'
+      - 'android/**'
+      - 'extracted-source/ai-auto-trader-v4-assembly/android/**'
+      - 'extracted-source/ai-auto-trader-v4-assembly/settings.gradle.kts'
+      - 'extracted-source/ai-auto-trader-v4-assembly/gradle.properties'
+      - 'extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py'
+      - 'extracted-source/ai-auto-trader-v4-assembly/backend/spot_historical_research.py'
+      - 'app/engines/read_only_api.py'
+      - 'backend/spot_historical_research.py'
 
 permissions:
   contents: read
