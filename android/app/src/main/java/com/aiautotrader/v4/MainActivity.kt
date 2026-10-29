@@ -63,10 +63,29 @@ internal data class MarketCandle(
 
 private data class MarketInstrument(
     val symbol: String,
+    val marketType: String,
     val price: Double,
     val priceObservedAt: String,
     val priceLabel: String,
     val candles: List<MarketCandle>,
+)
+
+private data class SpotResearchOpportunity(
+    val symbol: String,
+    val direction: String,
+    val score: Double,
+    val rank: Int,
+    val patterns: List<String>,
+    val evidence: List<String>,
+    val status: String,
+)
+
+private data class SpotResearchFetchResult(
+    val safeResponse: Boolean,
+    val status: String,
+    val message: String,
+    val opportunities: List<SpotResearchOpportunity>,
+    val rejections: List<String>,
 )
 
 internal data class TestnetAccountDiagnostic(
@@ -204,6 +223,10 @@ private object BackendSession {
     val marketItems = mutableStateOf<List<MarketInstrument>>(emptyList())
     val marketLoading = mutableStateOf(false)
     val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+    val spotResearchStatus = mutableStateOf("NOT AVAILABLE")
+    val spotResearchMessage = mutableStateOf("Spot research is available when Spot public market mode is enabled.")
+    val spotResearchItems = mutableStateOf<List<SpotResearchOpportunity>>(emptyList())
+    val spotResearchRejections = mutableStateOf<List<String>>(emptyList())
     // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
     val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
 }
@@ -249,7 +272,7 @@ private fun parseMarketItems(array: JSONArray): List<MarketInstrument> {
         }
         if (candles.isNotEmpty()) {
             result += MarketInstrument(
-                symbol, price, observedAt,
+                symbol, marketType, price, observedAt,
                 if (isSpot) "Spot last price" else "Futures mark price",
                 candles.takeLast(100),
             )
