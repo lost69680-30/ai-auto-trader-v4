@@ -127,8 +127,13 @@ class SpotMarketResearchService:
     def analyze_once(self, *, now: datetime | None = None) -> SpotResearchReport:
         if now is not None and (now.tzinfo is None or now.utcoffset() is None):
             raise ValueError("now must be timezone-aware")
+        explicit_clock = now is not None
         requested_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        universe = self.source.fetch_market_universe(now=requested_at)
+        universe = (
+            self.source.fetch_market_universe(now=requested_at)
+            if explicit_clock else self.source.fetch_market_universe()
+        )
+        scan_now = requested_at if explicit_clock else universe.fetched_at.astimezone(timezone.utc)
         if universe.orders_authorized:
             raise ValueError("market source must not authorize orders")
         contracts = universe.contracts
@@ -138,7 +143,7 @@ class SpotMarketResearchService:
             contracts = tuple(c for c in contracts if c.symbol in allowed)
             snapshots = tuple(s for s in snapshots if s.symbol in allowed)
         scan = scan_candidates(
-            contracts, snapshots, now=requested_at, config=self.config.scanner
+            contracts, snapshots, now=scan_now, config=self.config.scanner
         )
         contracts_by_symbol = {c.symbol: c for c in contracts}
         snapshots_by_symbol = {s.symbol: s for s in snapshots}
@@ -151,16 +156,23 @@ class SpotMarketResearchService:
                 rejections.append(SpotResearchRejection(candidate.symbol, "missing or non-Spot market metadata"))
                 continue
             try:
-                rows = self.source.fetch_klines(
-                    candidate.symbol, interval=self.config.interval,
-                    limit=self.config.candle_limit, now=requested_at,
-                )
+                if explicit_clock:
+                    rows = self.source.fetch_klines(
+                        candidate.symbol, interval=self.config.interval,
+                        limit=self.config.candle_limit, now=requested_at,
+                    )
+                else:
+                    rows = self.source.fetch_klines(
+                        candidate.symbol, interval=self.config.interval,
+                        limit=self.config.candle_limit,
+                    )
             except Exception as exc:
                 rejections.append(SpotResearchRejection(
                     candidate.symbol, f"candle retrieval failed safely ({type(exc).__name__})"
                 ))
                 continue
-            closed = _closed_candles(candidate.symbol, rows, now=requested_at, config=self.config)
+            validation_now = requested_at if explicit_clock else datetime.now(timezone.utc)
+            closed = _closed_candles(candidate.symbol, rows, now=validation_now, config=self.config)
             if closed is None:
                 rejections.append(SpotResearchRejection(
                     candidate.symbol, "closed candles are insufficient, stale, gapped, or invalid"
@@ -193,16 +205,17 @@ class SpotMarketResearchService:
                 lookback_candles=self.config.lookback_candles,
             )
             opportunities.extend(rank_spot_opportunities(
-                [item], now=requested_at, config=structure_config
+                [item], now=validation_now, config=structure_config
             ))
         opportunities.sort(key=lambda row: (-row.score, row.symbol))
         opportunities = [
             replace(row, rank=index)
             for index, row in enumerate(opportunities, start=1)
         ]
+        final_observed_at = requested_at if explicit_clock else datetime.now(timezone.utc)
         status = "REVIEW_CANDIDATES" if opportunities else ("NO_REVIEW_CANDIDATES" if not rejections else "PARTIAL_DATA")
         return SpotResearchReport(
-            status=status, observed_at=requested_at, market_scan=scan,
+            status=status, observed_at=final_observed_at, market_scan=scan,
             opportunities=tuple(opportunities), rejections=tuple(sorted(
                 rejections, key=lambda row: (row.symbol, row.reason)
             )), orders_authorized=False,
