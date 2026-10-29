@@ -325,3 +325,24 @@ def test_spot_research_endpoint_fails_closed_when_not_configured(tmp_path):
     assert status.startswith("503")
     assert body["opportunities"] == []
     assert body["orders_authorized"] is False
+
+
+def test_spot_research_endpoint_rejects_any_order_authorized_opportunity(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(
+        database_path=db,
+        token=TOKEN,
+        spot_research=lambda: {
+            "status": "REVIEW_CANDIDATES",
+            "market_type": "SPOT",
+            "opportunities": [{"symbol": "BTCUSDT", "orders_authorized": True}],
+            "rejections": [],
+            "orders_authorized": False,
+        },
+    )
+    status, _, body = request(app, path="/api/v1/spot/research", auth="Bearer " + TOKEN)
+    assert status.startswith("503")
+    assert body["orders_authorized"] is False
+    assert body["opportunities"] == []
