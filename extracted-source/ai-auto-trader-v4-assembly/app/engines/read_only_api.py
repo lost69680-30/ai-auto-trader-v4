@@ -312,10 +312,16 @@ class MarketFeedCache:
             rows.append({
                 "symbol": frame.symbol,
                 "mark_price": frame.mark_price,
+                "price_type": "FUTURES_MARK_PRICE" if (
+                    frame.index_price is not None and frame.funding_rate is not None
+                    and frame.next_funding_at is not None
+                ) else "SPOT_LAST_PRICE",
+                "index_price": frame.index_price,
                 "mark_observed_at": frame.mark_observed_at.isoformat() if frame.mark_observed_at else None,
                 "checked_at": frame.checked_at.isoformat(),
                 "status": frame.status.value,
                 "funding_rate": frame.funding_rate,
+                "next_funding_at": frame.next_funding_at.isoformat() if frame.next_funding_at else None,
                 "candles": [{"open_time": c.open_time.isoformat(), "close_time": c.close_time.isoformat(),
                     "open": c.open, "high": c.high, "low": c.low, "close": c.close,
                     "volume": c.volume, "is_closed": c.is_closed} for c in frame.closed_candles[-100:]],
