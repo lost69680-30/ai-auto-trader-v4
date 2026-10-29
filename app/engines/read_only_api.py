@@ -193,7 +193,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                                 "last_cycle_error": None,
                                 "orders_authorized": False,
                                 "reason": (
-                                    "Research-to-paper worker is disabled; this service is read-only "
+                                    "Research-to-paper worker is not started (disabled); this service is read-only "
                                     "market data only."
                                 ),
                             }),
