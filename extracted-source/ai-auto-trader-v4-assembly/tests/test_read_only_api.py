@@ -387,3 +387,27 @@ def test_analysis_runtime_health_marks_unhealthy_market_cycle_degraded():
     assert status["paper_simulation"] == "DEGRADED"
     assert status["last_cycle_error"] is None
     assert status["orders_authorized"] is False
+
+
+def test_analysis_runtime_health_reports_funding_sync_degraded_and_error():
+    from types import SimpleNamespace
+    from app.engines.read_only_api import AnalysisRuntimeHealth
+
+    degraded = AnalysisRuntimeHealth(enabled=True)
+    degraded.publish(SimpleNamespace(
+        checked_at=1793275200.0,
+        analysis_result=None,
+        analysis_status="FUNDING_SYNC_DEGRADED",
+    ))
+    assert degraded.status()["status"] == "DEGRADED"
+    assert degraded.status()["orders_authorized"] is False
+
+    failed = AnalysisRuntimeHealth(enabled=True)
+    failed.publish(SimpleNamespace(
+        checked_at=1793275200.0,
+        analysis_result=None,
+        analysis_status="FUNDING_SYNC_ERROR",
+    ))
+    assert failed.status()["status"] == "ERROR"
+    assert failed.status()["last_cycle_error"] == "FundingSyncError"
+    assert failed.status()["orders_authorized"] is False

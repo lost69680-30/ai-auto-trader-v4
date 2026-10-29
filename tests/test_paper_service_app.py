@@ -41,6 +41,9 @@ class FakeSource:
             orders_authorized=False,
         )
 
+    def fetch_funding_rate_history(self, symbol, *, start_time_ms=None, end_time_ms=None, limit=1000):
+        return ()
+
     def fetch_klines(self, symbol, *, interval="1m", limit=100, now=None):
         return candles(symbol, now or NOW)
 
@@ -418,3 +421,135 @@ def test_service_does_not_fall_back_to_sqlite_when_postgres_initialization_fails
             source=FakeSource(), config=cfg, clock=lambda: NOW,
         )
     assert not ignored_sqlite_path.parent.exists()
+
+
+def test_funding_sync_records_verified_event_for_open_paper_position(tmp_path, monkeypatch):
+    from app.engines.orchestrator import PaperOrderIntent
+    from backend.market_data_adapter import FundingRateRecord
+
+    class FundingSource(FakeSource):
+        def fetch_funding_rate_history(self, symbol, *, start_time_ms=None, end_time_ms=None, limit=1000):
+            assert symbol == "BTCUSDT"
+            return (FundingRateRecord(
+                "BTCUSDT", 0.001, NOW - timedelta(hours=1), mark_price=100.0,
+                orders_authorized=False,
+            ),)
+
+    monkeypatch.delenv("PAPER_DATABASE_URL", raising=False)
+    app = PaperServiceApplication.create(source=FundingSource(), config=config(tmp_path), clock=lambda: NOW)
+    intent = PaperOrderIntent(
+        proposal_id="funding-long-1", signal_id="funding-signal-1", symbol="BTCUSDT",
+        side="LONG", quantity=1.0, entry_price=100.0, stop_loss=90.0,
+        take_profit=110.0, recorded_at=(NOW - timedelta(hours=3)).timestamp(),
+    )
+    try:
+        assert app.ledger.record_intent(intent) == "RECORDED"
+        fill = app.ledger.simulate_fill(
+            intent.proposal_id, market_price=100.0,
+            filled_at=(NOW - timedelta(hours=2)).timestamp(), fee_rate=0.0, slippage_bps=0.0,
+        )
+        assert fill.status == "FILLED"
+
+        report = app.runtime._analysis_handler._sync_funding_events(now=NOW)
+
+        assert report.status == "OK"
+        assert report.events_recorded == 1
+        assert len(app.ledger.funding_events) == 1
+        assert app.ledger.positions[0].funding_pnl == pytest.approx(-0.1)
+        assert app.ledger.funding_events[0]["mark_price"] == 100.0
+    finally:
+        app.close()
+
+
+def test_funding_sync_does_not_invent_missing_historical_mark_price(tmp_path, monkeypatch):
+    from app.engines.orchestrator import PaperOrderIntent
+    from backend.market_data_adapter import FundingRateRecord
+
+    class MissingMarkSource(FakeSource):
+        def fetch_funding_rate_history(self, symbol, *, start_time_ms=None, end_time_ms=None, limit=1000):
+            return (
+                FundingRateRecord(
+                    "BTCUSDT", 0.001, NOW - timedelta(hours=1), mark_price=None,
+                    orders_authorized=False,
+                ),
+                FundingRateRecord(
+                    "BTCUSDT", 0.002, NOW - timedelta(minutes=30), mark_price=100.0,
+                    orders_authorized=False,
+                ),
+            )
+
+    monkeypatch.delenv("PAPER_DATABASE_URL", raising=False)
+    app = PaperServiceApplication.create(source=MissingMarkSource(), config=config(tmp_path), clock=lambda: NOW)
+    intent = PaperOrderIntent(
+        proposal_id="funding-long-2", signal_id="funding-signal-2", symbol="BTCUSDT",
+        side="LONG", quantity=1.0, entry_price=100.0, stop_loss=90.0,
+        take_profit=110.0, recorded_at=(NOW - timedelta(hours=3)).timestamp(),
+    )
+    try:
+        assert app.ledger.record_intent(intent) == "RECORDED"
+        fill = app.ledger.simulate_fill(
+            intent.proposal_id, market_price=100.0,
+            filled_at=(NOW - timedelta(hours=2)).timestamp(), fee_rate=0.0, slippage_bps=0.0,
+        )
+        assert fill.status == "FILLED"
+
+        report = app.runtime._analysis_handler._sync_funding_events(now=NOW)
+
+        assert report.status == "DEGRADED"
+        assert report.events_skipped_missing_mark == 1
+        assert app.ledger.funding_events == ()
+        assert app.ledger.positions[0].funding_pnl == 0.0
+    finally:
+        app.close()
+
+
+def test_incomplete_funding_accounting_blocks_pending_paper_fills(tmp_path, monkeypatch):
+    from app.engines.orchestrator import PaperOrderIntent
+    from backend.market_data_adapter import FundingRateRecord
+
+    class MissingMarkSource(FakeSource):
+        def fetch_funding_rate_history(self, symbol, *, start_time_ms=None, end_time_ms=None, limit=1000):
+            event = FundingRateRecord(
+                "BTCUSDT", 0.001, NOW - timedelta(hours=1), mark_price=None,
+                orders_authorized=False,
+            )
+            stamp_ms = int(event.funding_time.timestamp() * 1000)
+            if start_time_ms is not None and stamp_ms < start_time_ms:
+                return ()
+            if end_time_ms is not None and stamp_ms > end_time_ms:
+                return ()
+            return (event,)
+
+    monkeypatch.delenv("PAPER_DATABASE_URL", raising=False)
+    app = PaperServiceApplication.create(source=MissingMarkSource(), config=config(tmp_path), clock=lambda: NOW)
+    open_intent = PaperOrderIntent(
+        proposal_id="funding-open-position", signal_id="funding-open-signal", symbol="BTCUSDT",
+        side="LONG", quantity=1.0, entry_price=100.0, stop_loss=90.0,
+        take_profit=110.0, recorded_at=(NOW - timedelta(hours=3)).timestamp(),
+    )
+    pending_intent = PaperOrderIntent(
+        proposal_id="funding-pending-intent", signal_id="funding-pending-signal", symbol="BTCUSDT",
+        side="LONG", quantity=0.1, entry_price=100.0, stop_loss=90.0,
+        take_profit=110.0, recorded_at=(NOW - timedelta(seconds=30)).timestamp(),
+    )
+    try:
+        assert app.ledger.record_intent(open_intent) == "RECORDED"
+        fill = app.ledger.simulate_fill(
+            open_intent.proposal_id, market_price=100.0,
+            filled_at=(NOW - timedelta(hours=2)).timestamp(), fee_rate=0.0, slippage_bps=0.0,
+        )
+        assert fill.status == "FILLED"
+        assert app.ledger.record_intent(pending_intent) == "RECORDED"
+
+        report = app.process_poll(
+            MarketPollResult(NOW, (good_frame(),), orders_authorized=False), now=NOW.timestamp(),
+        )
+
+        assert report.analysis_status == "FUNDING_SYNC_DEGRADED"
+        assert report.orders_authorized is False
+        assert report.fill_statuses == ()
+        pending = next(order for order in app.ledger.orders if order.proposal_id == pending_intent.proposal_id)
+        assert pending.status == "PENDING_PAPER_SIMULATION"
+        assert len(app.ledger.fills) == 1
+    finally:
+        app.close()

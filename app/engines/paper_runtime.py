@@ -202,7 +202,11 @@ class PaperRuntime(Generic[T]):
             filtered_poll = MarketPollResult(poll.checked_at, tuple(healthy), orders_authorized=False)
             try:
                 analysis_result = self._analysis_handler(filtered_poll)
-                analysis_status = "ANALYZED"
+                reported_status = getattr(analysis_result, "status", None)
+                if reported_status in ("FUNDING_SYNC_DEGRADED", "FUNDING_SYNC_ERROR"):
+                    analysis_status = reported_status
+                else:
+                    analysis_status = "ANALYZED"
             except Exception as exc:
                 analysis_status = f"ANALYSIS_FAILED:{type(exc).__name__}"
         elif poll.orders_authorized is not False:
@@ -214,7 +218,9 @@ class PaperRuntime(Generic[T]):
         prices = {f.symbol: float(f.mark_price) for f in healthy}
         observed_by_symbol = {f.symbol: self._aware_timestamp(f.mark_observed_at) for f in healthy}
         fills: list[tuple[str, str]] = []
-        if not self._ledger.emergency_stop_active:
+        # A pending paper intent must not fill if the analysis/accounting cycle
+        # failed or was explicitly degraded; a fresh quote alone is not enough.
+        if analysis_status == "ANALYZED" and not self._ledger.emergency_stop_active:
             for proposal_id, order in pending_before_analysis.items():
                 if order.symbol not in prices:
                     continue
