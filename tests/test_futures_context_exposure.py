@@ -204,3 +204,19 @@ def test_spot_snapshot_is_labeled_as_last_price_in_read_only_api():
     assert item["funding_rate"] is None
     assert item["next_funding_at"] is None
     assert item["orders_authorized"] is False
+
+def test_worker_rejects_futures_snapshot_missing_all_futures_context():
+    source = FakeAdapter(MarkPriceSnapshot(
+        symbol="BTCUSDT",
+        mark_price=101,
+        index_price=None,
+        last_funding_rate=None,
+        next_funding_at=None,
+        observed_at=NOW,
+    ))
+    result = MarketDataWorker(source, config()).poll_once(now=NOW)
+
+    assert result.frames[0].status is FeedStatus.INVALID_DATA
+    assert result.frames[0].closed_candles == ()
+    assert any("futures context" in reason.lower() for reason in result.frames[0].reasons)
+    assert result.orders_authorized is False
