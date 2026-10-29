@@ -73,7 +73,7 @@ def config():
 def test_spot_service_returns_review_only_ohlcv_opportunity():
     source = FakeSpotSource()
     report = SpotMarketResearchService(source, config()).analyze_once(now=NOW)
-    assert report.status == "REVIEW_CANDIDATES"
+    assert report.status == "REVIEW_CANDIDATES", (report.market_scan, report.rejections)
     assert len(report.opportunities) == 1
     item = report.opportunities[0]
     assert item.symbol == "BTCUSDT"
