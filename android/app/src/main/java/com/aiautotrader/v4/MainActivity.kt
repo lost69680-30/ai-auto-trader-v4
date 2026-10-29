@@ -63,8 +63,9 @@ internal data class MarketCandle(
 
 private data class MarketInstrument(
     val symbol: String,
-    val markPrice: Double,
-    val markObservedAt: String,
+    val price: Double,
+    val priceObservedAt: String,
+    val priceLabel: String,
     val candles: List<MarketCandle>,
 )
 
@@ -224,7 +225,11 @@ private fun parseMarketItems(array: JSONArray): List<MarketInstrument> {
         val row = array.optJSONObject(i) ?: continue
         if (row.optString("status") != "HEALTHY" || row.optBoolean("orders_authorized", true)) continue
         val symbol = row.optString("symbol").trim()
-        val price = row.optDouble("mark_price", Double.NaN)
+        val marketType = row.optString("market_type", "FUTURES").uppercase(Locale.ROOT)
+        val isSpot = marketType == "SPOT"
+        if (!isSpot && marketType != "FUTURES") continue
+        val price = if (isSpot) row.optDouble("last_price", Double.NaN) else row.optDouble("mark_price", Double.NaN)
+        val observedAt = if (isSpot) row.optString("last_observed_at") else row.optString("mark_observed_at")
         if (symbol.isBlank() || !price.isFinite() || price <= 0.0) continue
         val candlesJson = row.optJSONArray("candles") ?: JSONArray()
         val candles = mutableListOf<MarketCandle>()
@@ -243,7 +248,11 @@ private fun parseMarketItems(array: JSONArray): List<MarketInstrument> {
             }
         }
         if (candles.isNotEmpty()) {
-            result += MarketInstrument(symbol, price, row.optString("mark_observed_at"), candles.takeLast(100))
+            result += MarketInstrument(
+                symbol, price, observedAt,
+                if (isSpot) "Spot last price" else "Futures mark price",
+                candles.takeLast(100),
+            )
         }
     }
     return result
@@ -1295,7 +1304,7 @@ private fun AnalysisScreen() {
                     Text("MARKET CHART", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp)
                     Text(symbol, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     if (selectedMarket != null) {
-                        Text("Mark price: ${formatMarketPrice(selectedMarket.markPrice)}", color = Green, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("${selectedMarket.priceLabel}: ${formatMarketPrice(selectedMarket.price)}", color = Green, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 Tag(
@@ -1318,7 +1327,7 @@ private fun AnalysisScreen() {
             if (selectedMarket == null) {
                 Text(if (BackendSession.marketLoading.value || candleHistoryLoading) "Loading authenticated interval-specific candles…" else "No validated candles for $symbol. The chart will remain empty rather than fabricate prices.", color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
             } else {
-                Text("${displayedCandles.size} complete $timeframe candles · last observed ${selectedMarket.markObservedAt.ifBlank { "timestamp unavailable" }}", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                Text("${displayedCandles.size} complete $timeframe candles · last observed ${selectedMarket.priceObservedAt.ifBlank { "timestamp unavailable" }}", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 LegendDot("Volume", Gold)
