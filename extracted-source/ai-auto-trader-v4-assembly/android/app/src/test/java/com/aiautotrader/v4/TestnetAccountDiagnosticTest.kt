@@ -6,6 +6,11 @@ import org.junit.Test
 
 class TestnetAccountDiagnosticTest {
     @Test
+    fun allowsAuthenticatedMarketRequestsToSurviveFreeTierColdStarts() {
+        assertEquals(75_000, BACKEND_MARKET_READ_TIMEOUT_MS)
+    }
+
+    @Test
     fun recognizesOnlySuccessfulReadOnlyTestnetAccountResponses() {
         val result = classifyTestnetAccountResponse(
             httpCode = 200,

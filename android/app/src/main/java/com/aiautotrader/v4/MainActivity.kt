@@ -39,6 +39,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+// Longer authenticated market requests tolerate Render Free cold starts.
+internal const val BACKEND_MARKET_READ_TIMEOUT_MS = 75_000
+
 // UI-only theme preference. This changes presentation only; it cannot affect trading or risk controls.
 private var lightTheme by mutableStateOf(false)
 private val Background: Color get() = if (lightTheme) Color(0xFFF7F5F0) else Color(0xFF0B1018)
@@ -679,7 +682,7 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
             connection.requestMethod = "GET"
             // Status and market-list requests can hit a waking free-tier host; avoid false disconnects on short delays.
             connection.connectTimeout = 20000
-            connection.readTimeout = 45000
+            connection.readTimeout = BACKEND_MARKET_READ_TIMEOUT_MS
             connection.setRequestProperty("Authorization", "Bearer $token")
             connection.setRequestProperty("Accept", "application/json")
             connection.useCaches = false
