@@ -34,6 +34,18 @@ def _open_ledger(database_path: str):
     return SQLitePaperLedger(database_path)
 
 
+def _parse_market_testnet(value: str) -> bool:
+    """Parse venue selection strictly; malformed values must not fall through to production."""
+    if not isinstance(value, str):
+        raise ValueError("PAPER_MARKET_TESTNET must be one of true/false, yes/no, or 1/0")
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes"}:
+        return True
+    if normalized in {"0", "false", "no"}:
+        return False
+    raise ValueError("PAPER_MARKET_TESTNET must be one of true/false, yes/no, or 1/0")
+
+
 def _safe_startup_error(exc: Exception) -> str:
     """Return bounded startup diagnostics with the configured database URI redacted."""
     message = str(exc)
@@ -441,7 +453,10 @@ def main() -> None:
     interval = os.environ.get("PAPER_MARKET_INTERVAL", "1m")
     poll_interval = float(os.environ.get("PAPER_MARKET_POLL_INTERVAL_SECONDS", "15"))
     candle_limit = int(os.environ.get("PAPER_MARKET_CANDLE_LIMIT", "100"))
-    testnet = os.environ.get("PAPER_MARKET_TESTNET", "false").strip().lower() in ("1", "true", "yes", "on")
+    try:
+        testnet = _parse_market_testnet(os.environ.get("PAPER_MARKET_TESTNET", "false"))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
     market_mode = os.environ.get("PAPER_MARKET_DATA_MODE", "futures").strip().lower()
     if market_mode not in ("futures", "spot"):
         raise SystemExit("PAPER_MARKET_DATA_MODE must be futures or spot")
