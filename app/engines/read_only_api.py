@@ -437,6 +437,12 @@ class MarketFeedCache:
 def main() -> None:
     """Run the authenticated read-only API and independent public market poller."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    from backend.asgi_runtime import websocket_enabled
+
+    try:
+        enable_websocket = websocket_enabled()
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
     from backend.market_data_adapter import BinanceSpotMarketDataAdapter, BinanceUsdMFuturesAdapter
     from backend.binance_spot_testnet_account import BinanceSpotTestnetAccountClient
     from backend.market_worker import MarketDataWorker, MarketWorkerConfig
@@ -590,13 +596,31 @@ def main() -> None:
     poller = threading.Thread(target=poll_loop, name="readonly-market-poller", daemon=True)
     poller.start()
     try:
-        with make_server(host, port, create_app(database_path=database, token=token,
-                                                market_status=cache.status, market_items=cache.items,
-                                                market_candles=market_candles,
-                                                account_status=binance_testnet_account.account_summary,
-                                                analysis_status=analysis_health.status)) as server:
-            print(f"Read-only paper API listening on {host}:{port}; public market poller active; no execution routes")
-            server.serve_forever()
+        http_app = create_app(database_path=database, token=token,
+                              market_status=cache.status, market_items=cache.items,
+                              market_candles=market_candles,
+                              account_status=binance_testnet_account.account_summary,
+                              analysis_status=analysis_health.status)
+        if enable_websocket:
+            if len(token) < 32:
+                raise SystemExit("PAPER_WEBSOCKET_ENABLED requires a PAPER_API_TOKEN of at least 32 characters")
+            import uvicorn
+            from backend.asgi_runtime import create_read_only_asgi_app
+
+            asgi_app = create_read_only_asgi_app(
+                http_wsgi_app=http_app,
+                snapshot_provider=cache.items,
+                token=token,
+                allowed_symbols=set(symbols),
+                max_age_seconds=max_age,
+                poll_interval_seconds=min(max(poll_interval, 0.25), 60.0),
+            )
+            logging.info("Authenticated read-only WebSocket endpoint enabled at /ws/v1/markets; orders_authorized=False")
+            uvicorn.run(asgi_app, host=host, port=port, log_level="info", access_log=False)
+        else:
+            with make_server(host, port, http_app) as server:
+                print(f"Read-only paper API listening on {host}:{port}; public market poller active; no execution routes")
+                server.serve_forever()
     finally:
         stop.set()
         poller.join(timeout=5)
