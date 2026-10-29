@@ -16,7 +16,7 @@ class BacktestConfig:
     position_fraction: float = 0.10
     fee_bps_per_side: float = 4.0
     slippage_bps_per_side: float = 2.0
-    funding_bps_per_8h: float = 1.0
+    funding_bps_per_8h: float = 0.0
     candle_interval_minutes: int = 1
     minimum_signal_score: float = 60.0
 
