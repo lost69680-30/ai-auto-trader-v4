@@ -18,11 +18,11 @@ def test_spot_adapter_uses_documented_spot_public_endpoints_and_keeps_orders_dis
 
     adapter = BinanceSpotMarketDataAdapter(transport=transport)
     candles = adapter.fetch_klines("BTCUSDT", interval="1m", limit=2, now=NOW)
-    price = adapter.fetch_mark_price("BTCUSDT")
+    price = adapter.fetch_spot_price("BTCUSDT")
 
     assert candles[0].is_closed is True
     assert candles[0].close == 102
-    assert price.mark_price == 102  # generic worker interface; spot last price, not futures mark price
+    assert price.last_price == 102
     assert price.orders_authorized is False
     assert [path for path, _ in calls] == ["/api/v3/klines", "/api/v3/ticker/24hr"]
     assert all(path.startswith("/api/v3/") for path, _ in calls)
