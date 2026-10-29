@@ -87,6 +87,8 @@ class MarketFrame:
     retry_count: int
     orders_authorized: bool = False
     funding_rate: float | None = None
+    index_price: float | None = None
+    next_funding_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,14 +225,16 @@ class MarketDataWorker:
         return self._frame(
             symbol, FeedStatus.HEALTHY, now, mark.mark_price, mark.observed_at,
             closed, (), funding_rate=mark.last_funding_rate,
+            index_price=mark.index_price, next_funding_at=mark.next_funding_at,
         )
 
-    def _frame(self, symbol, status, now, mark_price, mark_observed_at, candles, reasons, *, funding_rate=None):
+    def _frame(self, symbol, status, now, mark_price, mark_observed_at, candles, reasons, *,
+               funding_rate=None, index_price=None, next_funding_at=None):
         return MarketFrame(
             symbol=symbol, status=status, checked_at=now, mark_price=mark_price,
             mark_observed_at=mark_observed_at, closed_candles=candles,
             reasons=tuple(reasons), retry_count=self._retry_counts[symbol], orders_authorized=False,
-            funding_rate=funding_rate,
+            funding_rate=funding_rate, index_price=index_price, next_funding_at=next_funding_at,
         )
 
     def run_forever(
