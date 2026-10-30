@@ -126,8 +126,6 @@ class MarketAnalysisChecksTest {
         assertTrue(flags.none { it.contains("LOW RISK") })
     }
 
-}
-
 
     @Test
     fun blocksFixedIntervalBarsShiftedAwayFromExchangeBoundaries() {
@@ -152,3 +150,5 @@ class MarketAnalysisChecksTest {
                 .orEmpty().contains("not aligned")
         )
     }
+
+}
