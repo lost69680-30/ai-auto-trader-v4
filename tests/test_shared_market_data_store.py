@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import io
+import json
 from types import SimpleNamespace
 import os
 from pathlib import Path
@@ -7,6 +9,8 @@ import pytest
 
 from backend.market_worker import FeedStatus, MarketPollResult
 from backend.shared_market_store import PostgresMarketFeedStore
+from app.engines.paper_ledger import SQLitePaperLedger
+from app.engines.read_only_api import create_app
 
 
 DSN = os.environ.get("PAPER_TEST_DATABASE_URL")
@@ -132,6 +136,57 @@ def test_postgres_store_rejects_healthy_futures_snapshot_without_funding_context
     with pytest.raises(ValueError, match="complete index and funding context"):
         store.publish(bad_poll, now=now)
     store.release()
+
+
+
+def _api_request(app, auth):
+    captured = {}
+    def start(status, headers):
+        captured["status"] = status
+    body = b"".join(app({
+        "REQUEST_METHOD": "GET", "PATH_INFO": "/api/v1/markets", "QUERY_STRING": "",
+        "HTTP_AUTHORIZATION": auth, "CONTENT_LENGTH": "0", "wsgi.input": io.BytesIO(b""),
+    }, start))
+    return captured["status"], json.loads(body)
+
+
+def test_api_reads_worker_snapshots_and_fails_closed_across_worker_restart(tmp_path):
+    reset_tables()
+    now = datetime.now(timezone.utc)
+    first = PostgresMarketFeedStore(DSN, worker_id="test-market-worker", owner_id="owner-a")
+    assert first.acquire_lease(now=now) is True
+    first.publish(healthy_poll(now), now=now)
+
+    ledger_path = str(tmp_path / "api-ledger.sqlite3")
+    with SQLitePaperLedger(ledger_path):
+        pass
+    api = create_app(
+        database_path=ledger_path,
+        token="shared-feed-api-test-token-at-least-32-chars",
+        market_status=first.status,
+        market_items=first.items,
+    )
+    status, payload = _api_request(api, "Bearer shared-feed-api-test-token-at-least-32-chars")
+    assert status.startswith("200")
+    assert payload["items"][0]["symbol"] == "BTCUSDT"
+
+    first.release()
+    status, payload = _api_request(api, "Bearer shared-feed-api-test-token-at-least-32-chars")
+    assert status.startswith("503")
+    assert payload["items"] == []
+
+    restarted = PostgresMarketFeedStore(DSN, worker_id="test-market-worker", owner_id="owner-b")
+    assert restarted.acquire_lease() is True
+    status, payload = _api_request(api, "Bearer shared-feed-api-test-token-at-least-32-chars")
+    assert status.startswith("503")
+    assert payload["items"] == []
+
+    fresh_at = datetime.now(timezone.utc)
+    restarted.publish(healthy_poll(fresh_at), now=fresh_at)
+    status, payload = _api_request(api, "Bearer shared-feed-api-test-token-at-least-32-chars")
+    assert status.startswith("200")
+    assert payload["items"][0]["symbol"] == "BTCUSDT"
+    restarted.release()
 
 
 def test_postgres_store_reports_missing_or_expired_worker_as_stale():
