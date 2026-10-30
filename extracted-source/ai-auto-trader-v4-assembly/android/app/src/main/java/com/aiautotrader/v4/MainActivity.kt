@@ -14,6 +14,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
@@ -64,10 +65,77 @@ internal data class MarketCandle(
     val volume: Double,
 )
 
+internal data class MarketDataContext(
+    val marketType: String,
+    val priceType: String,
+    val indexPrice: Double?,
+    val fundingRate: Double?,
+    val nextFundingAt: String?,
+)
+
+internal fun validateMarketDataContext(
+    marketType: String,
+    priceType: String,
+    indexPrice: Double?,
+    fundingRate: Double?,
+    nextFundingAt: String?,
+    now: Instant = Instant.now(),
+): MarketDataContext? {
+    val normalizedMarketType = marketType.trim().uppercase(Locale.ROOT)
+    val normalizedPriceType = priceType.trim().uppercase(Locale.ROOT)
+    return when (normalizedMarketType) {
+        "SPOT" -> {
+            if (normalizedPriceType == "SPOT_LAST_PRICE" &&
+                indexPrice == null && fundingRate == null && nextFundingAt.isNullOrBlank()) {
+                MarketDataContext("SPOT", normalizedPriceType, null, null, null)
+            } else {
+                null
+            }
+        }
+        "FUTURES" -> {
+            val normalizedFundingTime = nextFundingAt?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            val parsedFundingTime = try {
+                OffsetDateTime.parse(normalizedFundingTime).toInstant()
+            } catch (_: Exception) {
+                return null
+            }
+            if (normalizedPriceType != "FUTURES_MARK_PRICE" ||
+                indexPrice == null || !indexPrice.isFinite() || indexPrice <= 0.0 ||
+                fundingRate == null || !fundingRate.isFinite() ||
+                !parsedFundingTime.isAfter(now)) {
+                null
+            } else {
+                MarketDataContext("FUTURES", normalizedPriceType, indexPrice, fundingRate, normalizedFundingTime)
+            }
+        }
+        else -> null
+    }
+}
+
+internal fun formatFundingRate(rate: Double?): String {
+    if (rate == null || !rate.isFinite()) return "Unavailable"
+    return String.format(Locale.US, "%+.4f%%", rate * 100.0)
+}
+
+private val fundingTimestampFormatter =
+    DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm 'UTC'", Locale.US)
+
+internal fun formatFundingTimestamp(value: String?): String {
+    if (value.isNullOrBlank()) return "Unavailable"
+    return try {
+        OffsetDateTime.parse(value)
+            .withOffsetSameInstant(ZoneOffset.UTC)
+            .format(fundingTimestampFormatter)
+    } catch (_: Exception) {
+        "Unavailable"
+    }
+}
+
 private data class MarketInstrument(
     val symbol: String,
     val markPrice: Double,
     val markObservedAt: String,
+    val marketContext: MarketDataContext,
     val candles: List<MarketCandle>,
 )
 
@@ -232,6 +300,13 @@ private fun parseMarketItems(array: JSONArray): List<MarketInstrument> {
         if (row.optString("status") != "HEALTHY" || row.optBoolean("orders_authorized", true)) continue
         val symbol = row.optString("symbol").trim()
         val price = row.optDouble("mark_price", Double.NaN)
+        val marketContext = validateMarketDataContext(
+            marketType = row.optString("market_type"),
+            priceType = row.optString("price_type"),
+            indexPrice = if (row.isNull("index_price")) null else row.optDouble("index_price", Double.NaN),
+            fundingRate = if (row.isNull("funding_rate")) null else row.optDouble("funding_rate", Double.NaN),
+            nextFundingAt = row.optString("next_funding_at").takeIf { it.isNotBlank() && it != "null" },
+        ) ?: continue
         if (symbol.isBlank() || !price.isFinite() || price <= 0.0) continue
         val candlesJson = row.optJSONArray("candles") ?: JSONArray()
         val candles = mutableListOf<MarketCandle>()
@@ -250,7 +325,13 @@ private fun parseMarketItems(array: JSONArray): List<MarketInstrument> {
             }
         }
         if (candles.isNotEmpty()) {
-            result += MarketInstrument(symbol, price, row.optString("mark_observed_at"), candles.takeLast(100))
+            result += MarketInstrument(
+                symbol = symbol,
+                markPrice = price,
+                markObservedAt = row.optString("mark_observed_at"),
+                marketContext = marketContext,
+                candles = candles.takeLast(100),
+            )
         }
     }
     return result
@@ -1338,7 +1419,13 @@ private fun AnalysisScreen() {
                     Text("MARKET CHART", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp)
                     Text(symbol, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     if (selectedMarket != null) {
-                        Text("Mark price: ${formatMarketPrice(selectedMarket.markPrice)}", color = Green, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        val isFutures = selectedMarket.marketContext.marketType == "FUTURES"
+                        Text(
+                            "${if (isFutures) "Futures mark price" else "Spot last price"}: ${formatMarketPrice(selectedMarket.markPrice)}",
+                            color = Green,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
                     }
                 }
                 Tag(
@@ -1349,6 +1436,20 @@ private fun AnalysisScreen() {
                 )
             }
             val visibleSymbols = if (loadedMarkets.isNotEmpty()) loadedMarkets.map { displaySymbol(it.symbol) }.distinct() else listOf("BTC/USDT", "ETH/USDT", "EUR/USD", "GBP/USD")
+            if (selectedMarket?.marketContext?.marketType == "FUTURES") {
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text("FUTURES CONTEXT", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    IndicatorRow("Index price", selectedMarket.marketContext.indexPrice?.let(::formatMarketPrice) ?: "Unavailable")
+                    IndicatorRow("Funding rate", formatFundingRate(selectedMarket.marketContext.fundingRate))
+                    IndicatorRow("Next funding", formatFundingTimestamp(selectedMarket.marketContext.nextFundingAt))
+                    Text(
+                        "Funding sign: positive means longs pay shorts; negative means shorts pay longs. This is public market context, not account-specific payment history.",
+                        color = Muted,
+                        fontSize = 10.sp,
+                        lineHeight = 14.sp,
+                    )
+                }
+            }
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 visibleSymbols.forEach { s -> ChoiceChip(s, normalizeSymbol(symbol) == normalizeSymbol(s)) { symbol = s } }
             }
