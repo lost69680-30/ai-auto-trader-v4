@@ -681,7 +681,8 @@ def main() -> None:
             uvicorn.run(asgi_app, host=host, port=port, log_level="info", access_log=False)
         else:
             with make_server(host, port, http_app) as server:
-                print(f"Read-only paper API listening on {host}:{port}; public market poller active; no execution routes")
+                role_message = "public market poller active" if market_role == "combined" else "shared PostgreSQL market feed reader active"
+                print(f"Read-only paper API listening on {host}:{port}; {role_message}; no execution routes")
                 server.serve_forever()
     finally:
         stop.set()
