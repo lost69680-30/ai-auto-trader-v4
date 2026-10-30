@@ -88,15 +88,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ROOT=\"$GITHUB_WORKSPACE/android/app/src/main\"
-          EXTRACTED=\"$PROJECT_DIR/android/app/src/main\"
-          for relative in \\
-            java/com/aiautotrader/v4/MainActivity.kt \\
-            java/com/aiautotrader/v4/MarketObservationFreshness.kt \\
-            java/com/aiautotrader/v4/MarketWebSocketClient.kt \\
-            test/java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt \\
-            test/java/com/aiautotrader/v4/MarketWebSocketClientTest.kt; do
-            cmp \"$ROOT/$relative\" \"$EXTRACTED/$relative\" || { echo \"Android source mirror mismatch: $relative\"; exit 1; }
+          ROOT="$GITHUB_WORKSPACE/android/app/src/main"
+          EXTRACTED="$PROJECT_DIR/android/app/src/main"
+          for relative in java/com/aiautotrader/v4/MainActivity.kt java/com/aiautotrader/v4/MarketObservationFreshness.kt java/com/aiautotrader/v4/MarketWebSocketClient.kt test/java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt test/java/com/aiautotrader/v4/MarketWebSocketClientTest.kt; do
+            cmp "$ROOT/$relative" "$EXTRACTED/$relative" || { echo "Android source mirror mismatch: $relative"; exit 1; }
           done
 
       - name: Run Android unit tests and build APK
