@@ -10,7 +10,7 @@ def test_android_websocket_client_uses_only_authenticated_tls_read_only_feed():
     source = CLIENT.read_text(encoding="utf-8")
     assert "marketWebSocketUrl(apiBaseUrl)" in source
     assert "authenticatedMarketWebSocketRequest(apiBaseUrl, token)" in source
-    assert 'safeEndpoint.startsWith("wss://")' in source
+    assert 'endpoint.startsWith("wss://")' in source
     assert '.header("Authorization", "Bearer $token")' in source
     assert '"/ws/v1/markets"' in source
     assert 'private const val KEEPALIVE_MESSAGE = """{"type":"keepalive"}"""' in source
