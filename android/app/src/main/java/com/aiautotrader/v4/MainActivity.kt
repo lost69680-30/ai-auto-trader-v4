@@ -1441,10 +1441,10 @@ private fun AnalysisScreen() {
                 Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text("FUTURES CONTEXT", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     IndicatorRow("Index price", selectedMarket.marketContext.indexPrice?.let(::formatMarketPrice) ?: "Unavailable")
-                    IndicatorRow("Funding rate", formatFundingRate(selectedMarket.marketContext.fundingRate))
+                    IndicatorRow("Latest funding rate", formatFundingRate(selectedMarket.marketContext.fundingRate))
                     IndicatorRow("Next funding", formatFundingTimestamp(selectedMarket.marketContext.nextFundingAt))
                     Text(
-                        "Funding sign: positive means longs pay shorts; negative means shorts pay longs. This is public market context, not account-specific payment history.",
+                        "Latest exchange-published rate: positive means longs pay shorts; negative means shorts pay longs. It is not account-specific payment history or a forecast of the next settlement.",
                         color = Muted,
                         fontSize = 10.sp,
                         lineHeight = 14.sp,
