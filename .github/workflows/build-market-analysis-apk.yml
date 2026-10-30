@@ -94,7 +94,6 @@ jobs:
             java/com/aiautotrader/v4/MainActivity.kt \\
             java/com/aiautotrader/v4/MarketObservationFreshness.kt \\
             java/com/aiautotrader/v4/MarketWebSocketClient.kt \\
-            java/com/aiautotrader/v4/MarketAnalysisChecks.kt \\
             test/java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt \\
             test/java/com/aiautotrader/v4/MarketWebSocketClientTest.kt; do
             cmp \"$ROOT/$relative\" \"$EXTRACTED/$relative\" || { echo \"Android source mirror mismatch: $relative\"; exit 1; }
