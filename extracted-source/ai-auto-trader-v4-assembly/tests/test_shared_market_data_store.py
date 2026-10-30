@@ -40,9 +40,9 @@ def reset_tables():
     import psycopg
     root = Path(__file__).resolve().parents[3]
     migrations = (
-        root / "supabase/migrations/20261028010000_create_paper_ledger_schema.sql",
-        root / "supabase/migrations/20261030010000_create_shared_market_data.sql",
-        root / "supabase/migrations/20261030020000_create_durable_scheduled_jobs.sql",
+        root / "supabase/migrations/20261029205318_create_paper_ledger_schema.sql",
+        root / "supabase/migrations/20261030195452_create_shared_market_data.sql",
+        root / "supabase/migrations/20261030195505_create_durable_scheduled_jobs.sql",
     )
     with psycopg.connect(DSN, autocommit=True) as conn:
         for migration in migrations:
