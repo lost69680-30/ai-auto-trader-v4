@@ -29,6 +29,8 @@ class StagingAndroidBuildContractTests(unittest.TestCase):
         self.assertIn(":android:app:testDebugUnitTest", workflow)
         self.assertIn(":android:app:assembleDebug", workflow)
         self.assertIn("solo-staging-debug-apk", workflow)
+        self.assertIn("aapt dump badging", workflow)
+        self.assertIn("com.aiautotrader.v4.staging", workflow)
         self.assertIn("orders_authorized", workflow)
 
 
