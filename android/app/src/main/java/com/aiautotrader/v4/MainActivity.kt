@@ -511,13 +511,6 @@ internal fun candleSeriesIssue(
             return "candle timestamps are not aligned to $timeframe boundaries"
         }
 
-        if (timeframe == "1W") {
-            if (opens.any { opened -> opened.dayOfWeek.value != 1 || opened.hour != 0 || opened.minute != 0 || opened.second != 0 || opened.nano != 0 }) {
-                return "weekly candle timestamps are not aligned to Monday UTC"
-            }
-        } else if (opens.any { opened -> opened.toInstant().toEpochMilli() % intervalMillis != 0L }) {
-            return "candle timestamps are not aligned to interval boundaries"
-        }
         for (index in 1 until opens.size) {
             val elapsed = Duration.between(
                 opens[index - 1].toInstant(),
