@@ -196,6 +196,10 @@ private data class MarketFetchResult(
 // Removing a composable from the screen tree must not erase an authenticated session.
 private object BackendSession {
     val token = mutableStateOf("")
+    // Only a token accepted for a connection attempt activates foreground polling.
+    // The editable token field never drives network requests by itself.
+    val activeToken = mutableStateOf("")
+    val appInForeground = mutableStateOf(false)
     val status = mutableStateOf("NOT CONNECTED")
     val details = mutableStateOf("Connect to the authenticated HTTPS backend.")
     val openPositions = mutableStateOf("—")
@@ -799,6 +803,22 @@ private fun fetchCandleHistory(token: String, symbol: String): Map<String, List<
 }
 
 class MainActivity : ComponentActivity() {
+    override fun onStart() {
+        super.onStart()
+        BackendSession.appInForeground.value = true
+    }
+
+    override fun onStop() {
+        BackendSession.appInForeground.value = false
+        BackendSession.marketLoading.value = false
+        if (BackendSession.activeToken.value.length >= 32) {
+            BackendSession.feedStatus.value = "PAUSED"
+            BackendSession.marketMessage.value =
+                "App is in the background; authenticated market polling will resume with the app."
+        }
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         BackendSession.token.value = BackendTokenStore(applicationContext).read().orEmpty()
@@ -813,7 +833,52 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
+private fun BackendMarketSessionEffect() {
+    val sessionToken = BackendSession.activeToken.value
+    val isForeground = BackendSession.appInForeground.value
+
+    LaunchedEffect(sessionToken, isForeground) {
+        if (sessionToken.length >= 32 && isForeground) {
+            while (true) {
+                BackendSession.marketLoading.value = true
+                val response = withContext(Dispatchers.IO) {
+                    fetchMarketSnapshot(sessionToken)
+                }
+                BackendSession.status.value = response.backendStatus
+                BackendSession.feedStatus.value = response.feedStatus
+                BackendSession.marketMessage.value = response.reason
+                BackendSession.details.value = if (response.backendConnected) {
+                    "${response.backendStatus} · Market feed: ${response.feedStatus} · ${response.reason}"
+                } else {
+                    response.reason
+                }
+
+                // Keep the last validated snapshot while the feed reconnects.
+                // It is never promoted to a live/healthy feed unless a fresh response passes validation.
+                if (response.backendConnected && response.safeResponse &&
+                    response.feedStatus == "HEALTHY" && response.items.isNotEmpty()) {
+                    BackendSession.marketItems.value = response.items
+                }
+                BackendSession.marketLoading.value = false
+
+                // A wrong token or an unsafe backend response needs user attention;
+                // transient network/feed failures continue to retry while foregrounded.
+                if (response.backendStatus == "UNAUTHORIZED" ||
+                    response.backendStatus == "UNSAFE RESPONSE") {
+                    BackendSession.activeToken.value = ""
+                    return@LaunchedEffect
+                }
+                delay(30_000)
+            }
+        } else {
+            BackendSession.marketLoading.value = false
+        }
+    }
+}
+
+@Composable
 private fun TraderApp() {
+    BackendMarketSessionEffect()
     var screen by remember { mutableStateOf("Dashboard") }
     val screens = listOf("Dashboard", "AI Agents", "Markets", "Positions", "Risk Center")
     Column(Modifier.fillMaxSize().background(Background)) {
@@ -1084,6 +1149,8 @@ private fun ReadOnlyBackendConnectionCard() {
                             )
                         }
                     }
+                    BackendSession.activeToken.value =
+                        if (result.first == "UNAUTHORIZED" || result.first == "UNSAFE RESPONSE") "" else normalizedToken
                     status = result.first
                     details = result.second
                     if (result.first.startsWith("CONNECTED")) {
@@ -1163,6 +1230,7 @@ private fun ReadOnlyBackendConnectionCard() {
             onClick = {
                 tokenStore.clear()
                 token = ""
+                BackendSession.activeToken.value = ""
                 status = "NOT CONNECTED"
                 details = "Saved backend token cleared from this device."
                 openPositions = "—"
@@ -1222,35 +1290,6 @@ private fun AnalysisScreen() {
     var selectedTab by remember { mutableStateOf("Market") }
     val timeframes = supportedTimeframes
     val sessionToken = BackendSession.token.value
-    LaunchedEffect(sessionToken) {
-        if (sessionToken.length < 32) {
-            BackendSession.marketItems.value = emptyList()
-            BackendSession.marketMessage.value = "Connect with the backend bearer token on Dashboard to load validated market data."
-            BackendSession.feedStatus.value = "NOT AUTHENTICATED"
-            BackendSession.marketLoading.value = false
-        } else {
-            while (true) {
-                BackendSession.marketLoading.value = true
-                val response = withContext(Dispatchers.IO) { fetchMarketSnapshot(sessionToken) }
-                BackendSession.status.value = response.backendStatus
-                BackendSession.feedStatus.value = response.feedStatus
-                BackendSession.marketMessage.value = response.reason
-                BackendSession.details.value = if (response.backendConnected) {
-                    "${response.backendStatus} · Market feed: ${response.feedStatus} · ${response.reason}"
-                } else {
-                    response.reason
-                }
-                // Retain the last validated snapshot while the feed reconnects.
-                // Its feed status above still reports outages; the snapshot grants no order authority.
-                if (response.backendConnected && response.safeResponse &&
-                    response.feedStatus == "HEALTHY" && response.items.isNotEmpty()) {
-                    BackendSession.marketItems.value = response.items
-                }
-                BackendSession.marketLoading.value = false
-                delay(30_000)
-            }
-        }
-    }
     val loadedMarkets = BackendSession.marketItems.value
     val selectedMarket = loadedMarkets.firstOrNull { normalizeSymbol(it.symbol) == normalizeSymbol(symbol) }
     val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol ?: symbol)
