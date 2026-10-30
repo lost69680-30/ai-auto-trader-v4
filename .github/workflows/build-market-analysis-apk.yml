@@ -67,14 +67,30 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - name: Select backend target for APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            TARGET_BRANCH="${GITHUB_BASE_REF:-}"
+          else
+            TARGET_BRANCH="${GITHUB_REF_NAME:-}"
+          fi
+          if [[ "$TARGET_BRANCH" == "main" ]]; then
+            PAPER_API_BASE_URL="https://ai-auto-trader-v4-backend.onrender.com"
+          else
+            PAPER_API_BASE_URL="https://solo-futures-websocket-staging.onrender.com"
+          fi
+          echo "PAPER_API_BASE_URL=$PAPER_API_BASE_URL" >> "$GITHUB_ENV"
+          echo "APK backend target branch: $TARGET_BRANCH"
+
       - name: Run Android unit tests and build APK
         shell: bash
         run: |
           set -euo pipefail
-          # The Gradle property is required: build.gradle.kts defaults this URL to blank.
-          # This is a public backend URL, not a credential; bearer tokens stay out of the APK.
+          # Backend URL is public configuration; bearer and exchange tokens are not embedded.
           gradle -p "$PROJECT_DIR" :android:app:testDebugUnitTest :android:app:assembleDebug \
-            -PpaperApiBaseUrl=https://ai-auto-trader-v4-backend.onrender.com \
+            -PpaperApiBaseUrl="$PAPER_API_BASE_URL" \
             --no-daemon --max-workers=2
 
       - name: Upload debug APK
