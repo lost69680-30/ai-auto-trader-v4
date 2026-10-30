@@ -12,7 +12,8 @@ class StagingAndroidBuildContractTests(unittest.TestCase):
         self.assertIn('applicationIdSuffix = ".staging"', gradle)
 
     def test_staging_workflow_is_locked_to_the_staging_backend(self):
-        workflow = (ROOT / ".github/workflows/build-staging-apk.yml").read_text(encoding="utf-8")
+        workflow_path = ROOT / ".github/workflows/build-staging-apk.yml"
+        workflow = workflow_path.read_text(encoding="utf-8") if workflow_path.exists() else ""
         self.assertIn("https://solo-futures-websocket-staging.onrender.com", workflow)
         self.assertNotIn("https://ai-auto-trader-v4-backend.onrender.com", workflow)
         self.assertIn("-PstagingBuild=true", workflow)
