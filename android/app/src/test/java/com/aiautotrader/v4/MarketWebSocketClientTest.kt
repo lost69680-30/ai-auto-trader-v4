@@ -225,4 +225,60 @@ class MarketWebSocketClientTest {
         }
     }
 
+
+    @Test
+    fun reconnectsWhenSocketStaysOpenButValidSnapshotsStopArriving() {
+        val server = MockWebServer()
+        val heldCertificate = HeldCertificate.Builder()
+            .addSubjectAlternativeName("localhost")
+            .build()
+        val serverCertificates = HandshakeCertificates.Builder()
+            .heldCertificate(heldCertificate)
+            .build()
+        server.useHttps(serverCertificates.sslSocketFactory(), false)
+        server.start()
+
+        val clientCertificates = HandshakeCertificates.Builder()
+            .addTrustedCertificate(heldCertificate.certificate)
+            .build()
+        val httpClient = OkHttpClient.Builder()
+            .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
+            .build()
+        val reconnecting = CountDownLatch(1)
+        val stream = MarketWebSocketClient(
+            onStatus = { if (it == "RECONNECTING") reconnecting.countDown() },
+            onSnapshot = {},
+            onUnauthorized = {},
+            okHttpClient = httpClient,
+            keepaliveIntervalMs = 10_000L,
+            snapshotTimeoutMs = 200L,
+        )
+        repeat(2) {
+            server.enqueue(
+                MockResponse().withWebSocketUpgrade(object : WebSocketListener() {}),
+            )
+        }
+
+        try {
+            stream.start(
+                "https://localhost:${server.port}",
+                "unit-test-bearer-token-with-more-than-thirty-two-characters",
+            )
+            assertNotNull(server.takeRequest(3, TimeUnit.SECONDS))
+            assertTrue(
+                "quiet but open socket must be marked reconnecting",
+                reconnecting.await(3, TimeUnit.SECONDS),
+            )
+            assertNotNull(
+                "watchdog must cause a new connection attempt",
+                server.takeRequest(3, TimeUnit.SECONDS),
+            )
+        } finally {
+            stream.close()
+            server.shutdown()
+            httpClient.dispatcher.executorService.shutdown()
+            httpClient.connectionPool.evictAll()
+        }
+    }
+
 }
