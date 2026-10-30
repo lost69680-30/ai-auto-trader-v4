@@ -65,8 +65,18 @@ def test_postgres_store_persists_validated_snapshot_and_exposes_it_to_api():
     assert items[0]["price_type"] == "FUTURES_MARK_PRICE"
     assert items[0]["funding_rate"] == 0.0001
     assert items[0]["orders_authorized"] is False
-    store.release(now=now + timedelta(seconds=1))
+    store.release(now=now)
     assert store.status()["status"] == "STALE"
+
+    restarted = PostgresMarketFeedStore(DSN, worker_id="test-market-worker", owner_id="owner-b")
+    assert restarted.acquire_lease() is True
+    # Old snapshots remain durable, but are not exposed until the new worker validates a poll.
+    assert restarted.status()["status"] == "STARTING"
+    assert restarted.items() == []
+    next_poll_at = datetime.now(timezone.utc)
+    restarted.publish(healthy_poll(next_poll_at), now=next_poll_at)
+    assert restarted.status()["status"] == "HEALTHY"
+    restarted.release()
 
 
 def test_postgres_store_prevents_second_worker_from_taking_live_lease():
