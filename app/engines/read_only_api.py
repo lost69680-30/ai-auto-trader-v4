@@ -662,7 +662,7 @@ def main() -> None:
                               market_status=cache.status, market_items=cache.items,
                               market_candles=market_candles,
                               account_status=binance_testnet_account.account_summary,
-                              analysis_status=analysis_health.status)
+                              analysis_status=(cache.analysis_status if hasattr(cache, "analysis_status") else analysis_health.status))
         if enable_websocket:
             if len(token) < 32:
                 raise SystemExit("PAPER_WEBSOCKET_ENABLED requires a PAPER_API_TOKEN of at least 32 characters")
