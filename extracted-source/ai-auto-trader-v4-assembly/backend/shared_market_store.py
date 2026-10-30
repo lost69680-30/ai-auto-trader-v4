@@ -258,12 +258,12 @@ class PostgresMarketFeedStore:
             return {"status": "STARTING", "reason": "no worker heartbeat", "checked_at": None,
                     "age_seconds": None, "worker_status": "MISSING", "orders_authorized": False}
         age = (now - hb["heartbeat_at"]).total_seconds()
-        if hb["status"] == "STARTING":
-            return {"status": "STARTING", "reason": "worker has not published its first validated market poll",
-                    "checked_at": hb["heartbeat_at"].timestamp(), "age_seconds": age,
-                    "worker_status": hb["status"], "orders_authorized": False}
         if age < 0 or age > self.max_age_seconds or hb["lease_expires_at"] <= now or hb["status"] in {"STOPPED", "ERROR"}:
             return {"status": "STALE", "reason": "market worker heartbeat is stale or stopped",
+                    "checked_at": hb["heartbeat_at"].timestamp(), "age_seconds": age,
+                    "worker_status": hb["status"], "orders_authorized": False}
+        if hb["status"] == "STARTING":
+            return {"status": "STARTING", "reason": "worker has not published its first validated market poll",
                     "checked_at": hb["heartbeat_at"].timestamp(), "age_seconds": age,
                     "worker_status": hb["status"], "orders_authorized": False}
         if not rows or any(
