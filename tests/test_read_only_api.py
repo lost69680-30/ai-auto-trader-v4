@@ -577,7 +577,7 @@ def test_candle_api_contract_reports_all_native_intervals_and_isolates_failure()
             assert payload["candles_by_interval"][interval] == []
         else:
             assert payload["interval_status"][interval] == "HEALTHY"
-            assert len(payload["candles_by_interval"][interval]) == 12 if interval == "1M" else 1
+            assert len(payload["candles_by_interval"][interval]) == (12 if interval == "1M" else 1)
 
     assert payload["interval_status"]["1y"] == "HEALTHY"
     assert len(payload["candles_by_interval"]["1y"]) == 1
