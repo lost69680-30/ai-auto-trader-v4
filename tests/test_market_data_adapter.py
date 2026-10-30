@@ -87,8 +87,8 @@ def test_invalid_order_book_and_nonfinite_ticker_are_not_emitted():
 def test_kline_parser_uses_exchange_timestamps_and_marks_open_candle_not_closed():
     start = int(NOW.timestamp() * 1000)
     payloads = {"/fapi/v1/klines": [
-        [start - 120000, "99", "102", "98", "101", "12", start - 60001, "1200", 17, "5", "500", "0"],
-        [start - 30000, "101", "103", "100", "102", "14", start + 29999, "1400", 19, "6", "600", "0"],
+        [start - 60000, "99", "102", "98", "101", "12", start - 1, "1200", 17, "5", "500", "0"],
+        [start, "101", "103", "100", "102", "14", start + 59999, "1400", 19, "6", "600", "0"],
     ]}
     transport, calls = make_transport(payloads)
     candles = BinanceUsdMFuturesAdapter(transport=transport).fetch_klines(
@@ -261,3 +261,59 @@ def test_public_funding_history_rejects_duplicate_or_mismatched_rows():
         ]
     with pytest.raises(Exception, match="duplicate"):
         BinanceUsdMFuturesAdapter(transport=transport).fetch_funding_rate_history("BTCUSDT")
+
+
+@pytest.mark.parametrize(
+    "interval,open_time,close_time",
+    [
+        # A pair of 1-minute candles can be spaced 60 seconds apart but still
+        # be shifted off the exchange's UTC minute boundary.
+        (
+            "1m",
+            datetime(2026, 10, 10, 11, 59, 30, tzinfo=timezone.utc),
+            datetime(2026, 10, 10, 12, 0, 29, 999000, tzinfo=timezone.utc),
+        ),
+        # Binance weekly candles start at Monday 00:00 UTC, never Sunday.
+        (
+            "1w",
+            datetime(2026, 10, 4, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 10, 10, 23, 59, 59, 999000, tzinfo=timezone.utc),
+        ),
+        # Monthly bars must start on the first day of the month at 00:00 UTC.
+        (
+            "1M",
+            datetime(2026, 9, 2, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 9, 30, 23, 59, 59, 999000, tzinfo=timezone.utc),
+        ),
+    ],
+)
+def test_kline_parser_rejects_open_times_off_exchange_interval_boundaries(
+    interval, open_time, close_time
+):
+    def millis(value):
+        return int(value.timestamp() * 1000)
+
+    row = [
+        millis(open_time), "100", "102", "99", "101", "10",
+        millis(close_time), "1000", 10, "5", "500", "0",
+    ]
+    transport, _ = make_transport({"/fapi/v1/klines": [row]})
+
+    with pytest.raises(MarketDataError, match="not aligned"):
+        BinanceUsdMFuturesAdapter(transport=transport).fetch_klines(
+            "BTCUSDT", interval=interval, limit=10, now=NOW
+        )
+
+
+def test_kline_parser_rejects_close_time_before_the_interval_boundary():
+    start = int(NOW.timestamp() * 1000)
+    row = [
+        start - 60_000, "100", "102", "99", "101", "10",
+        start - 2, "1000", 10, "5", "500", "0",
+    ]
+    transport, _ = make_transport({"/fapi/v1/klines": [row]})
+
+    with pytest.raises(MarketDataError, match="close time does not match"):
+        BinanceUsdMFuturesAdapter(transport=transport).fetch_klines(
+            "BTCUSDT", interval="1m", limit=10, now=NOW
+        )

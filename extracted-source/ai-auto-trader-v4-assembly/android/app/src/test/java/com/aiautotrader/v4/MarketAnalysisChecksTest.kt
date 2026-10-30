@@ -126,4 +126,29 @@ class MarketAnalysisChecksTest {
         assertTrue(flags.none { it.contains("LOW RISK") })
     }
 
+
+    @Test
+    fun blocksFixedIntervalBarsShiftedAwayFromExchangeBoundaries() {
+        val shiftedMinutes = listOf(
+            candle("2026-10-28T08:58:30Z"),
+            candle("2026-10-28T08:59:30Z")
+        )
+        assertTrue(
+            candleSeriesIssue("1m", shiftedMinutes, Instant.parse("2026-10-28T09:01:00Z"))
+                .orEmpty().contains("not aligned")
+        )
+
+        val sundayWeeklyBar = listOf(candle("2026-10-25T00:00:00Z"))
+        assertTrue(
+            candleSeriesIssue("1W", sundayWeeklyBar, Instant.parse("2026-11-03T00:00:00Z"))
+                .orEmpty().contains("Monday")
+        )
+
+        val shiftedDailyBar = listOf(candle("2026-10-28T00:01:00Z"))
+        assertTrue(
+            candleSeriesIssue("1D", shiftedDailyBar, Instant.parse("2026-10-29T12:00:00Z"))
+                .orEmpty().contains("not aligned")
+        )
+    }
+
 }

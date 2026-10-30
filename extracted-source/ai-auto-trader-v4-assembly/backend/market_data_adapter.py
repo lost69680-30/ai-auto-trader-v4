@@ -6,7 +6,7 @@ account, leverage, or order-placement interface.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import math
 from typing import Any, Callable, Mapping
@@ -99,6 +99,66 @@ def _aware_utc(value: datetime | None) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("now must be timezone-aware")
     return value.astimezone(timezone.utc)
+
+
+_FIXED_KLINE_INTERVAL_MS = {
+    "1m": 60_000,
+    "3m": 180_000,
+    "5m": 300_000,
+    "15m": 900_000,
+    "30m": 1_800_000,
+    "1h": 3_600_000,
+    "2h": 7_200_000,
+    "4h": 14_400_000,
+    "6h": 21_600_000,
+    "8h": 28_800_000,
+    "12h": 43_200_000,
+    "1d": 86_400_000,
+    "3d": 259_200_000,
+    "1w": 604_800_000,
+}
+
+
+def _validate_kline_interval_boundaries(
+    open_time: datetime, close_time: datetime, interval: str
+) -> None:
+    """Reject candles whose UTC timestamps do not match their exchange interval."""
+    if interval == "1M":
+        if (
+            open_time.day != 1
+            or open_time.hour != 0
+            or open_time.minute != 0
+            or open_time.second != 0
+            or open_time.microsecond != 0
+        ):
+            raise MarketDataError("kline open time is not aligned to interval boundary")
+        next_month = (
+            datetime(open_time.year + 1, 1, 1, tzinfo=timezone.utc)
+            if open_time.month == 12
+            else datetime(open_time.year, open_time.month + 1, 1, tzinfo=timezone.utc)
+        )
+        expected_close = next_month - timedelta(milliseconds=1)
+    else:
+        interval_ms = _FIXED_KLINE_INTERVAL_MS.get(interval)
+        if interval_ms is None:
+            raise MarketDataError("unsupported kline interval boundary")
+        if interval == "1w":
+            aligned = (
+                open_time.weekday() == 0
+                and open_time.hour == 0
+                and open_time.minute == 0
+                and open_time.second == 0
+                and open_time.microsecond == 0
+            )
+        else:
+            open_ms = int(open_time.timestamp() * 1000)
+            aligned = open_ms % interval_ms == 0
+        if not aligned:
+            raise MarketDataError("kline open time is not aligned to interval boundary")
+        expected_close = open_time + timedelta(milliseconds=interval_ms - 1)
+
+    if close_time != expected_close:
+        raise MarketDataError("kline close time does not match interval boundary")
 
 
 class BinanceUsdMFuturesAdapter:
@@ -390,6 +450,7 @@ class BinanceUsdMFuturesAdapter:
                 raise MarketDataError("malformed kline row")
             open_time = _epoch_ms(row[0], "kline open time")
             close_time = _epoch_ms(row[6], "kline close time")
+            _validate_kline_interval_boundaries(open_time, close_time, interval)
             opened = _number(row[1], "kline open")
             high = _number(row[2], "kline high")
             low = _number(row[3], "kline low")
