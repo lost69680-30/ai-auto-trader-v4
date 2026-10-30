@@ -58,7 +58,6 @@ class MarketStreamContractTest {
         assertNull(parseMarketStreamEvent(event().put("symbol", "btc/usdt").toString(), Instant.now()))
         assertNull(parseMarketStreamEvent("not-json", Instant.now()))
     }
-}
 
     @Test fun convertsOnlyHttpsBackendUrlsToWebSocketUrls() {
         assertEquals(
@@ -75,3 +74,4 @@ class MarketStreamContractTest {
         assertEquals(4_000L, marketStreamReconnectDelayMillis(2))
         assertEquals(30_000L, marketStreamReconnectDelayMillis(20))
     }
+}
