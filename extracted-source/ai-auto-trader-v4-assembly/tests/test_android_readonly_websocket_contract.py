@@ -15,7 +15,7 @@ def test_android_websocket_client_uses_only_authenticated_tls_read_only_feed():
     assert '"/ws/v1/markets"' in source
     assert 'private const val KEEPALIVE_MESSAGE = """{"type":"keepalive"}"""' in source
     assert "webSocket.send(KEEPALIVE_MESSAGE)" in source
-    assert "webSocketReconnectDelayMs(reconnectAttempts)" in source
+    assert "webSocketReconnectDelayMs(reconnectAttempts++)" in source
     assert "parseMarketSnapshotEvent(text)" in source
     assert "onUnauthorized" in source
 
