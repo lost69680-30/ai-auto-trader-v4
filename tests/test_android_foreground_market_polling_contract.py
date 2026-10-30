@@ -10,7 +10,7 @@ def test_authenticated_market_polling_belongs_to_foreground_app_session():
         "@Composable\nprivate fun AgentNetworkScreen()", 1
     )[0]
     analysis_screen = source.split("@Composable\nprivate fun AnalysisScreen()", 1)[1].split(
-        "@Composable\nprivate fun RiskCenterScreen()", 1
+        "@Composable\nprivate fun AnalyticsChartCard", 1
     )[0]
 
     assert "BackendMarketSessionEffect()" in trader_app
