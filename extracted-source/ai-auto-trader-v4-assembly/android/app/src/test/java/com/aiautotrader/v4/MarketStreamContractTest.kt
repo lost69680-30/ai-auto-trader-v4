@@ -49,7 +49,7 @@ class MarketStreamContractTest {
         val now = Instant.now()
         assertNull(parseMarketStreamEvent(event(observedAt = now.minusSeconds(91).toString()).toString(), now))
         assertNull(parseMarketStreamEvent(event(observedAt = now.plusSeconds(5).toString()).toString(), now))
-        assertNull(parseMarketStreamEvent(event(price = Double.NaN).toString(), now))
+        assertNull(parseMarketStreamEvent(event().put("mark_price", "NaN").toString(), now))
         assertNull(parseMarketStreamEvent(event(price = 0.0).toString(), now))
     }
 
@@ -59,3 +59,19 @@ class MarketStreamContractTest {
         assertNull(parseMarketStreamEvent("not-json", Instant.now()))
     }
 }
+
+    @Test fun convertsOnlyHttpsBackendUrlsToWebSocketUrls() {
+        assertEquals(
+            "wss://staging.example.com/ws/v1/markets",
+            marketStreamUrl("https://staging.example.com/")
+        )
+        assertNull(marketStreamUrl("http://staging.example.com"))
+        assertNull(marketStreamUrl(""))
+    }
+
+    @Test fun reconnectDelayIsCappedAndExponential() {
+        assertEquals(1_000L, marketStreamReconnectDelayMillis(0))
+        assertEquals(2_000L, marketStreamReconnectDelayMillis(1))
+        assertEquals(4_000L, marketStreamReconnectDelayMillis(2))
+        assertEquals(30_000L, marketStreamReconnectDelayMillis(20))
+    }
