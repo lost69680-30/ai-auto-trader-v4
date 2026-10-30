@@ -90,8 +90,15 @@ class PostgresMarketFeedStore:
     def publish(self, poll: Any, *, now: datetime | None = None) -> None:
         if getattr(poll, "orders_authorized", None) is not False:
             raise ValueError("market poll cannot authorize orders")
-        checked = _iso(poll.checked_at)
-        stamp = _iso(now or datetime.now(timezone.utc))
+        checked_dt = _utc_timestamp = poll.checked_at
+        if not isinstance(checked_dt, datetime) or checked_dt.tzinfo is None or checked_dt.utcoffset() is None:
+            raise ValueError("poll checked_at must be timezone-aware")
+        checked_dt = checked_dt.astimezone(timezone.utc)
+        now_dt = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        if (now_dt - checked_dt).total_seconds() < -1.0 or (now_dt - checked_dt).total_seconds() > self.max_age_seconds:
+            raise ValueError("market poll timestamp is future-dated or stale")
+        checked = _iso(checked_dt)
+        stamp = _iso(now_dt)
         payloads: list[tuple[str, str | None, str, str]] = []
         for frame in poll.frames:
             if frame.orders_authorized is not False:
@@ -111,6 +118,30 @@ class PostgresMarketFeedStore:
                     "is_closed": bool(candle.is_closed),
                 })
             futures = frame.market_type == "FUTURES"
+            if frame.market_type not in {"FUTURES", "SPOT"}:
+                raise ValueError("market frame has an unknown market type")
+            observed_dt = frame.mark_observed_at
+            if status == "HEALTHY":
+                if frame.mark_price is None or _finite(frame.mark_price, "mark_price") <= 0:
+                    raise ValueError("healthy market frame requires a positive mark price")
+                if observed_dt is None:
+                    raise ValueError("healthy market frame requires a mark observation timestamp")
+                observed_dt = observed_dt.astimezone(timezone.utc)
+                mark_age = (now_dt - observed_dt).total_seconds()
+                if mark_age < -1.0 or mark_age > self.max_age_seconds:
+                    raise ValueError("healthy market frame mark is future-dated or stale")
+                if futures:
+                    if frame.index_price is None or frame.funding_rate is None or frame.next_funding_at is None:
+                        raise ValueError("healthy Futures frame requires complete index and funding context")
+                    if _finite(frame.index_price, "index_price") <= 0:
+                        raise ValueError("healthy Futures index price must be positive")
+                    _finite(frame.funding_rate, "funding_rate")
+                    if _iso(frame.next_funding_at) <= _iso(now_dt):
+                        raise ValueError("healthy Futures next funding timestamp must be in the future")
+                elif any(value is not None for value in (frame.index_price, frame.funding_rate, frame.next_funding_at)):
+                    raise ValueError("Spot market frame cannot contain Futures-only context")
+                if not frame.closed_candles or any(not candle.is_closed for candle in frame.closed_candles):
+                    raise ValueError("healthy market frame requires only fully closed candles")
             payload = {
                 "symbol": frame.symbol, "status": status,
                 "mark_price": None if frame.mark_price is None else _finite(frame.mark_price, "mark_price"),
