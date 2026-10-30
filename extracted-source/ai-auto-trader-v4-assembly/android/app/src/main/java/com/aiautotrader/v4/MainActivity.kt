@@ -1,6 +1,8 @@
 package com.aiautotrader.v4
 
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import java.net.HttpURLConnection
 import java.net.URL
 import org.json.JSONObject
@@ -9,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.awaitCancellation
 import java.util.Locale
 import java.time.Duration
 import java.time.Instant
@@ -268,6 +271,7 @@ private object BackendSession {
     // The editable token field never drives network requests by itself.
     val activeToken = mutableStateOf("")
     val appInForeground = mutableStateOf(false)
+    val websocketStatus = mutableStateOf("DISCONNECTED")
     val status = mutableStateOf("NOT CONNECTED")
     val details = mutableStateOf("Connect to the authenticated HTTPS backend.")
     val openPositions = mutableStateOf("—")
@@ -280,6 +284,20 @@ private object BackendSession {
     val marketMessage = mutableStateOf("Market data has not been loaded yet.")
     // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
     val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
+}
+
+private fun updateMarketFromWebSocket(snapshot: MarketStreamSnapshot) {
+    val current = BackendSession.marketItems.value
+    val existing = current.firstOrNull { normalizeSymbol(it.symbol) == normalizeSymbol(snapshot.symbol) }
+    val updated = MarketInstrument(
+        symbol = snapshot.symbol,
+        markPrice = snapshot.price,
+        markObservedAt = snapshot.observedAt,
+        marketContext = snapshot.marketContext,
+        candles = existing?.candles.orEmpty(),
+    )
+    BackendSession.marketItems.value =
+        current.filterNot { normalizeSymbol(it.symbol) == normalizeSymbol(snapshot.symbol) } + updated
 }
 
 private fun normalizeSymbol(value: String): String = value.uppercase(Locale.ROOT).filter { it.isLetterOrDigit() }
@@ -958,8 +976,67 @@ private fun BackendMarketSessionEffect() {
 }
 
 @Composable
+private fun BackendMarketWebSocketEffect() {
+    val sessionToken = BackendSession.activeToken.value
+    val isForeground = BackendSession.appInForeground.value
+
+    LaunchedEffect(sessionToken, isForeground) {
+        if (sessionToken.length < 32) {
+            BackendSession.websocketStatus.value = "DISCONNECTED"
+            return@LaunchedEffect
+        }
+        if (!isForeground) {
+            BackendSession.websocketStatus.value = "PAUSED"
+            return@LaunchedEffect
+        }
+
+        val mainHandler = Handler(Looper.getMainLooper())
+        val stream = MarketWebSocketClient(
+            onStatus = { status ->
+                mainHandler.post {
+                    if (BackendSession.activeToken.value == sessionToken &&
+                        BackendSession.appInForeground.value == isForeground) {
+                        BackendSession.websocketStatus.value = status
+                    }
+                }
+            },
+            onSnapshot = { snapshot ->
+                mainHandler.post {
+                    if (BackendSession.activeToken.value == sessionToken &&
+                        BackendSession.appInForeground.value) {
+                        updateMarketFromWebSocket(snapshot)
+                    }
+                }
+            },
+            onUnauthorized = {
+                mainHandler.post {
+                    if (BackendSession.activeToken.value == sessionToken) {
+                        BackendSession.websocketStatus.value = "UNAUTHORIZED"
+                        BackendSession.activeToken.value = ""
+                        BackendSession.status.value = "UNAUTHORIZED"
+                        BackendSession.details.value =
+                            "The read-only market stream rejected the saved bearer token. Reconnect using the authenticated backend."
+                    }
+                }
+            },
+        )
+        stream.start(BuildConfig.PAPER_API_BASE_URL, sessionToken)
+        try {
+            awaitCancellation()
+        } finally {
+            stream.close()
+            if (BackendSession.activeToken.value == sessionToken &&
+                !BackendSession.appInForeground.value) {
+                BackendSession.websocketStatus.value = "PAUSED"
+            }
+        }
+    }
+}
+
+@Composable
 private fun TraderApp() {
     BackendMarketSessionEffect()
+    BackendMarketWebSocketEffect()
     var screen by remember { mutableStateOf("Dashboard") }
     val screens = listOf("Dashboard", "AI Agents", "Markets", "Positions", "Risk Center")
     Column(Modifier.fillMaxSize().background(Background)) {
@@ -1457,7 +1534,7 @@ private fun AnalysisScreen() {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 timeframes.forEach { t -> ChoiceChip(t, timeframe == t) { timeframe = t } }
             }
-            Text("Feed: ${BackendSession.feedStatus.value} · ${BackendSession.marketMessage.value}", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+            Text("REST feed: ${BackendSession.feedStatus.value} · WebSocket: ${BackendSession.websocketStatus.value} · ${BackendSession.marketMessage.value}", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
             Text("Selected interval: $timeframe · loaded directly from validated, closed backend candles. No missing candles are fabricated.", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             CandlestickChart(Modifier.fillMaxWidth().height(190.dp), displayedCandles)
             if (selectedMarket == null) {
