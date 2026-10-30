@@ -174,7 +174,6 @@ internal class MarketWebSocketClient(
 
     @Volatile
     private var running = false
-    private var endpoint = ""
     private var request: Request? = null
     private var reconnectAttempts = 0
     private var socket: WebSocket? = null
@@ -290,7 +289,6 @@ internal class MarketWebSocketClient(
         onStatus("RECONNECTING")
         scheduleConnect(delayMs)
     }
-
 
     override fun close() {
         synchronized(lock) {
