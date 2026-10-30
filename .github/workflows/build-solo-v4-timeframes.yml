@@ -93,6 +93,8 @@ jobs:
           cmp android/app/build.gradle.kts extracted-source/ai-auto-trader-v4-assembly/android/app/build.gradle.kts
           cmp android/app/src/main/res/values/styles.xml extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/res/values/styles.xml
           cmp android/app/src/test/java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt
+          cmp android/app/src/main/java/com/aiautotrader/v4/MarketObservationFreshness.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MarketObservationFreshness.kt
+          cmp android/app/src/test/java/com/aiautotrader/v4/MarketObservationFreshnessTest.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/MarketObservationFreshnessTest.kt
           cmp android/app/src/test/java/com/aiautotrader/v4/CandlestickPatternTest.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/CandlestickPatternTest.kt
           cmp android/app/src/test/java/com/aiautotrader/v4/TimeframeBiasTest.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/TimeframeBiasTest.kt
           cmp android/app/src/test/java/com/aiautotrader/v4/TestnetAccountDiagnosticTest.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/TestnetAccountDiagnosticTest.kt
