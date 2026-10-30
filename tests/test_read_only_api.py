@@ -459,3 +459,12 @@ def test_audit_endpoint_returns_empty_list_for_empty_sqlite_ledger(tmp_path):
     assert status.startswith("200")
     assert body["items"] == []
     assert body["orders_authorized"] is False
+
+
+def test_api_token_environment_value_is_trimmed_without_changing_token_contents():
+    from app.engines.read_only_api import _load_api_token
+
+    expected = "unit-test-token-that-is-at-least-32-characters-long"
+    assert _load_api_token({"PAPER_API_TOKEN": "  " + expected + " \n"}) == expected
+    assert _load_api_token({"PAPER_API_TOKEN": expected}) == expected
+    assert _load_api_token({"PAPER_API_TOKEN": "   "}) == ""
