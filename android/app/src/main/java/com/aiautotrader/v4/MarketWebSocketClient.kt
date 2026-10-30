@@ -56,6 +56,17 @@ internal fun marketWebSocketUrl(apiBaseUrl: String): String? {
     return httpsOrigin.replaceFirst("https://", "wss://") + MARKET_WEBSOCKET_PATH
 }
 
+internal fun authenticatedMarketWebSocketRequest(apiBaseUrl: String, token: String): Request? {
+    if (token.length < 32) return null
+    val endpoint = marketWebSocketUrl(apiBaseUrl) ?: return null
+    if (!endpoint.startsWith("wss://")) return null
+    return Request.Builder()
+        .url(endpoint)
+        .header("Authorization", "Bearer $token")
+        .header("Accept", "application/json")
+        .build()
+}
+
 internal fun websocketReconnectDelayMs(
     attempt: Int,
     baseDelayMs: Long = BASE_RECONNECT_DELAY_MS,
@@ -164,22 +175,21 @@ internal class MarketWebSocketClient(
     @Volatile
     private var running = false
     private var endpoint = ""
-    private var bearerToken = ""
+    private var request: Request? = null
     private var reconnectAttempts = 0
     private var socket: WebSocket? = null
     private var reconnectTask: ScheduledFuture<*>? = null
     private var keepaliveTask: ScheduledFuture<*>? = null
 
     fun start(apiBaseUrl: String, token: String) {
-        val safeEndpoint = marketWebSocketUrl(apiBaseUrl)
-        if (token.length < 32 || safeEndpoint == null || !safeEndpoint.startsWith("wss://")) {
+        val safeRequest = authenticatedMarketWebSocketRequest(apiBaseUrl, token)
+        if (safeRequest == null) {
             onStatus("UNAVAILABLE")
             return
         }
         synchronized(lock) {
             running = true
-            endpoint = safeEndpoint
-            bearerToken = token
+            request = safeRequest
             reconnectAttempts = 0
         }
         onStatus("CONNECTING")
@@ -199,16 +209,11 @@ internal class MarketWebSocketClient(
     private fun connectNow() {
         val requestData = synchronized(lock) {
             if (!running) return
-            endpoint to bearerToken
+            request ?: return
         }
         onStatus(if (reconnectAttempts == 0) "CONNECTING" else "RECONNECTING")
-        val request = Request.Builder()
-            .url(requestData.first)
-            .header("Authorization", "Bearer ${requestData.second}")
-            .header("Accept", "application/json")
-            .build()
 
-        val createdSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+        val createdSocket = okHttpClient.newWebSocket(requestData, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 synchronized(lock) {
                     if (!running) {
@@ -297,7 +302,7 @@ internal class MarketWebSocketClient(
             val activeSocket = socket
             socket = null
             activeSocket?.close(1000, "app not foreground")
-            bearerToken = ""
+            request = null
         }
         onStatus("PAUSED")
         scheduler.shutdownNow()
