@@ -318,7 +318,6 @@ private fun parseMarketItems(array: JSONArray): List<MarketInstrument> {
         if (row.optString("status") != "HEALTHY" || row.optBoolean("orders_authorized", true)) continue
         val symbol = row.optString("symbol").trim()
         val price = row.optDouble("mark_price", Double.NaN)
-        val observedAt = parseFreshMarketObservation(row.optString("mark_observed_at")) ?: continue
         val marketContext = validateMarketDataContext(
             marketType = row.optString("market_type"),
             priceType = row.optString("price_type"),
@@ -347,7 +346,7 @@ private fun parseMarketItems(array: JSONArray): List<MarketInstrument> {
             result += MarketInstrument(
                 symbol = symbol,
                 markPrice = price,
-                markObservedAt = observedAt.toString(),
+                markObservedAt = row.optString("mark_observed_at"),
                 marketContext = marketContext,
                 candles = candles.takeLast(100),
             )
