@@ -541,3 +541,45 @@ def test_yearly_candle_api_reports_monthly_fetch_failure_without_fabricating_dat
     assert payload["interval_status"]["1M"] == "UNAVAILABLE:RuntimeError"
     assert payload["interval_status"]["1y"] == "UNAVAILABLE:MONTHLY_INTERVAL"
     assert payload["orders_authorized"] is False
+
+
+def test_candle_api_contract_reports_all_native_intervals_and_isolates_failure():
+    from types import SimpleNamespace
+    from app.engines.read_only_api import build_market_candle_payload
+
+    native_intervals = ("1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M")
+
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit):
+            if interval == "15m":
+                raise RuntimeError("temporary interval outage")
+            if interval == "1M":
+                return _closed_monthly_candles(year=2024)
+            return [SimpleNamespace(
+                open_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                close_time=datetime(2024, 1, 1, 0, 0, 59, tzinfo=timezone.utc),
+                open=100.0, high=105.0, low=95.0, close=102.0,
+                volume=12.0, is_closed=True,
+            )]
+
+    payload = build_market_candle_payload(
+        source=Source(),
+        symbol="BTCUSDT",
+        allowed_symbols=("BTCUSDT",),
+        intervals=native_intervals,
+        limit=100,
+    )
+
+    assert tuple(payload["candles_by_interval"]) == (*native_intervals, "1y")
+    for interval in native_intervals:
+        if interval == "15m":
+            assert payload["interval_status"][interval] == "UNAVAILABLE:RuntimeError"
+            assert payload["candles_by_interval"][interval] == []
+        else:
+            assert payload["interval_status"][interval] == "HEALTHY"
+            assert len(payload["candles_by_interval"][interval]) == (12 if interval == "1M" else 1)
+
+    assert payload["interval_status"]["1y"] == "HEALTHY"
+    assert len(payload["candles_by_interval"]["1y"]) == 1
+    assert payload["orders_authorized"] is False
+    assert payload["mode"] == "PAPER_ONLY"
