@@ -23,6 +23,11 @@ def build_child_environments(environ: Mapping[str, str]) -> tuple[dict[str, str]
     worker_env.pop("PAPER_API_TOKEN", None)
     worker_env.pop("PAPER_API_HOST", None)
     worker_env.pop("PAPER_API_PORT", None)
+    for secret_name in (
+        "BINANCE_SPOT_TESTNET_API_KEY", "BINANCE_SPOT_TESTNET_API_SECRET",
+        "BINANCE_API_KEY", "BINANCE_API_SECRET",
+    ):
+        worker_env.pop(secret_name, None)
     worker_env["PAPER_MARKET_ROLE"] = "worker"
 
     api_env = dict(environ)
@@ -58,12 +63,12 @@ def main() -> None:
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
 
-    def start_child(name: str) -> None:
+    def start_child(name: str, *, restart_delay: float = 1.0) -> None:
         module, env = modules[name]
         proc = _start(module, env)
         children[name] = {
             "process": proc, "started_at": time.monotonic(),
-            "restart_delay": 1.0, "next_start_at": None,
+            "restart_delay": restart_delay, "next_start_at": None,
         }
 
     try:
@@ -87,7 +92,7 @@ def main() -> None:
                     state["next_start_at"] = now + delay
                     state["restart_delay"] = min(delay * 2, max_delay)
                 elif now >= state["next_start_at"]:
-                    start_child(name)
+                    start_child(name, restart_delay=state["restart_delay"])
             time.sleep(1.0)
     finally:
         for name, state in children.items():
