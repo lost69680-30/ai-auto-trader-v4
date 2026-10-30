@@ -65,7 +65,15 @@ class MarketStreamContractTest {
             marketStreamUrl("https://staging.example.com/")
         )
         assertNull(marketStreamUrl("http://staging.example.com"))
+        assertNull(marketStreamUrl("https://user:secret@staging.example.com"))
+        assertNull(marketStreamUrl("https://staging.example.com/custom"))
+        assertNull(marketStreamUrl("https://staging.example.com?token=unsafe"))
         assertNull(marketStreamUrl(""))
+    }
+
+    @Test fun rejectsUnsafeBackendOriginsBeforeAttachingBearerCredentials() {
+        assertNull(marketStreamUrl("https://attacker.example/path"))
+        assertNull(marketStreamUrl("https://staging.example.com/#fragment"))
     }
 
     @Test fun reconnectDelayIsCappedAndExponential() {
