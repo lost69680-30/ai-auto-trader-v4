@@ -51,5 +51,5 @@ def test_stream_snapshots_update_only_validated_market_state_and_never_order_sta
 
 def test_websocket_dependency_is_pinned_for_android_and_local_tests():
     gradle = GRADLE.read_text(encoding="utf-8")
-    assert 'implementation("com.squareup.okhttp3:okhttp:5.5.1")' in gradle
+    assert 'implementation("com.squareup.okhttp3:okhttp:4.12.1")' in gradle
     assert 'testImplementation("org.json:json:20250517")' in gradle
