@@ -90,11 +90,14 @@ class PostgresMarketFeedStore:
     def publish(self, poll: Any, *, now: datetime | None = None) -> None:
         if getattr(poll, "orders_authorized", None) is not False:
             raise ValueError("market poll cannot authorize orders")
-        checked_dt = _utc_timestamp = poll.checked_at
+        checked_dt = poll.checked_at
         if not isinstance(checked_dt, datetime) or checked_dt.tzinfo is None or checked_dt.utcoffset() is None:
             raise ValueError("poll checked_at must be timezone-aware")
         checked_dt = checked_dt.astimezone(timezone.utc)
-        now_dt = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        now_value = now or datetime.now(timezone.utc)
+        if not isinstance(now_value, datetime) or now_value.tzinfo is None or now_value.utcoffset() is None:
+            raise ValueError("store clock must be timezone-aware")
+        now_dt = now_value.astimezone(timezone.utc)
         if (now_dt - checked_dt).total_seconds() < -1.0 or (now_dt - checked_dt).total_seconds() > self.max_age_seconds:
             raise ValueError("market poll timestamp is future-dated or stale")
         checked = _iso(checked_dt)
@@ -126,6 +129,8 @@ class PostgresMarketFeedStore:
                     raise ValueError("healthy market frame requires a positive mark price")
                 if observed_dt is None:
                     raise ValueError("healthy market frame requires a mark observation timestamp")
+                if _iso(observed_dt) is None:
+                    raise ValueError("healthy market frame mark timestamp is missing")
                 observed_dt = observed_dt.astimezone(timezone.utc)
                 mark_age = (now_dt - observed_dt).total_seconds()
                 if mark_age < -1.0 or mark_age > self.max_age_seconds:
@@ -136,7 +141,8 @@ class PostgresMarketFeedStore:
                     if _finite(frame.index_price, "index_price") <= 0:
                         raise ValueError("healthy Futures index price must be positive")
                     _finite(frame.funding_rate, "funding_rate")
-                    if _iso(frame.next_funding_at) <= _iso(now_dt):
+                    next_funding_dt = frame.next_funding_at
+                    if _iso(next_funding_dt) is None or next_funding_dt.astimezone(timezone.utc) <= now_dt:
                         raise ValueError("healthy Futures next funding timestamp must be in the future")
                 elif any(value is not None for value in (frame.index_price, frame.funding_rate, frame.next_funding_at)):
                     raise ValueError("Spot market frame cannot contain Futures-only context")
@@ -260,7 +266,11 @@ class PostgresMarketFeedStore:
             return {"status": "STALE", "reason": "market worker heartbeat is stale or stopped",
                     "checked_at": hb["heartbeat_at"].timestamp(), "age_seconds": age,
                     "worker_status": hb["status"], "orders_authorized": False}
-        if not rows or any((now - datetime.fromisoformat(row["checked_at"])).total_seconds() > self.max_age_seconds for row in rows):
+        if not rows or any(
+            (now - datetime.fromisoformat(row["checked_at"])).total_seconds() < -1.0
+            or (now - datetime.fromisoformat(row["checked_at"])).total_seconds() > self.max_age_seconds
+            for row in rows
+        ):
             return {"status": "STALE", "reason": "market snapshots are missing or stale",
                     "checked_at": hb["heartbeat_at"].timestamp(), "age_seconds": age,
                     "worker_status": hb["status"], "orders_authorized": False}
