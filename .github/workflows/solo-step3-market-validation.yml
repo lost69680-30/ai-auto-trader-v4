@@ -8,10 +8,29 @@ on:
       - "app/engines/read_only_api.py"
       - "tests/test_read_only_api.py"
       - "backend/market_data_adapter.py"
+      - "backend/shared_market_store.py"
+      - "backend/shared_market_worker.py"
+      - "backend/durable_scheduler.py"
+      - "backend/shared_market_supervisor.py"
+      - "tests/test_shared_market_data_store.py"
+      - "tests/test_durable_scheduler.py"
+      - "tests/test_shared_market_supervisor.py"
       - "tests/test_market_data_adapter.py"
       - "extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py"
       - "extracted-source/ai-auto-trader-v4-assembly/tests/test_read_only_api.py"
       - "extracted-source/ai-auto-trader-v4-assembly/backend/market_data_adapter.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/shared_market_store.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/shared_market_worker.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/durable_scheduler.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/shared_market_supervisor.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_shared_market_data_store.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_durable_scheduler.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_shared_market_supervisor.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/shared_market_store.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/shared_market_worker.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/durable_scheduler.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_shared_market_data_store.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_durable_scheduler.py"
       - "extracted-source/ai-auto-trader-v4-assembly/tests/test_market_data_adapter.py"
   push:
     paths:
@@ -19,10 +38,15 @@ on:
       - "backend/market_data_adapter.py"
       - "backend/market_connectivity_check.py"
       - "backend/market_worker.py"
+      - "backend/shared_market_store.py"
+      - "backend/shared_market_worker.py"
+      - "backend/durable_scheduler.py"
       - "app/engines/price_planner.py"
       - "tests/test_market_data_adapter.py"
       - "tests/test_market_connectivity_check.py"
       - "tests/test_market_worker.py"
+      - "tests/test_shared_market_data_store.py"
+      - "tests/test_durable_scheduler.py"
       - "tests/test_market_outage_policy.py"
       - "tests/test_market_paper_gate.py"
       - "tests/test_price_planner.py"
@@ -67,6 +91,13 @@ jobs:
           cmp tests/test_read_only_api.py extracted-source/ai-auto-trader-v4-assembly/tests/test_read_only_api.py
           cmp backend/market_data_adapter.py extracted-source/ai-auto-trader-v4-assembly/backend/market_data_adapter.py
           cmp tests/test_market_data_adapter.py extracted-source/ai-auto-trader-v4-assembly/tests/test_market_data_adapter.py
+          cmp backend/shared_market_store.py extracted-source/ai-auto-trader-v4-assembly/backend/shared_market_store.py
+          cmp backend/shared_market_worker.py extracted-source/ai-auto-trader-v4-assembly/backend/shared_market_worker.py
+          cmp backend/durable_scheduler.py extracted-source/ai-auto-trader-v4-assembly/backend/durable_scheduler.py
+          cmp backend/shared_market_supervisor.py extracted-source/ai-auto-trader-v4-assembly/backend/shared_market_supervisor.py
+          cmp tests/test_shared_market_data_store.py extracted-source/ai-auto-trader-v4-assembly/tests/test_shared_market_data_store.py
+          cmp tests/test_durable_scheduler.py extracted-source/ai-auto-trader-v4-assembly/tests/test_durable_scheduler.py
+          cmp tests/test_shared_market_supervisor.py extracted-source/ai-auto-trader-v4-assembly/tests/test_shared_market_supervisor.py
 
       - name: Run market-data parsing, freshness, outage, and planner tests
         run: >-
@@ -79,6 +110,9 @@ jobs:
           tests/test_price_planner.py
           tests/test_complete_analysis_pipeline.py
           tests/test_read_only_api.py
+          tests/test_shared_market_data_store.py
+          tests/test_durable_scheduler.py
+          tests/test_shared_market_supervisor.py
 
       - name: Verify safety boundary in source
         run: |

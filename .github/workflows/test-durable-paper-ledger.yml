@@ -61,7 +61,13 @@ jobs:
         run: |
           psql "postgresql://postgres:postgres@127.0.0.1:5432/postgres" \
             -v ON_ERROR_STOP=1 \
-            -f supabase/migrations/20261028010000_create_paper_ledger_schema.sql
+            -f supabase/migrations/20261029205318_create_paper_ledger_schema.sql
+          psql "postgresql://postgres:postgres@127.0.0.1:5432/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/migrations/20261030195452_create_shared_market_data.sql
+          psql "postgresql://postgres:postgres@127.0.0.1:5432/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/migrations/20261030195505_create_durable_scheduled_jobs.sql
       - name: Run the complete backend test suite
         working-directory: extracted-source/ai-auto-trader-v4-assembly
         run: python -m pytest -q

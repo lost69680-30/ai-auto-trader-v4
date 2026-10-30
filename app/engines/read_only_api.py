@@ -487,6 +487,9 @@ class MarketFeedCache:
 
 def main() -> None:
     """Run the authenticated read-only API and independent public market poller."""
+    if os.environ.get("PAPER_MARKET_SUPERVISOR_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
+        from backend.shared_market_supervisor import main as supervisor_main
+        return supervisor_main()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     from backend.asgi_runtime import websocket_enabled
 
@@ -547,7 +550,23 @@ def main() -> None:
             "recovery until persistent storage is confirmed. orders_authorized=False"
         )
 
-    cache = MarketFeedCache(max_age_seconds=max_age)
+    market_role = os.environ.get("PAPER_MARKET_ROLE", "combined").strip().lower()
+    if market_role not in {"combined", "api"}:
+        raise SystemExit("PAPER_MARKET_ROLE must be combined or api for the read-only API entry point")
+    if market_role == "api":
+        if not os.environ.get("PAPER_DATABASE_URL", "").strip():
+            raise SystemExit("PAPER_MARKET_ROLE=api requires PAPER_DATABASE_URL for shared durable market data")
+        if os.environ.get("PAPER_RESEARCH_WORKER_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on"):
+            raise SystemExit("PAPER_MARKET_ROLE=api cannot start an embedded analysis worker; run shared_market_worker separately")
+        from backend.shared_market_store import PostgresMarketFeedStore
+        cache = PostgresMarketFeedStore(
+            os.environ["PAPER_DATABASE_URL"],
+            worker_id=os.environ.get("PAPER_MARKET_WORKER_ID", "solo-market-worker"),
+            max_age_seconds=max_age,
+        )
+        logging.info("API market feed reads durable PostgreSQL snapshots from the independent worker")
+    else:
+        cache = MarketFeedCache(max_age_seconds=max_age)
     binance_testnet_account = BinanceSpotTestnetAccountClient()
     if market_mode == "spot":
         source = BinanceSpotMarketDataAdapter()
@@ -635,14 +654,18 @@ def main() -> None:
                 delay = 15.0
             stop.wait(delay)
 
-    poller = threading.Thread(target=poll_loop, name="readonly-market-poller", daemon=True)
-    poller.start()
+    poller = None
+    if market_role == "combined":
+        poller = threading.Thread(target=poll_loop, name="readonly-market-poller", daemon=True)
+        poller.start()
+    else:
+        logging.info("API-only role enabled; no local market poller or analysis worker will be started")
     try:
         http_app = create_app(database_path=database, token=token,
                               market_status=cache.status, market_items=cache.items,
                               market_candles=market_candles,
                               account_status=binance_testnet_account.account_summary,
-                              analysis_status=analysis_health.status)
+                              analysis_status=(cache.analysis_status if hasattr(cache, "analysis_status") else analysis_health.status))
         if enable_websocket:
             if len(token) < 32:
                 raise SystemExit("PAPER_WEBSOCKET_ENABLED requires a PAPER_API_TOKEN of at least 32 characters")
@@ -661,11 +684,13 @@ def main() -> None:
             uvicorn.run(asgi_app, host=host, port=port, log_level="info", access_log=False)
         else:
             with make_server(host, port, http_app) as server:
-                print(f"Read-only paper API listening on {host}:{port}; public market poller active; no execution routes")
+                role_message = "public market poller active" if market_role == "combined" else "shared PostgreSQL market feed reader active"
+                print(f"Read-only paper API listening on {host}:{port}; {role_message}; no execution routes")
                 server.serve_forever()
     finally:
         stop.set()
-        poller.join(timeout=5)
+        if poller is not None:
+            poller.join(timeout=5)
         if paper_app is not None:
             paper_app.close()
 
