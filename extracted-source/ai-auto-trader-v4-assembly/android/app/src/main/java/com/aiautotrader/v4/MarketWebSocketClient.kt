@@ -2,6 +2,7 @@ package com.aiautotrader.v4
 
 import android.os.Handler
 import android.os.Looper
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -62,9 +63,13 @@ internal fun parseMarketStreamEvent(
 } }
 
 internal fun marketStreamUrl(httpsBaseUrl: String): String? {
-    val base = httpsBaseUrl.trimEnd('/')
-    if (!base.startsWith("https://") || base.length <= "https://".length) return null
-    return "wss://" + base.removePrefix("https://") + "/ws/v1/markets"
+    val parsed = httpsBaseUrl.trim().toHttpUrlOrNull() ?: return null
+    if (!parsed.isHttps || parsed.username.isNotEmpty() || parsed.password.isNotEmpty() ||
+        parsed.encodedPath != "/" || parsed.encodedQuery != null || parsed.fragment != null
+    ) return null
+    val origin = parsed.newBuilder().encodedPath("/").query(null).fragment(null).build()
+        .toString().removeSuffix("/")
+    return origin.replaceFirst("https://", "wss://") + "/ws/v1/markets"
 }
 
 internal fun marketStreamReconnectDelayMillis(attempt: Int): Long {
@@ -78,6 +83,7 @@ internal class MarketWebSocketClient(
     private val token: String,
     private val onStatus: (String) -> Unit,
     private val onSnapshot: (MarketStreamSnapshot) -> Unit,
+    private val onUnauthorized: () -> Unit = {},
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private val client = OkHttpClient.Builder()
@@ -90,6 +96,7 @@ internal class MarketWebSocketClient(
     @Volatile private var stopped = false
     private var reconnectTask: Runnable? = null
     private var staleTask: Runnable? = null
+    private var keepaliveTask: Runnable? = null
 
     private fun publishStatus(value: String) {
         handler.post { if (!stopped || value == "DISCONNECTED") onStatus(value) }
@@ -120,6 +127,8 @@ internal class MarketWebSocketClient(
         reconnectTask = null
         staleTask?.let(handler::removeCallbacks)
         staleTask = null
+        keepaliveTask?.let(handler::removeCallbacks)
+        keepaliveTask = null
         socket?.close(1000, "screen stopped")
         socket = null
         client.dispatcher.executorService.shutdown()
@@ -139,6 +148,7 @@ internal class MarketWebSocketClient(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 reconnectAttempt = 0
                 armStaleWatchdog()
+                scheduleKeepalive(webSocket)
                 publishStatus("CONNECTED")
             }
 
@@ -157,10 +167,35 @@ internal class MarketWebSocketClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                publishStatus("RECONNECTING")
-                scheduleReconnect()
+                if (response?.code == 401 || response?.code == 403) {
+                    stopped = true
+                    reconnectTask?.let(handler::removeCallbacks)
+                    reconnectTask = null
+                    keepaliveTask?.let(handler::removeCallbacks)
+                    keepaliveTask = null
+                    publishStatus("UNAUTHORIZED")
+                    handler.post { onUnauthorized() }
+                } else {
+                    publishStatus("RECONNECTING")
+                    scheduleReconnect()
+                }
             }
         })
+    }
+
+    private fun scheduleKeepalive(activeSocket: WebSocket) {
+        keepaliveTask?.let(handler::removeCallbacks)
+        val task = Runnable {
+            if (stopped || socket !== activeSocket) return@Runnable
+            // The backend deliberately ignores client messages; this is connection keepalive only.
+            if (!activeSocket.send("""{"type":"keepalive"}""")) {
+                activeSocket.cancel()
+            } else {
+                scheduleKeepalive(activeSocket)
+            }
+        }
+        keepaliveTask = task
+        handler.postDelayed(task, 25_000L)
     }
 
     private fun scheduleReconnect() {
