@@ -16,12 +16,14 @@ def test_supervisor_separates_api_and_worker_environment_without_leaking_api_tok
     worker_env, api_env = build_child_environments(parent)
 
     assert worker_env["PAPER_MARKET_ROLE"] == "worker"
+    assert worker_env["PAPER_MARKET_SUPERVISOR_ENABLED"] == "false"
     assert worker_env["PAPER_DATABASE_URL"] == parent["PAPER_DATABASE_URL"]
     assert worker_env["PAPER_MARKET_TESTNET"] == "true"
     assert "PAPER_API_TOKEN" not in worker_env
     assert "BINANCE_SPOT_TESTNET_API_KEY" not in worker_env
     assert "BINANCE_SPOT_TESTNET_API_SECRET" not in worker_env
     assert api_env["PAPER_MARKET_ROLE"] == "api"
+    assert api_env["PAPER_MARKET_SUPERVISOR_ENABLED"] == "false"
     assert api_env["PAPER_RESEARCH_WORKER_ENABLED"] == "false"
     assert api_env["PAPER_API_HOST"] == "0.0.0.0"
     assert api_env["PAPER_API_PORT"] == "10000"
