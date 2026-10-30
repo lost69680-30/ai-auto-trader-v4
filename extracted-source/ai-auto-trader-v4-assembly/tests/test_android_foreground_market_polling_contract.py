@@ -38,3 +38,18 @@ def test_foreground_market_poller_retries_network_errors_but_stops_on_bad_auth()
     assert "BackendSession.marketItems.value = response.items" in poller
     assert 'statusJson.optString("mode") == "PAPER_ONLY"' in source
     assert 'statusJson.optBoolean("orders_authorized", true)' in source
+
+def test_apk_build_uses_production_only_for_main_and_staging_for_other_branches():
+    root = Path(__file__).resolve().parents[1]
+    workflow_path = root / ".github/workflows/build-market-analysis-apk.yml"
+    if not workflow_path.exists():
+        workflow_path = root.parents[2] / ".github/workflows/build-market-analysis-apk.yml"
+    workflow = workflow_path.read_text(encoding="utf-8")
+
+    assert 'TARGET_BRANCH="${GITHUB_BASE_REF:-}"' in workflow
+    assert 'TARGET_BRANCH="${GITHUB_REF_NAME:-}"' in workflow
+    assert 'if [[ "$TARGET_BRANCH" == "main" ]]' in workflow
+    assert "https://ai-auto-trader-v4-backend.onrender.com" in workflow
+    assert "https://solo-futures-websocket-staging.onrender.com" in workflow
+    assert '-PpaperApiBaseUrl="$PAPER_API_BASE_URL"' in workflow
+    assert "-PpaperApiBaseUrl=https://ai-auto-trader-v4-backend.onrender.com" not in workflow
