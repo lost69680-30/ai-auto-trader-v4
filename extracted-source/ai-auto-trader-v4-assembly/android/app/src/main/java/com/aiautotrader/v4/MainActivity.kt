@@ -1371,13 +1371,14 @@ private fun AnalysisScreen() {
     var selectedTab by remember { mutableStateOf("Market") }
     val timeframes = supportedTimeframes
     val sessionToken = BackendSession.token.value
+    val isForeground = BackendSession.appInForeground.value
     val loadedMarkets = BackendSession.marketItems.value
     val selectedMarket = loadedMarkets.firstOrNull { normalizeSymbol(it.symbol) == normalizeSymbol(symbol) }
     val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol ?: symbol)
     val candleHistoryByTimeframe = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
     var candleHistoryLoading by remember { mutableStateOf(false) }
-    LaunchedEffect(sessionToken, selectedMarket?.symbol, candleSymbolKey) {
-        if (sessionToken.length >= 32 && selectedMarket != null && candleSymbolKey.isNotBlank()) {
+    LaunchedEffect(sessionToken, selectedMarket?.symbol, candleSymbolKey, isForeground) {
+        if (isForeground && sessionToken.length >= 32 && selectedMarket != null && candleSymbolKey.isNotBlank()) {
             while (true) {
                 candleHistoryLoading = true
                 val history = withContext(Dispatchers.IO) {
