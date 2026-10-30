@@ -237,7 +237,8 @@ internal class MarketWebSocketClient(
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 onStatus("RECONNECTING")
-                webSocket.close(code, null)
+                val replyCode = if (code in 1000..4999 && code !in setOf(1004, 1005, 1006, 1015)) code else 1000
+                webSocket.close(replyCode, null)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
