@@ -2,6 +2,15 @@ name: Solo - Market Analysis APK Build
 
 on:
   workflow_dispatch:
+    inputs:
+      backend_environment:
+        description: Backend environment for the APK
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
   pull_request:
     paths:
       - ".github/workflows/build-market-analysis-apk.yml"
@@ -71,10 +80,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # The Gradle property is required: build.gradle.kts defaults this URL to blank.
-          # This is a public backend URL, not a credential; bearer tokens stay out of the APK.
+          # Pull requests always build against staging. Manual builds default to staging;
+          # production requires an explicit workflow_dispatch choice.
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            BACKEND_URL="https://solo-futures-websocket-staging.onrender.com"
+          elif [[ "${{ inputs.backend_environment }}" == "production" ]]; then
+            BACKEND_URL="https://ai-auto-trader-v4-backend.onrender.com"
+          else
+            BACKEND_URL="https://solo-futures-websocket-staging.onrender.com"
+          fi
+          echo "Building APK for backend: $BACKEND_URL"
           gradle -p "$PROJECT_DIR" :android:app:testDebugUnitTest :android:app:assembleDebug \
-            -PpaperApiBaseUrl=https://ai-auto-trader-v4-backend.onrender.com \
+            -PpaperApiBaseUrl="$BACKEND_URL" \
             --no-daemon --max-workers=2
 
       - name: Upload debug APK
