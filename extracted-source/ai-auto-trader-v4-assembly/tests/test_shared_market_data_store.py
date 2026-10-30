@@ -9,7 +9,24 @@ from backend.shared_market_store import PostgresMarketFeedStore
 
 
 DSN = os.environ.get("PAPER_TEST_DATABASE_URL")
-pytestmark = pytest.mark.skipif(not DSN, reason="PAPER_TEST_DATABASE_URL is not configured")
+
+
+def _shared_schema_available():
+    if not DSN:
+        return False
+    try:
+        import psycopg
+        with psycopg.connect(DSN) as conn:
+            row = conn.execute("SELECT to_regclass('paper_ledger.market_feed_snapshots')").fetchone()
+        return row is not None and row[0] is not None
+    except Exception:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _shared_schema_available(),
+    reason="shared market-data migration is not applied to this test database",
+)
 
 
 def reset_tables():
