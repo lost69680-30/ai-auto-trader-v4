@@ -29,9 +29,11 @@ def build_child_environments(environ: Mapping[str, str]) -> tuple[dict[str, str]
     ):
         worker_env.pop(secret_name, None)
     worker_env["PAPER_MARKET_ROLE"] = "worker"
+    worker_env["PAPER_MARKET_SUPERVISOR_ENABLED"] = "false"
 
     api_env = dict(environ)
     api_env["PAPER_MARKET_ROLE"] = "api"
+    api_env["PAPER_MARKET_SUPERVISOR_ENABLED"] = "false"
     api_env["PAPER_RESEARCH_WORKER_ENABLED"] = "false"
     api_env["PAPER_API_HOST"] = "0.0.0.0"
     api_env["PAPER_API_PORT"] = port
