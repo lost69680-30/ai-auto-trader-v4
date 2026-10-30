@@ -118,14 +118,11 @@ internal fun parseMarketSnapshotEvent(
     val price = event.optDouble(priceField, Double.NaN)
     if (!price.isFinite() || price <= 0.0) return null
 
-    val observedAt = event.optString("observed_at")
-    val observedInstant = try {
-        OffsetDateTime.parse(observedAt).toInstant()
-    } catch (_: Exception) {
-        return null
-    }
-    val ageSeconds = Duration.between(observedInstant, now).toMillis() / 1000.0
-    if (ageSeconds < -1.0 || ageSeconds > maxAgeSeconds) return null
+    val observedInstant = parseFreshMarketObservation(
+        event.optString("observed_at"),
+        now = now,
+        maxAgeSeconds = maxAgeSeconds,
+    ) ?: return null
 
     val indexPrice = if (event.isNull("index_price")) {
         null
