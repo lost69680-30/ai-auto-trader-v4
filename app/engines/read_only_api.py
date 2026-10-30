@@ -487,6 +487,9 @@ class MarketFeedCache:
 
 def main() -> None:
     """Run the authenticated read-only API and independent public market poller."""
+    if os.environ.get("PAPER_MARKET_SUPERVISOR_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
+        from backend.shared_market_supervisor import main as supervisor_main
+        return supervisor_main()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     from backend.asgi_runtime import websocket_enabled
 
