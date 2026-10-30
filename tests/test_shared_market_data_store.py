@@ -76,6 +76,12 @@ def test_postgres_store_persists_validated_snapshot_and_exposes_it_to_api():
     assert items[0]["price_type"] == "FUTURES_MARK_PRICE"
     assert items[0]["funding_rate"] == 0.0001
     assert items[0]["orders_authorized"] is False
+    store.heartbeat(
+        "RUNNING",
+        now=now,
+        details={"analysis_status": "ANALYZED", "last_cycle_at": now.isoformat(), "orders_authorized": False},
+    )
+    assert store.analysis_status()["status"] == "RUNNING"
     store.release(now=now)
     assert store.status()["status"] == "STALE"
 
