@@ -1,0 +1,43 @@
+name: Solo REST Market Observation Freshness
+
+on:
+  pull_request:
+    branches:
+      - fix/futures-context-mainline
+    paths:
+      - "android/app/src/main/java/com/aiautotrader/v4/MarketObservationFreshness.kt"
+      - "android/app/src/main/java/com/aiautotrader/v4/MarketWebSocketClient.kt"
+      - "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+      - "android/app/src/test/java/com/aiautotrader/v4/MarketWebSocketClientTest.kt"
+      - ".github/workflows/rest-market-observation-freshness.yml"
+  push:
+    branches:
+      - fix/android-rest-market-observation-freshness-v2
+    paths:
+      - "android/app/src/main/java/com/aiautotrader/v4/MarketObservationFreshness.kt"
+      - "android/app/src/main/java/com/aiautotrader/v4/MarketWebSocketClient.kt"
+      - "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+      - "android/app/src/test/java/com/aiautotrader/v4/MarketWebSocketClientTest.kt"
+      - ".github/workflows/rest-market-observation-freshness.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rest-market-observation-freshness
+  cancel-in-progress: false
+
+jobs:
+  android-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run Android unit tests
+        run: ./gradlew :android:app:testDebugUnitTest --no-daemon
+      - name: Build debug APK
+        run: ./gradlew :android:app:assembleDebug --no-daemon
