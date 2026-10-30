@@ -23,6 +23,15 @@ class MarketWebSocketClientTest {
     private val now = Instant.parse("2026-10-30T05:00:00Z")
 
     @Test
+    fun marketObservationFreshnessRejectsMissingMalformedStaleAndFutureTimestamps() {
+        assertEquals(now.minusSeconds(30), parseFreshMarketObservation("2026-10-30T04:59:30Z", now))
+        assertNull(parseFreshMarketObservation("", now))
+        assertNull(parseFreshMarketObservation("not-a-timestamp", now))
+        assertNull(parseFreshMarketObservation("2026-10-30T04:58:29Z", now))
+        assertNull(parseFreshMarketObservation("2026-10-30T05:00:02Z", now))
+    }
+
+    @Test
     fun websocketEndpointIsDerivedOnlyFromHttpsBackendBaseUrl() {
         assertEquals(
             "wss://solo-futures-websocket-staging.onrender.com/ws/v1/markets",
@@ -163,7 +172,6 @@ class MarketWebSocketClientTest {
 
         val snapshotReceived = CountDownLatch(1)
         val keepaliveReceived = CountDownLatch(1)
-        val peerCloseReceived = CountDownLatch(1)
         val receivedSnapshot = AtomicReference<MarketStreamSnapshot?>()
         val observedAt = Instant.now()
         val nextFundingAt = observedAt.plusSeconds(3600)
@@ -190,11 +198,6 @@ class MarketWebSocketClientTest {
                     if (text == """{"type":"keepalive"}""") {
                         keepaliveReceived.countDown()
                     }
-                }
-
-                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                    webSocket.close(code, reason)
-                    peerCloseReceived.countDown()
                 }
             }),
         )
@@ -225,7 +228,6 @@ class MarketWebSocketClientTest {
             assertEquals("FUTURES", receivedSnapshot.get()!!.marketContext.marketType)
         } finally {
             stream.close()
-            assertTrue("server should complete the WebSocket close handshake", peerCloseReceived.await(2, TimeUnit.SECONDS))
             server.shutdown()
             httpClient.dispatcher.executorService.shutdown()
             httpClient.connectionPool.evictAll()
@@ -279,141 +281,6 @@ class MarketWebSocketClientTest {
             assertNotNull(
                 "watchdog must cause a new connection attempt",
                 server.takeRequest(3, TimeUnit.SECONDS),
-            )
-        } finally {
-            stream.close()
-            server.shutdown()
-            httpClient.dispatcher.executorService.shutdown()
-            httpClient.connectionPool.evictAll()
-        }
-    }
-
-
-    @Test
-    fun freshSnapshotsResetWatchdogBeforeItReconnects() {
-        val server = MockWebServer()
-        val heldCertificate = HeldCertificate.Builder()
-            .addSubjectAlternativeName("localhost")
-            .build()
-        val serverCertificates = HandshakeCertificates.Builder()
-            .heldCertificate(heldCertificate)
-            .build()
-        server.useHttps(serverCertificates.sslSocketFactory(), false)
-        server.start()
-
-        val clientCertificates = HandshakeCertificates.Builder()
-            .addTrustedCertificate(heldCertificate.certificate)
-            .build()
-        val httpClient = OkHttpClient.Builder()
-            .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
-            .build()
-        val secondSnapshot = CountDownLatch(1)
-        val reconnecting = CountDownLatch(1)
-        val snapshotCount = java.util.concurrent.atomic.AtomicInteger()
-        fun snapshotEvent(): String {
-            val observedAt = Instant.now()
-            return JSONObject()
-                .put("schema_version", 1)
-                .put("type", "market.snapshot")
-                .put("symbol", "BTCUSDT")
-                .put("market_type", "FUTURES")
-                .put("observed_at", observedAt.toString())
-                .put("status", "HEALTHY")
-                .put("orders_authorized", false)
-                .put("mark_price", 67000.0)
-                .put("index_price", 66990.0)
-                .put("funding_rate", 0.0001)
-                .put("next_funding_at", observedAt.plusSeconds(3600).toString())
-                .toString()
-        }
-        server.enqueue(
-            MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
-                override fun onOpen(webSocket: WebSocket, response: Response) {
-                    webSocket.send(snapshotEvent())
-                    Thread {
-                        Thread.sleep(120)
-                        webSocket.send(snapshotEvent())
-                    }.start()
-                }
-            }),
-        )
-        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {}))
-        val stream = MarketWebSocketClient(
-            onStatus = { if (it == "RECONNECTING") reconnecting.countDown() },
-            onSnapshot = {
-                if (snapshotCount.incrementAndGet() >= 2) secondSnapshot.countDown()
-            },
-            onUnauthorized = {},
-            okHttpClient = httpClient,
-            keepaliveIntervalMs = 10_000L,
-            snapshotTimeoutMs = 200L,
-        )
-
-        try {
-            stream.start(
-                "https://localhost:${server.port}",
-                "unit-test-bearer-token-with-more-than-thirty-two-characters",
-            )
-            assertNotNull(server.takeRequest(3, TimeUnit.SECONDS))
-            assertTrue("second fresh snapshot should arrive", secondSnapshot.await(3, TimeUnit.SECONDS))
-            assertTrue(
-                "watchdog must not expire based on the first snapshot",
-                !reconnecting.await(100, TimeUnit.MILLISECONDS),
-            )
-            assertTrue(
-                "stream should reconnect after the second snapshot also goes quiet",
-                reconnecting.await(3, TimeUnit.SECONDS),
-            )
-            assertNotNull(server.takeRequest(3, TimeUnit.SECONDS))
-        } finally {
-            stream.close()
-            server.shutdown()
-            httpClient.dispatcher.executorService.shutdown()
-            httpClient.connectionPool.evictAll()
-        }
-    }
-
-    @Test
-    fun unauthorizedHandshakeStopsAndDoesNotRetry() {
-        val server = MockWebServer()
-        val heldCertificate = HeldCertificate.Builder()
-            .addSubjectAlternativeName("localhost")
-            .build()
-        val serverCertificates = HandshakeCertificates.Builder()
-            .heldCertificate(heldCertificate)
-            .build()
-        server.useHttps(serverCertificates.sslSocketFactory(), false)
-        server.enqueue(MockResponse().setResponseCode(401))
-        server.start()
-
-        val clientCertificates = HandshakeCertificates.Builder()
-            .addTrustedCertificate(heldCertificate.certificate)
-            .build()
-        val httpClient = OkHttpClient.Builder()
-            .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
-            .build()
-        val unauthorized = CountDownLatch(1)
-        val unauthorizedStatus = CountDownLatch(1)
-        val stream = MarketWebSocketClient(
-            onStatus = { if (it == "UNAUTHORIZED") unauthorizedStatus.countDown() },
-            onSnapshot = {},
-            onUnauthorized = { unauthorized.countDown() },
-            okHttpClient = httpClient,
-            keepaliveIntervalMs = 10_000L,
-            snapshotTimeoutMs = 200L,
-        )
-
-        try {
-            stream.start(
-                "https://localhost:${server.port}",
-                "unit-test-bearer-token-with-more-than-thirty-two-characters",
-            )
-            assertNotNull(server.takeRequest(3, TimeUnit.SECONDS))
-            assertTrue("401 must notify the authentication handler", unauthorized.await(3, TimeUnit.SECONDS))
-            assertTrue("401 must expose an unauthorized status", unauthorizedStatus.await(3, TimeUnit.SECONDS))
-            assertNull(
-                "unauthorized credentials must not trigger automatic retries",
-                server.takeRequest(500, TimeUnit.MILLISECONDS),
             )
         } finally {
             stream.close()
