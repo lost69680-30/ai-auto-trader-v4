@@ -458,6 +458,12 @@ class MarketFeedCache:
             return [dict(item) for item in self._items]
 
 
+def _load_api_token(environ=None) -> str:
+    """Read the bearer secret without accidental surrounding whitespace."""
+    values = os.environ if environ is None else environ
+    return values.get("PAPER_API_TOKEN", "").strip()
+
+
 def main() -> None:
     """Run the authenticated read-only API and independent public market poller."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -471,7 +477,7 @@ def main() -> None:
     from backend.binance_spot_testnet_account import BinanceSpotTestnetAccountClient
     from backend.market_worker import MarketDataWorker, MarketWorkerConfig
 
-    token = os.environ.get("PAPER_API_TOKEN", "")
+    token = _load_api_token()
     database = os.environ.get("PAPER_DATABASE_PATH", "./data/paper-ledger.sqlite3")
     host = os.environ.get("PAPER_API_HOST", "127.0.0.1")
     port = int(os.environ.get("PAPER_API_PORT", "8080"))
