@@ -71,7 +71,7 @@ The disposable PostgreSQL workflow passed 313 tests on commit 509e27c1a0b729c1a0
 
 1. In the Supabase dashboard, open Connect and choose the Session pooler connection method. On the Free plan, the shared session pooler is IPv4-accessible; its port is normally 5432. Do not use the transaction pooler (6543) because the adapter relies on session state and transaction-scoped locking.
 2. Store the connection string as a Render secret named PAPER_DATABASE_URL. Do not put it into GitHub, the APK, logs, or this chat. It must use SSL; the code enforces TLS for remote hosts unless a stronger mode is selected.
-3. Apply supabase/migrations/20261029205318_create_paper_ledger_schema.sql to the intended Supabase project only after reviewing the SQL and backing up any data that matters. This migration has not been applied to the real project by this branch.
+3. Apply supabase/migrations/20261029205318_create_paper_ledger_schema.sql to the intended Supabase project only after reviewing the SQL and backing up any data that matters. This migration is applied only to the staging Supabase project; production remains untouched.
 4. Before any cutover, obtain a consistent copy of the old SQLite file and stop writes to it. Do not import an actively changing database. Run the importer only after the migration has created paper_ledger; the importer intentionally refuses a non-empty destination.
 5. Configure PAPER_DATABASE_URL on Render only after the database schema, secret, copy/import, and restore checks are reviewed. Verify startup integrity, row counts, API status, Emergency Stop persistence after restart, and orders_authorized=false before considering the cutover complete.
 
