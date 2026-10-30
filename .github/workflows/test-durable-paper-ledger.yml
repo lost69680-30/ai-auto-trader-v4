@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - feature/supabase-durable-ledger
-      - feature/shared-market-data-layer
     paths:
       - "extracted-source/ai-auto-trader-v4-assembly/**"
       - "supabase/migrations/**"
