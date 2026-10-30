@@ -71,8 +71,8 @@ def test_futures_index_funding_and_next_funding_are_validated_and_displayed():
 
 def test_chart_candle_refreshes_pause_when_android_app_enters_background():
     source = SOURCE.read_text(encoding="utf-8")
-    analysis_screen = source.split("@Composable\\nprivate fun AnalysisScreen()", 1)[1].split(
-        "@Composable\\nprivate fun AnalyticsChartCard", 1
+    analysis_screen = source.split("@Composable\nprivate fun AnalysisScreen()", 1)[1].split(
+        "@Composable\nprivate fun AnalyticsChartCard", 1
     )[0]
 
     assert "val isForeground = BackendSession.appInForeground.value" in analysis_screen
