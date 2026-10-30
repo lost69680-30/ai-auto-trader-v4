@@ -26,7 +26,7 @@ internal fun parseMarketStreamEvent(
     raw: String,
     now: Instant = Instant.now(),
     maxAgeSeconds: Long = 90,
-): MarketStreamSnapshot? = try {
+): MarketStreamSnapshot? { return try {
     val json = JSONObject(raw)
     if (json.optInt("schema_version", -1) != 1 ||
         json.optString("type") != "market.snapshot" ||
@@ -59,7 +59,7 @@ internal fun parseMarketStreamEvent(
     }
 } catch (_: Exception) {
     null
-}
+} }
 
 internal fun marketStreamUrl(httpsBaseUrl: String): String? {
     val base = httpsBaseUrl.trimEnd('/')
@@ -91,9 +91,13 @@ internal class MarketWebSocketClient(
     private var reconnectTask: Runnable? = null
     private var staleTask: Runnable? = null
 
+    private fun publishStatus(value: String) {
+        handler.post { if (!stopped || value == "DISCONNECTED") onStatus(value) }
+    }
+
     fun start() {
         if (token.length < 32 || marketStreamUrl(baseUrl) == null) {
-            onStatus("NOT CONFIGURED")
+            publishStatus("NOT CONFIGURED")
             return
         }
         stopped = false
@@ -109,13 +113,13 @@ internal class MarketWebSocketClient(
         socket?.close(1000, "screen stopped")
         socket = null
         client.dispatcher.executorService.shutdown()
-        onStatus("DISCONNECTED")
+        publishStatus("DISCONNECTED")
     }
 
     private fun connect() {
         if (stopped) return
         val url = marketStreamUrl(baseUrl) ?: return
-        onStatus("CONNECTING")
+        publishStatus("CONNECTING")
         val request = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $token")
@@ -124,7 +128,7 @@ internal class MarketWebSocketClient(
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 reconnectAttempt = 0
-                onStatus("CONNECTED")
+                publishStatus("CONNECTED")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -132,7 +136,7 @@ internal class MarketWebSocketClient(
                 staleTask?.let(handler::removeCallbacks)
                 val watchdog = Runnable {
                     staleTask = null
-                    if (!stopped) onStatus("STALE")
+                    if (!stopped) publishStatus("STALE")
                 }
                 staleTask = watchdog
                 handler.postDelayed(watchdog, 90_000L)
@@ -148,7 +152,7 @@ internal class MarketWebSocketClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                onStatus("RECONNECTING")
+                publishStatus("RECONNECTING")
                 scheduleReconnect()
             }
         })
