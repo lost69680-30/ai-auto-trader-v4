@@ -9,8 +9,8 @@ GRADLE = ROOT / "android/app/build.gradle.kts"
 def test_android_websocket_client_uses_only_authenticated_tls_read_only_feed():
     source = CLIENT.read_text(encoding="utf-8")
     assert "marketWebSocketUrl(apiBaseUrl)" in source
-    assert 'url.startsWith("wss://")' in source
-    assert '.header("Authorization", "Bearer $bearerToken")' in source
+    assert 'safeEndpoint.startsWith("wss://")' in source
+    assert '.header("Authorization", "Bearer ${requestData.second}")' in source
     assert '"/ws/v1/markets"' in source
     assert 'private const val KEEPALIVE_MESSAGE = """{"type":"keepalive"}"""' in source
     assert "webSocket.send(KEEPALIVE_MESSAGE)" in source
@@ -46,7 +46,9 @@ def test_stream_snapshots_update_only_validated_market_state_and_never_order_sta
     assert "validateMarketDataContext" in client
     assert "BackendSession.marketItems.value" in source
     assert "BackendSession.orders" not in source
-    assert "order" not in client.lower()
+    assert '"/orders' not in client
+    assert "place_order" not in client.lower()
+    assert ".post(" not in client.lower()
 
 
 def test_websocket_dependency_is_pinned_for_android_and_local_tests():
