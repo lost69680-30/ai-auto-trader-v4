@@ -56,6 +56,8 @@ class DurableJobScheduler:
             raise ValueError("interval_seconds must be a positive integer")
         if not isinstance(enabled, bool):
             raise ValueError("enabled must be boolean")
+        if payload is not None and not isinstance(payload, dict):
+            raise ValueError("schedule payload must be a JSON object")
         body = json.dumps(payload or {}, separators=(",", ":"), allow_nan=False)
         with self._connect() as conn:
             conn.execute(
@@ -113,6 +115,8 @@ class DurableJobScheduler:
         if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
             raise ValueError("max_attempts must be a positive integer")
         lease_owner = owner or str(uuid.uuid4())
+        if not isinstance(lease_owner, str) or not lease_owner.strip() or len(lease_owner) > 120:
+            raise ValueError("owner must contain 1 to 120 characters")
         with self._connect() as conn:
             conn.execute(
                 """UPDATE paper_ledger.scheduled_jobs
@@ -187,6 +191,8 @@ class DurableJobScheduler:
         stamp = _utc(now or datetime.now(timezone.utc))
         if not isinstance(error, str) or not error.strip():
             raise ValueError("error description is required")
+        if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
+            raise ValueError("max_attempts must be a positive integer")
         safe_error = " ".join(error.split())[:240]
         with self._connect() as conn:
             row = conn.execute(
@@ -194,9 +200,10 @@ class DurableJobScheduler:
                    SET status = CASE WHEN attempts >= %s THEN 'FAILED' ELSE 'PENDING' END,
                        last_error = %s, completed_at = CASE WHEN attempts >= %s THEN %s ELSE NULL END,
                        lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
-                   WHERE idempotency_key = %s AND status = 'RUNNING' AND lease_owner = %s
+                   WHERE idempotency_key = %s AND status = 'RUNNING'
+                     AND lease_owner = %s AND lease_expires_at > %s
                    RETURNING status""",
-                (max_attempts, safe_error, max_attempts, stamp, idempotency_key, owner),
+                (max_attempts, safe_error, max_attempts, stamp, idempotency_key, owner, stamp),
             ).fetchone()
         if row is None:
             raise RuntimeError("job lease is no longer owned by this worker")
