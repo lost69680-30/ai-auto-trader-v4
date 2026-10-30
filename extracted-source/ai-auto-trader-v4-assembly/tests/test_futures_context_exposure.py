@@ -11,7 +11,7 @@ from backend.market_worker import FeedStatus, MarketDataWorker, MarketWorkerConf
 from backend.streaming_contract import make_market_snapshot_event
 
 
-NOW = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)
+NOW = datetime.now(timezone.utc)
 
 
 def candle(open_time, close_time):
