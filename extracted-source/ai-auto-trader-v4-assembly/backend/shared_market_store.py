@@ -151,7 +151,9 @@ class PostgresMarketFeedStore:
             payload = {
                 "symbol": frame.symbol, "status": status,
                 "mark_price": None if frame.mark_price is None else _finite(frame.mark_price, "mark_price"),
+                "last_price": None if futures or frame.mark_price is None else _finite(frame.mark_price, "last_price"),
                 "mark_observed_at": _iso(frame.mark_observed_at),
+                "last_observed_at": None if futures else _iso(frame.mark_observed_at),
                 "market_type": frame.market_type,
                 "price_type": "FUTURES_MARK_PRICE" if futures else "SPOT_LAST_PRICE",
                 "index_price": None if frame.index_price is None else _finite(frame.index_price, "index_price"),
