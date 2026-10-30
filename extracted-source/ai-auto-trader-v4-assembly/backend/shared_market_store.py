@@ -135,6 +135,17 @@ class PostgresMarketFeedStore:
             if (lease is None or lease[0] != self.owner_id
                     or lease[1] <= datetime.now(timezone.utc)):
                 raise RuntimeError("market worker lease is missing, expired, or owned by another process")
+            active_symbols = [item[0] for item in payloads]
+            if active_symbols:
+                conn.execute(
+                    "DELETE FROM paper_ledger.market_feed_snapshots WHERE worker_id = %s AND NOT (symbol = ANY(%s))",
+                    (self.worker_id, active_symbols),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM paper_ledger.market_feed_snapshots WHERE worker_id = %s",
+                    (self.worker_id,),
+                )
             for symbol, observed, status, encoded in payloads:
                 conn.execute(
                     """INSERT INTO paper_ledger.market_feed_snapshots
