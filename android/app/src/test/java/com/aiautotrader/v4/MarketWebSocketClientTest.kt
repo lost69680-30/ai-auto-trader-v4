@@ -35,6 +35,21 @@ class MarketWebSocketClientTest {
     }
 
     @Test
+    fun authenticatedRequestKeepsBearerTokenInHeaderAndUsesGetOnly() {
+        val token = "unit-test-bearer-token-with-more-than-thirty-two-characters"
+        val request = authenticatedMarketWebSocketRequest(
+            "https://solo-futures-websocket-staging.onrender.com",
+            token,
+        )
+
+        assertNotNull(request)
+        assertEquals("GET", request!!.method)
+        assertEquals("/ws/v1/markets", request.url.encodedPath)
+        assertEquals("Bearer $token", request.header("Authorization"))
+        assertNull(request.url.query)
+    }
+
+    @Test
     fun acceptsAuthenticatedReadOnlyFuturesMarketSnapshot() {
         val event = JSONObject()
             .put("schema_version", 1)
@@ -202,7 +217,7 @@ class MarketWebSocketClientTest {
             assertTrue("client should send the server-ignored keepalive", keepaliveReceived.await(3, TimeUnit.SECONDS))
             assertEquals("BTCUSDT", receivedSnapshot.get()?.symbol)
             assertEquals(67000.0, receivedSnapshot.get()!!.price, 0.0)
-            assertEquals(false, receivedSnapshot.get()!!.marketContext.marketType != "FUTURES")
+            assertEquals("FUTURES", receivedSnapshot.get()!!.marketContext.marketType)
         } finally {
             stream.close()
             server.shutdown()
