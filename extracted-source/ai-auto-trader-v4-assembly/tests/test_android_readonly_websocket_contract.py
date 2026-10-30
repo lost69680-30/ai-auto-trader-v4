@@ -21,11 +21,11 @@ def test_android_websocket_client_uses_only_authenticated_tls_read_only_feed():
 
 def test_android_app_owns_websocket_only_while_authenticated_and_foregrounded():
     source = MAIN.read_text(encoding="utf-8")
-    effect = source.split("@Composable\\nprivate fun BackendMarketWebSocketEffect()", 1)[1].split(
-        "@Composable\\nprivate fun TraderApp()", 1
+    effect = source.split("@Composable\nprivate fun BackendMarketWebSocketEffect()", 1)[1].split(
+        "@Composable\nprivate fun TraderApp()", 1
     )[0]
-    trader_app = source.split("@Composable\\nprivate fun TraderApp()", 1)[1].split(
-        "@Composable\\nprivate fun AgentNetworkScreen()", 1
+    trader_app = source.split("@Composable\nprivate fun TraderApp()", 1)[1].split(
+        "@Composable\nprivate fun AgentNetworkScreen()", 1
     )[0]
 
     assert "BackendMarketWebSocketEffect()" in trader_app
