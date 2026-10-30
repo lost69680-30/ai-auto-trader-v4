@@ -1,0 +1,113 @@
+name: Solo Staging Android APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - fix/futures-context-mainline
+    paths:
+      - ".github/workflows/build-staging-apk.yml"
+      - "android/app/build.gradle.kts"
+      - "android/app/src/**"
+      - "android/app/src/test/**"
+      - "tests/test_staging_android_build_contract.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/build.gradle.kts"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solo-staging-apk
+  cancel-in-progress: false
+
+jobs:
+  build-staging:
+    name: Test and build staging-only APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout the exact triggering commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Enforce reviewed source ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor 1c36bcb8a4e63f33ea5f11f43890258bee6086c7 HEAD || {
+            echo "STOP: source does not descend from the reviewed staging baseline."
+            exit 1
+          }
+
+      - name: Run staging build contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p 'test_staging_android_build_contract.py' -v
+          grep -q 'orders_authorized' android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt
+          grep -q 'PAPER_ONLY' android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt
+
+      - name: Verify Android source mirrors
+        shell: bash
+        run: |
+          set -euo pipefail
+          MIRROR="extracted-source/ai-auto-trader-v4-assembly/android/app"
+          for relative in build.gradle.kts src/main/AndroidManifest.xml src/main/java/com/aiautotrader/v4/MainActivity.kt src/main/java/com/aiautotrader/v4/BackendTokenStore.kt src/main/java/com/aiautotrader/v4/MarketObservationFreshness.kt src/main/java/com/aiautotrader/v4/MarketWebSocketClient.kt; do
+            cmp "android/app/$relative" "$MIRROR/$relative" || {
+              echo "STOP: Android source mirror mismatch: $relative"
+              exit 1
+            }
+          done
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Run Android unit tests and build staging APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGING_URL="https://solo-futures-websocket-staging.onrender.com"
+          case "$STAGING_URL" in
+            https://solo-futures-websocket-staging.onrender.com) ;;
+            *) echo "STOP: staging backend URL mismatch"; exit 1 ;;
+          esac
+          gradle :android:app:testDebugUnitTest :android:app:assembleDebug \
+            -PstagingBuild=true \
+            -PpaperApiBaseUrl="$STAGING_URL" \
+            --no-daemon --max-workers=2
+
+      - name: Verify staging APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          sha256sum "$APK"
+          ls -lh "$APK"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          test -x "$AAPT"
+          PACKAGE="$("$AAPT" dump badging "$APK" | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p")"
+          if [[ "$PACKAGE" != "com.aiautotrader.v4.staging" ]]; then
+            echo "STOP: expected staging package, found: $PACKAGE"
+            exit 1
+          fi
+          echo "Verified APK application id: $PACKAGE"
+
+      - name: Upload staging debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: solo-staging-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
