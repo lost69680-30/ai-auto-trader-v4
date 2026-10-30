@@ -994,7 +994,8 @@ private fun BackendMarketWebSocketEffect() {
         val stream = MarketWebSocketClient(
             onStatus = { status ->
                 mainHandler.post {
-                    if (BackendSession.activeToken.value == sessionToken) {
+                    if (BackendSession.activeToken.value == sessionToken &&
+                        BackendSession.appInForeground.value == isForeground) {
                         BackendSession.websocketStatus.value = status
                     }
                 }
