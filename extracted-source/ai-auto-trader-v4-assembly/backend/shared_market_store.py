@@ -300,7 +300,13 @@ class PostgresMarketFeedStore:
         details = hb.get("details") or {}
         cycle_status = str(details.get("analysis_status") or "STARTING")
         cycle_error = details.get("analysis_error")
-        status = "ERROR" if cycle_status.startswith("ANALYSIS_FAILED") or cycle_error else (
+        status = "ERROR" if (
+            cycle_status.startswith("ANALYSIS_FAILED") or cycle_error or cycle_status in {
+                "FUNDING_SYNC_ERROR", "MARKET_UNIVERSE_UNAVAILABLE",
+                "MARKET_UNIVERSE_REJECTED", "AUTHORIZATION_FLAG_REJECTED",
+                "ANALYSIS_RESULT_MISSING", "ANALYSIS_ELIGIBILITY_INVALID",
+            }
+        ) else (
             "DEGRADED" if cycle_status in {
                 "SKIPPED_UNHEALTHY_MARKET_DATA", "FUNDING_SYNC_DEGRADED",
                 "MARKET_UNIVERSE_STALE", "NO_HEALTHY_ALLOWLISTED_SYMBOLS",
