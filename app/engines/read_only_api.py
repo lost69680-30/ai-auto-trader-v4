@@ -142,6 +142,33 @@ def _fetch_candle_intervals(source, symbol: str, intervals: tuple[str, ...], lim
     return interval_payloads, interval_status, rows_by_interval
 
 
+def build_market_candle_payload(
+    *, source, symbol: str, allowed_symbols: Iterable[str],
+    intervals: tuple[str, ...], limit: int,
+) -> dict[str, object]:
+    """Build the authenticated read-only candle response, including complete yearly bars."""
+    if symbol not in allowed_symbols:
+        raise ValueError("symbol is not in the configured market allowlist")
+    interval_payloads, interval_status, rows_by_interval = _fetch_candle_intervals(
+        source, symbol, intervals, limit
+    )
+    yearly = aggregate_complete_yearly_candles(rows_by_interval.get("1M", ()))
+    interval_payloads["1y"] = yearly
+    if yearly:
+        interval_status["1y"] = "HEALTHY"
+    elif interval_status.get("1M", "").startswith("UNAVAILABLE:"):
+        interval_status["1y"] = "UNAVAILABLE:MONTHLY_INTERVAL"
+    else:
+        interval_status["1y"] = "INSUFFICIENT_HISTORY"
+    return {
+        "symbol": symbol,
+        "candles_by_interval": interval_payloads,
+        "interval_status": interval_status,
+        "orders_authorized": False,
+        "mode": "PAPER_ONLY",
+    }
+
+
 def create_app(*, database_path: str, token: str, market_status: Callable[[], dict] | None = None,
                market_items: Callable[[], list[dict]] | None = None,
                market_candles: Callable[[str], dict] | None = None,
@@ -567,22 +594,13 @@ def main() -> None:
     analysis_intervals = ("1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M")
 
     def market_candles(symbol: str) -> dict:
-        if symbol not in symbols:
-            raise ValueError("symbol is not in the configured market allowlist")
-        interval_payloads, interval_status, rows_by_interval = _fetch_candle_intervals(
-            source, symbol, analysis_intervals, analysis_candle_limit
+        return build_market_candle_payload(
+            source=source,
+            symbol=symbol,
+            allowed_symbols=symbols,
+            intervals=analysis_intervals,
+            limit=analysis_candle_limit,
         )
-
-        yearly = aggregate_complete_yearly_candles(rows_by_interval.get("1M", ()))
-        interval_payloads["1y"] = yearly
-        if yearly:
-            interval_status["1y"] = "HEALTHY"
-        elif interval_status.get("1M", "").startswith("UNAVAILABLE:"):
-            interval_status["1y"] = "UNAVAILABLE:MONTHLY_INTERVAL"
-        else:
-            interval_status["1y"] = "INSUFFICIENT_HISTORY"
-        return {"symbol": symbol, "candles_by_interval": interval_payloads,
-                "interval_status": interval_status, "orders_authorized": False, "mode": "PAPER_ONLY"}
 
     stop = threading.Event()
 
