@@ -547,7 +547,23 @@ def main() -> None:
             "recovery until persistent storage is confirmed. orders_authorized=False"
         )
 
-    cache = MarketFeedCache(max_age_seconds=max_age)
+    market_role = os.environ.get("PAPER_MARKET_ROLE", "combined").strip().lower()
+    if market_role not in {"combined", "api"}:
+        raise SystemExit("PAPER_MARKET_ROLE must be combined or api for the read-only API entry point")
+    if market_role == "api":
+        if not os.environ.get("PAPER_DATABASE_URL", "").strip():
+            raise SystemExit("PAPER_MARKET_ROLE=api requires PAPER_DATABASE_URL for shared durable market data")
+        if os.environ.get("PAPER_RESEARCH_WORKER_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on"):
+            raise SystemExit("PAPER_MARKET_ROLE=api cannot start an embedded analysis worker; run shared_market_worker separately")
+        from backend.shared_market_store import PostgresMarketFeedStore
+        cache = PostgresMarketFeedStore(
+            os.environ["PAPER_DATABASE_URL"],
+            worker_id=os.environ.get("PAPER_MARKET_WORKER_ID", "solo-market-worker"),
+            max_age_seconds=max_age,
+        )
+        logging.info("API market feed reads durable PostgreSQL snapshots from the independent worker")
+    else:
+        cache = MarketFeedCache(max_age_seconds=max_age)
     binance_testnet_account = BinanceSpotTestnetAccountClient()
     if market_mode == "spot":
         source = BinanceSpotMarketDataAdapter()
@@ -635,8 +651,12 @@ def main() -> None:
                 delay = 15.0
             stop.wait(delay)
 
-    poller = threading.Thread(target=poll_loop, name="readonly-market-poller", daemon=True)
-    poller.start()
+    poller = None
+    if market_role == "combined":
+        poller = threading.Thread(target=poll_loop, name="readonly-market-poller", daemon=True)
+        poller.start()
+    else:
+        logging.info("API-only role enabled; no local market poller or analysis worker will be started")
     try:
         http_app = create_app(database_path=database, token=token,
                               market_status=cache.status, market_items=cache.items,
@@ -665,7 +685,8 @@ def main() -> None:
                 server.serve_forever()
     finally:
         stop.set()
-        poller.join(timeout=5)
+        if poller is not None:
+            poller.join(timeout=5)
         if paper_app is not None:
             paper_app.close()
 
