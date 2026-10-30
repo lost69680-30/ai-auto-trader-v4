@@ -1,6 +1,19 @@
 package com.aiautotrader.v4
 
 import org.json.JSONObject
+import okhttp3.OkHttpClient
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.tls.HandshakeCertificates
+import okhttp3.tls.HeldCertificate
+import org.junit.Assert.assertTrue
+import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -115,4 +128,87 @@ class MarketWebSocketClientTest {
         assertEquals(4000L, websocketReconnectDelayMs(2))
         assertEquals(60_000L, websocketReconnectDelayMs(20))
     }
+    @Test
+    fun authenticatedWebSocketReceivesValidatedSnapshotAndSendsIgnoredKeepalive() {
+        val server = MockWebServer()
+        val heldCertificate = HeldCertificate.Builder()
+            .addSubjectAlternativeName("localhost")
+            .build()
+        val serverCertificates = HandshakeCertificates.Builder()
+            .heldCertificate(heldCertificate)
+            .build()
+        server.useHttps(serverCertificates.sslSocketFactory(), false)
+        server.start()
+
+        val clientCertificates = HandshakeCertificates.Builder()
+            .addTrustedCertificate(heldCertificate.certificate)
+            .build()
+        val httpClient = OkHttpClient.Builder()
+            .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
+            .build()
+
+        val snapshotReceived = CountDownLatch(1)
+        val keepaliveReceived = CountDownLatch(1)
+        val receivedSnapshot = AtomicReference<MarketStreamSnapshot?>()
+        val observedAt = Instant.now()
+        val nextFundingAt = observedAt.plusSeconds(3600)
+        val event = JSONObject()
+            .put("schema_version", 1)
+            .put("type", "market.snapshot")
+            .put("symbol", "BTCUSDT")
+            .put("market_type", "FUTURES")
+            .put("observed_at", observedAt.toString())
+            .put("status", "HEALTHY")
+            .put("orders_authorized", false)
+            .put("mark_price", 67000.0)
+            .put("index_price", 66990.0)
+            .put("funding_rate", 0.0001)
+            .put("next_funding_at", nextFundingAt.toString())
+
+        server.enqueue(
+            MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    webSocket.send(event.toString())
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    if (text == """{"type":"keepalive"}""") {
+                        keepaliveReceived.countDown()
+                    }
+                }
+            }),
+        )
+
+        val stream = MarketWebSocketClient(
+            onStatus = {},
+            onSnapshot = {
+                receivedSnapshot.set(it)
+                snapshotReceived.countDown()
+            },
+            onUnauthorized = {},
+            okHttpClient = httpClient,
+            keepaliveIntervalMs = 25L,
+        )
+        try {
+            stream.start("https://localhost:${server.port}", "unit-test-bearer-token-with-more-than-thirty-two-characters")
+            val request = server.takeRequest(3, TimeUnit.SECONDS)
+            assertNotNull(request)
+            assertEquals("/ws/v1/markets", request!!.path)
+            assertEquals(
+                "Bearer unit-test-bearer-token-with-more-than-thirty-two-characters",
+                request.getHeader("Authorization"),
+            )
+            assertTrue("snapshot should arrive over the WebSocket", snapshotReceived.await(3, TimeUnit.SECONDS))
+            assertTrue("client should send the server-ignored keepalive", keepaliveReceived.await(3, TimeUnit.SECONDS))
+            assertEquals("BTCUSDT", receivedSnapshot.get()?.symbol)
+            assertEquals(67000.0, receivedSnapshot.get()!!.price, 0.0)
+            assertEquals(false, receivedSnapshot.get()!!.marketContext.marketType != "FUTURES")
+        } finally {
+            stream.close()
+            server.shutdown()
+            httpClient.dispatcher.executorService.shutdown()
+            httpClient.connectionPool.evictAll()
+        }
+    }
+
 }
