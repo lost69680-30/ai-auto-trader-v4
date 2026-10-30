@@ -8,9 +8,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.io.Closeable
-import java.time.Duration
 import java.time.Instant
-import java.time.OffsetDateTime
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
