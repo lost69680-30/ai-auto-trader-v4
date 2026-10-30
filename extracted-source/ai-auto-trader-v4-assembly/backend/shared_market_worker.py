@@ -23,9 +23,12 @@ def main() -> None:
     worker_id = os.environ.get("PAPER_MARKET_WORKER_ID", "solo-market-worker")
     store = PostgresMarketFeedStore(
         dsn, worker_id=worker_id, max_age_seconds=max_age,
-        lease_seconds=max(30.0, float(os.environ.get("PAPER_MARKET_WORKER_LEASE_SECONDS", "30"))),
+        lease_seconds=max(90.0, float(os.environ.get("PAPER_MARKET_WORKER_LEASE_SECONDS", "90"))),
     )
-    app = PaperServiceApplication.from_env()
+    if not store.acquire_lease():
+        raise SystemExit("another market worker owns the active PostgreSQL lease; refusing duplicate polling")
+
+    app = None
     stop = threading.Event()
 
     def request_stop(signum, frame) -> None:
@@ -34,11 +37,10 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
-    if not store.acquire_lease():
-        app.close()
-        raise SystemExit("another market worker owns the active PostgreSQL lease; refusing duplicate polling")
-
     try:
+        # Acquire the durable lease before creating the paper runtime: create() performs
+        # restart recovery and must never run in a duplicate worker process.
+        app = PaperServiceApplication.from_env()
         while not stop.is_set():
             try:
                 poll = app.worker.poll_once()
@@ -62,7 +64,8 @@ def main() -> None:
         try:
             store.release()
         finally:
-            app.close()
+            if app is not None:
+                app.close()
 
 
 if __name__ == "__main__":
