@@ -95,6 +95,16 @@ internal class MarketWebSocketClient(
         handler.post { if (!stopped || value == "DISCONNECTED") onStatus(value) }
     }
 
+    private fun armStaleWatchdog() {
+        staleTask?.let(handler::removeCallbacks)
+        val watchdog = Runnable {
+            staleTask = null
+            if (!stopped) publishStatus("STALE")
+        }
+        staleTask = watchdog
+        handler.postDelayed(watchdog, 90_000L)
+    }
+
     fun start() {
         if (token.length < 32 || marketStreamUrl(baseUrl) == null) {
             publishStatus("NOT CONFIGURED")
@@ -128,18 +138,13 @@ internal class MarketWebSocketClient(
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 reconnectAttempt = 0
+                armStaleWatchdog()
                 publishStatus("CONNECTED")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val snapshot = parseMarketStreamEvent(text) ?: return
-                staleTask?.let(handler::removeCallbacks)
-                val watchdog = Runnable {
-                    staleTask = null
-                    if (!stopped) publishStatus("STALE")
-                }
-                staleTask = watchdog
-                handler.postDelayed(watchdog, 90_000L)
+                armStaleWatchdog()
                 handler.post { if (!stopped) onSnapshot(snapshot) }
             }
 
