@@ -152,7 +152,7 @@ internal class MarketWebSocketClient(
     private val onStatus: (String) -> Unit,
     private val onSnapshot: (MarketStreamSnapshot) -> Unit,
     private val onUnauthorized: () -> Unit,
-    private val okHttpClient: OkHttpClient = defaultMarketWebSocketClient(),
+    private val okHttpClient: OkHttpClient = sharedClient,
     private val keepaliveIntervalMs: Long = DEFAULT_KEEPALIVE_INTERVAL_MS,
 ) : Closeable {
     private val scheduler: ScheduledExecutorService =
@@ -285,7 +285,6 @@ internal class MarketWebSocketClient(
         scheduleConnect(delayMs)
     }
 
-    private fun defaultMarketWebSocketClient(): OkHttpClient = okHttpClient
 
     override fun close() {
         synchronized(lock) {
@@ -304,9 +303,6 @@ internal class MarketWebSocketClient(
     }
 
     companion object {
-        private fun defaultMarketWebSocketClient(): OkHttpClient =
-            sharedClient
-
         private val sharedClient: OkHttpClient by lazy {
             OkHttpClient.Builder()
                 .pingInterval(25, TimeUnit.SECONDS)
