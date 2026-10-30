@@ -63,10 +63,11 @@ def test_futures_index_funding_and_next_funding_are_validated_and_displayed():
     assert "validateMarketDataContext(" in source
     assert "parsedFundingTime.isAfter(now)" in source
     assert 'IndicatorRow("Index price"' in source
-    assert 'IndicatorRow("Funding rate"' in source
+    assert 'IndicatorRow("Latest funding rate"' in source
     assert 'IndicatorRow("Next funding"' in source
     assert "formatFundingTimestamp" in source
     assert "positive means longs pay shorts; negative means shorts pay longs" in source
+    assert "Latest exchange-published rate" in source
     assert "account-specific payment history" in source
 
 def test_chart_candle_refreshes_pause_when_android_app_enters_background():
