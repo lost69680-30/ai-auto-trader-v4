@@ -165,6 +165,7 @@ internal class MarketWebSocketClient(
     private val onUnauthorized: () -> Unit,
     private val okHttpClient: OkHttpClient = sharedClient,
     private val keepaliveIntervalMs: Long = DEFAULT_KEEPALIVE_INTERVAL_MS,
+    private val snapshotTimeoutMs: Long = MARKET_SNAPSHOT_MAX_AGE_SECONDS.toLong() * 1_000L,
 ) : Closeable {
     private val scheduler: ScheduledExecutorService =
         Executors.newSingleThreadScheduledExecutor { task ->
@@ -179,6 +180,7 @@ internal class MarketWebSocketClient(
     private var socket: WebSocket? = null
     private var reconnectTask: ScheduledFuture<*>? = null
     private var keepaliveTask: ScheduledFuture<*>? = null
+    private var snapshotTimeoutTask: ScheduledFuture<*>? = null
 
     fun start(apiBaseUrl: String, token: String) {
         val safeRequest = authenticatedMarketWebSocketRequest(apiBaseUrl, token)
@@ -224,6 +226,8 @@ internal class MarketWebSocketClient(
                     reconnectTask?.cancel(false)
                     reconnectTask = null
                     keepaliveTask?.cancel(false)
+                    snapshotTimeoutTask?.cancel(false)
+                    snapshotTimeoutTask = null
                     keepaliveTask = scheduler.scheduleAtFixedRate({
                         val isActive = synchronized(lock) { running && socket === webSocket }
                         if (isActive && !webSocket.send(KEEPALIVE_MESSAGE)) {
@@ -231,11 +235,13 @@ internal class MarketWebSocketClient(
                         }
                     }, keepaliveIntervalMs, keepaliveIntervalMs, TimeUnit.MILLISECONDS)
                 }
+                scheduleSnapshotWatchdog(webSocket)
                 onStatus("CONNECTED")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val snapshot = parseMarketSnapshotEvent(text) ?: return
+                scheduleSnapshotWatchdog(webSocket)
                 onSnapshot(snapshot)
             }
 
@@ -258,6 +264,8 @@ internal class MarketWebSocketClient(
                         reconnectTask = null
                         keepaliveTask?.cancel(false)
                         keepaliveTask = null
+                        snapshotTimeoutTask?.cancel(false)
+                        snapshotTimeoutTask = null
                     }
                     onStatus("UNAUTHORIZED")
                     onUnauthorized()
@@ -276,6 +284,27 @@ internal class MarketWebSocketClient(
         }
     }
 
+    private fun scheduleSnapshotWatchdog(activeSocket: WebSocket) {
+        synchronized(lock) {
+            if (!running || socket !== activeSocket) return
+            snapshotTimeoutTask?.cancel(false)
+            snapshotTimeoutTask = scheduler.schedule({
+                val shouldReconnect = synchronized(lock) {
+                    if (!running || socket !== activeSocket) {
+                        false
+                    } else {
+                        snapshotTimeoutTask = null
+                        true
+                    }
+                }
+                if (shouldReconnect) {
+                    onStatus("RECONNECTING")
+                    activeSocket.cancel()
+                }
+            }, snapshotTimeoutMs.coerceAtLeast(1L), TimeUnit.MILLISECONDS)
+        }
+    }
+
     private fun scheduleReconnect(failedSocket: WebSocket) {
         val delayMs: Long
         synchronized(lock) {
@@ -283,6 +312,8 @@ internal class MarketWebSocketClient(
             if (socket === failedSocket) socket = null
             keepaliveTask?.cancel(false)
             keepaliveTask = null
+            snapshotTimeoutTask?.cancel(false)
+            snapshotTimeoutTask = null
             if (reconnectTask != null) return
             delayMs = websocketReconnectDelayMs(reconnectAttempts++)
         }
@@ -297,6 +328,8 @@ internal class MarketWebSocketClient(
             reconnectTask = null
             keepaliveTask?.cancel(false)
             keepaliveTask = null
+            snapshotTimeoutTask?.cancel(false)
+            snapshotTimeoutTask = null
             val activeSocket = socket
             socket = null
             activeSocket?.close(1000, "app not foreground")
