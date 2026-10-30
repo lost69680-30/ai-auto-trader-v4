@@ -6,6 +6,7 @@ import os
 import signal
 import threading
 import time
+from datetime import datetime, timezone
 
 from app.engines.paper_service_app import PaperServiceApplication
 from backend.shared_market_store import PostgresMarketFeedStore
@@ -46,6 +47,24 @@ def main() -> None:
                 poll = app.worker.poll_once()
                 store.publish(poll)
                 report = app.process_poll(poll, now=time.time())
+                cycle_status = str(report.analysis_status)
+                analysis_error = cycle_status.partition(":")[2] if cycle_status.startswith("ANALYSIS_FAILED:") else None
+                heartbeat_status = "DEGRADED" if analysis_error or cycle_status in {
+                    "SKIPPED_UNHEALTHY_MARKET_DATA", "FUNDING_SYNC_DEGRADED",
+                    "MARKET_UNIVERSE_STALE", "NO_HEALTHY_ALLOWLISTED_SYMBOLS",
+                    "NO_ELIGIBLE_SYMBOLS", "ANALYZED_WITH_EXCLUSIONS",
+                } else "RUNNING"
+                store.heartbeat(
+                    heartbeat_status,
+                    details={
+                        "analysis_status": cycle_status,
+                        "analysis_error": analysis_error,
+                        "last_cycle_at": datetime.now(timezone.utc).isoformat(),
+                        "healthy_symbols": list(report.healthy_symbols),
+                        "unhealthy_symbols": list(report.unhealthy_symbols),
+                        "orders_authorized": False,
+                    },
+                )
                 logger.info(
                     "shared market cycle status=%s healthy=%s unhealthy=%s open_positions=%d orders_authorized=False",
                     report.analysis_status, report.healthy_symbols, report.unhealthy_symbols, report.open_positions,
