@@ -1,6 +1,6 @@
 import json
 import io
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -459,3 +459,85 @@ def test_audit_endpoint_returns_empty_list_for_empty_sqlite_ledger(tmp_path):
     assert status.startswith("200")
     assert body["items"] == []
     assert body["orders_authorized"] is False
+
+
+
+def _closed_monthly_candles(year=2025):
+    from backend.market_data_adapter import MarketCandle
+
+    rows = []
+    for month in range(1, 13):
+        opened = datetime(year, month, 1, tzinfo=timezone.utc)
+        next_month = (
+            datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+            if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc)
+        )
+        rows.append(MarketCandle(
+            symbol="BTCUSDT",
+            open_time=opened,
+            close_time=next_month - timedelta(milliseconds=1),
+            open=100.0 + month,
+            high=120.0 + month,
+            low=90.0 + month,
+            close=110.0 + month,
+            volume=10.0 * month,
+            quote_volume=1000.0 * month,
+            trades=month,
+            is_closed=True,
+        ))
+    return rows
+
+
+def test_yearly_candle_api_assembles_only_complete_closed_months_and_status():
+    from app.engines.read_only_api import build_market_candle_payload
+
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit):
+            if interval == "1M":
+                return _closed_monthly_candles()
+            return []
+
+    payload = build_market_candle_payload(
+        source=Source(),
+        symbol="BTCUSDT",
+        allowed_symbols=("BTCUSDT",),
+        intervals=("1M", "1d"),
+        limit=100,
+    )
+
+    yearly = payload["candles_by_interval"]["1y"]
+    assert payload["symbol"] == "BTCUSDT"
+    assert payload["interval_status"]["1M"] == "HEALTHY"
+    assert payload["interval_status"]["1y"] == "HEALTHY"
+    assert len(yearly) == 1
+    assert yearly[0]["open"] == 101.0
+    assert yearly[0]["high"] == 132.0
+    assert yearly[0]["low"] == 91.0
+    assert yearly[0]["close"] == 122.0
+    assert yearly[0]["volume"] == 780.0
+    assert yearly[0]["is_closed"] is True
+    assert payload["orders_authorized"] is False
+    assert payload["mode"] == "PAPER_ONLY"
+
+
+def test_yearly_candle_api_reports_monthly_fetch_failure_without_fabricating_data():
+    from app.engines.read_only_api import build_market_candle_payload
+
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit):
+            if interval == "1M":
+                raise RuntimeError("monthly history unavailable")
+            return []
+
+    payload = build_market_candle_payload(
+        source=Source(),
+        symbol="BTCUSDT",
+        allowed_symbols=("BTCUSDT",),
+        intervals=("1M", "1d"),
+        limit=100,
+    )
+
+    assert payload["candles_by_interval"]["1y"] == []
+    assert payload["interval_status"]["1M"] == "UNAVAILABLE:RuntimeError"
+    assert payload["interval_status"]["1y"] == "UNAVAILABLE:MONTHLY_INTERVAL"
+    assert payload["orders_authorized"] is False
