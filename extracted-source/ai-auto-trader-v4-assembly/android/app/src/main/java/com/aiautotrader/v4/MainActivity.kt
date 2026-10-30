@@ -69,6 +69,10 @@ private data class MarketInstrument(
     val markPrice: Double,
     val markObservedAt: String,
     val candles: List<MarketCandle>,
+    val marketType: String = "FUTURES",
+    val indexPrice: Double? = null,
+    val fundingRate: Double? = null,
+    val nextFundingAt: String = "",
 )
 
 internal data class TestnetAccountDiagnostic(
@@ -206,6 +210,7 @@ private object BackendSession {
     val marketItems = mutableStateOf<List<MarketInstrument>>(emptyList())
     val marketLoading = mutableStateOf(false)
     val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+    val streamStatus = mutableStateOf("NOT STARTED")
     // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
     val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
 }
@@ -1222,6 +1227,39 @@ private fun AnalysisScreen() {
     var selectedTab by remember { mutableStateOf("Market") }
     val timeframes = supportedTimeframes
     val sessionToken = BackendSession.token.value
+    DisposableEffect(sessionToken) {
+        if (sessionToken.length >= 32) {
+            val stream = MarketWebSocketClient(
+                baseUrl = BuildConfig.PAPER_API_BASE_URL,
+                token = sessionToken,
+                onStatus = { value -> BackendSession.streamStatus.value = value },
+                onSnapshot = { snapshot ->
+                    val existing = BackendSession.marketItems.value
+                    val current = existing.firstOrNull { normalizeSymbol(it.symbol) == snapshot.symbol }
+                    val updated = MarketInstrument(
+                        symbol = snapshot.symbol,
+                        markPrice = snapshot.price,
+                        markObservedAt = snapshot.observedAt.toString(),
+                        candles = current?.candles.orEmpty(),
+                        marketType = snapshot.marketType,
+                        indexPrice = snapshot.indexPrice,
+                        fundingRate = snapshot.fundingRate,
+                        nextFundingAt = snapshot.nextFundingAt?.toString().orEmpty(),
+                    )
+                    BackendSession.marketItems.value =
+                        existing.filterNot { normalizeSymbol(it.symbol) == snapshot.symbol } + updated
+                    BackendSession.streamStatus.value = "CONNECTED"
+                    BackendSession.feedStatus.value = "HEALTHY"
+                    BackendSession.marketMessage.value = "Live authenticated stream · read-only market snapshot."
+                }
+            )
+            stream.start()
+            onDispose { stream.close() }
+        } else {
+            BackendSession.streamStatus.value = "NOT AUTHENTICATED"
+            onDispose { }
+        }
+    }
     LaunchedEffect(sessionToken) {
         if (sessionToken.length < 32) {
             BackendSession.marketItems.value = emptyList()
@@ -1300,6 +1338,9 @@ private fun AnalysisScreen() {
                     Text(symbol, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     if (selectedMarket != null) {
                         Text("Mark price: ${formatMarketPrice(selectedMarket.markPrice)}", color = Green, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        if (selectedMarket.marketType == "FUTURES" && selectedMarket.indexPrice != null && selectedMarket.fundingRate != null) {
+                            Text("Index: ${formatMarketPrice(selectedMarket.indexPrice)} · Funding: ${String.format(Locale.US, "%.5f%%", selectedMarket.fundingRate * 100.0)}", color = Muted, fontSize = 10.sp)
+                        }
                     }
                 }
                 Tag(
@@ -1316,7 +1357,8 @@ private fun AnalysisScreen() {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 timeframes.forEach { t -> ChoiceChip(t, timeframe == t) { timeframe = t } }
             }
-            Text("Feed: ${BackendSession.feedStatus.value} · ${BackendSession.marketMessage.value}", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+            Text("Feed: ${BackendSession.feedStatus.value} · Stream: ${BackendSession.streamStatus.value}", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+            Text(BackendSession.marketMessage.value, color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             Text("Selected interval: $timeframe · loaded directly from validated, closed backend candles. No missing candles are fabricated.", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             CandlestickChart(Modifier.fillMaxWidth().height(190.dp), displayedCandles)
             if (selectedMarket == null) {
