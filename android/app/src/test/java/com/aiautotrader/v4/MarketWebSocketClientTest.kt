@@ -281,4 +281,126 @@ class MarketWebSocketClientTest {
         }
     }
 
+
+    @Test
+    fun freshSnapshotsResetWatchdogBeforeItReconnects() {
+        val server = MockWebServer()
+        val heldCertificate = HeldCertificate.Builder()
+            .addSubjectAlternativeName("localhost")
+            .build()
+        val serverCertificates = HandshakeCertificates.Builder()
+            .heldCertificate(heldCertificate)
+            .build()
+        server.useHttps(serverCertificates.sslSocketFactory(), false)
+        server.start()
+
+        val clientCertificates = HandshakeCertificates.Builder()
+            .addTrustedCertificate(heldCertificate.certificate)
+            .build()
+        val httpClient = OkHttpClient.Builder()
+            .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
+            .build()
+        val secondSnapshot = CountDownLatch(1)
+        val reconnecting = CountDownLatch(1)
+        val snapshotCount = java.util.concurrent.atomic.AtomicInteger()
+        fun snapshotEvent(): String {
+            val observedAt = Instant.now()
+            return JSONObject()
+                .put("schema_version", 1)
+                .put("type", "market.snapshot")
+                .put("symbol", "BTCUSDT")
+                .put("market_type", "FUTURES")
+                .put("observed_at", observedAt.toString())
+                .put("status", "HEALTHY")
+                .put("orders_authorized", false)
+                .put("mark_price", 67000.0)
+                .put("index_price", 66990.0)
+                .put("funding_rate", 0.0001)
+                .put("next_funding_at", observedAt.plusSeconds(3600).toString())
+                .toString()
+        }
+        server.enqueue(
+            MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    webSocket.send(snapshotEvent())
+                    Thread {
+                        Thread.sleep(120)
+                        webSocket.send(snapshotEvent())
+                    }.start()
+                }
+            }),
+        )
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {}))
+        val stream = MarketWebSocketClient(
+            onStatus = { if (it == "RECONNECTING") reconnecting.countDown() },
+            onSnapshot = {
+                if (snapshotCount.incrementAndGet() >= 2) secondSnapshot.countDown()
+            },
+            onUnauthorized = {},
+            okHttpClient = httpClient,
+            keepaliveIntervalMs = 10_000L,
+            snapshotTimeoutMs = 200L,
+        )
+
+        try {
+            stream.start(
+                "https://localhost:${server.port}",
+                "unit-test-bearer-token-with-more-than-thirty-two-characters",
+            )
+            assertNotNull(server.takeRequest(3, TimeUnit.SECONDS))
+            assertTrue("second fresh snapshot should arrive", secondSnapshot.await(3, TimeUnit.SECONDS))
+            assertTrue(
+                "watchdog must not expire based on the first snapshot",
+                !reconnecting.await(100, TimeUnit.MILLISECONDS),
+            )
+            assertTrue(
+                "stream should reconnect after the second snapshot also goes quiet",
+                reconnecting.await(3, TimeUnit.SECONDS),
+            )
+            assertNotNull(server.takeRequest(3, TimeUnit.SECONDS))
+        } finally {
+            stream.close()
+            server.shutdown()
+            httpClient.dispatcher.executorService.shutdown()
+            httpClient.connectionPool.evictAll()
+        }
+    }
+
+    @Test
+    fun unauthorizedHandshakeStopsAndDoesNotRetry() {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.start()
+        val httpClient = OkHttpClient()
+        val unauthorized = CountDownLatch(1)
+        val unauthorizedStatus = CountDownLatch(1)
+        val stream = MarketWebSocketClient(
+            onStatus = { if (it == "UNAUTHORIZED") unauthorizedStatus.countDown() },
+            onSnapshot = {},
+            onUnauthorized = { unauthorized.countDown() },
+            okHttpClient = httpClient,
+            keepaliveIntervalMs = 10_000L,
+            snapshotTimeoutMs = 200L,
+        )
+
+        try {
+            stream.start(
+                "https://localhost:${server.port}",
+                "unit-test-bearer-token-with-more-than-thirty-two-characters",
+            )
+            assertNotNull(server.takeRequest(3, TimeUnit.SECONDS))
+            assertTrue("401 must notify the authentication handler", unauthorized.await(3, TimeUnit.SECONDS))
+            assertTrue("401 must expose an unauthorized status", unauthorizedStatus.await(3, TimeUnit.SECONDS))
+            assertNull(
+                "unauthorized credentials must not trigger automatic retries",
+                server.takeRequest(500, TimeUnit.MILLISECONDS),
+            )
+        } finally {
+            stream.close()
+            server.shutdown()
+            httpClient.dispatcher.executorService.shutdown()
+            httpClient.connectionPool.evictAll()
+        }
+    }
+
 }
