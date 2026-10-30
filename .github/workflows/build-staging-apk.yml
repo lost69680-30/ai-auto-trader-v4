@@ -95,7 +95,14 @@ jobs:
           test -s "$APK"
           sha256sum "$APK"
           ls -lh "$APK"
-          echo "Expected Android application id: com.aiautotrader.v4.staging"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          test -x "$AAPT"
+          PACKAGE="$("$AAPT" dump badging "$APK" | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p")"
+          if [[ "$PACKAGE" != "com.aiautotrader.v4.staging" ]]; then
+            echo "STOP: expected staging package, found: $PACKAGE"
+            exit 1
+          fi
+          echo "Verified APK application id: $PACKAGE"
 
       - name: Upload staging debug APK
         uses: actions/upload-artifact@v4
