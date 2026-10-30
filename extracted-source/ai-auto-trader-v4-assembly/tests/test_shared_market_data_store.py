@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 import os
+from pathlib import Path
 
 import pytest
 
@@ -30,8 +31,18 @@ pytestmark = pytest.mark.skipif(
 
 
 def reset_tables():
+    # Earlier PostgreSQL ledger tests intentionally drop paper_ledger to verify
+    # startup failure behavior. Reapply all idempotent migrations for isolation.
     import psycopg
-    with psycopg.connect(DSN) as conn:
+    root = Path(__file__).resolve().parents[3]
+    migrations = (
+        root / "supabase/migrations/20261028010000_create_paper_ledger_schema.sql",
+        root / "supabase/migrations/20261030010000_create_shared_market_data.sql",
+        root / "supabase/migrations/20261030020000_create_durable_scheduled_jobs.sql",
+    )
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        for migration in migrations:
+            conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
         conn.execute("TRUNCATE paper_ledger.market_feed_snapshots, paper_ledger.market_worker_heartbeats")
 
 
