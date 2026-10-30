@@ -87,8 +87,8 @@ def test_invalid_order_book_and_nonfinite_ticker_are_not_emitted():
 def test_kline_parser_uses_exchange_timestamps_and_marks_open_candle_not_closed():
     start = int(NOW.timestamp() * 1000)
     payloads = {"/fapi/v1/klines": [
-        [start - 120000, "99", "102", "98", "101", "12", start - 60001, "1200", 17, "5", "500", "0"],
-        [start - 30000, "101", "103", "100", "102", "14", start + 29999, "1400", 19, "6", "600", "0"],
+        [start - 60000, "99", "102", "98", "101", "12", start - 1, "1200", 17, "5", "500", "0"],
+        [start, "101", "103", "100", "102", "14", start + 59999, "1400", 19, "6", "600", "0"],
     ]}
     transport, calls = make_transport(payloads)
     candles = BinanceUsdMFuturesAdapter(transport=transport).fetch_klines(
