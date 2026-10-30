@@ -99,7 +99,7 @@ internal class MarketWebSocketClient(
     private var keepaliveTask: Runnable? = null
 
     private fun publishStatus(value: String) {
-        handler.post { if (!stopped || value == "DISCONNECTED") onStatus(value) }
+        handler.post { if (!stopped || value == "DISCONNECTED" || value == "UNAUTHORIZED") onStatus(value) }
     }
 
     private fun armStaleWatchdog() {
