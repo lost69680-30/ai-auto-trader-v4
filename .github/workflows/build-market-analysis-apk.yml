@@ -84,6 +84,21 @@ jobs:
           echo "PAPER_API_BASE_URL=$PAPER_API_BASE_URL" >> "$GITHUB_ENV"
           echo "APK backend target branch: $TARGET_BRANCH"
 
+      - name: Verify Android source mirrors match
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT_MAIN="$GITHUB_WORKSPACE/android/app/src/main"
+          EXTRACTED_MAIN="$PROJECT_DIR/android/app/src/main"
+          ROOT_TEST="$GITHUB_WORKSPACE/android/app/src/test"
+          EXTRACTED_TEST="$PROJECT_DIR/android/app/src/test"
+          for relative in java/com/aiautotrader/v4/MainActivity.kt java/com/aiautotrader/v4/MarketObservationFreshness.kt java/com/aiautotrader/v4/MarketWebSocketClient.kt; do
+            cmp "$ROOT_MAIN/$relative" "$EXTRACTED_MAIN/$relative" || { echo "Android main-source mirror mismatch: $relative"; exit 1; }
+          done
+          for relative in java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt java/com/aiautotrader/v4/MarketWebSocketClientTest.kt; do
+            cmp "$ROOT_TEST/$relative" "$EXTRACTED_TEST/$relative" || { echo "Android test-source mirror mismatch: $relative"; exit 1; }
+          done
+
       - name: Run Android unit tests and build APK
         shell: bash
         run: |
