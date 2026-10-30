@@ -53,3 +53,18 @@ def test_apk_build_uses_production_only_for_main_and_staging_for_other_branches(
     assert "https://solo-futures-websocket-staging.onrender.com" in workflow
     assert '-PpaperApiBaseUrl="$PAPER_API_BASE_URL"' in workflow
     assert "-PpaperApiBaseUrl=https://ai-auto-trader-v4-backend.onrender.com" not in workflow
+
+def test_futures_index_funding_and_next_funding_are_validated_and_displayed():
+    source = SOURCE.read_text(encoding="utf-8")
+    for field in ("market_type", "price_type", "index_price", "funding_rate", "next_funding_at"):
+        assert f'"{field}"' in source
+    assert '"FUTURES_MARK_PRICE"' in source
+    assert '"SPOT_LAST_PRICE"' in source
+    assert "validateMarketDataContext(" in source
+    assert "parsedFundingTime.isAfter(now)" in source
+    assert 'IndicatorRow("Index price"' in source
+    assert 'IndicatorRow("Funding rate"' in source
+    assert 'IndicatorRow("Next funding"' in source
+    assert "formatFundingTimestamp" in source
+    assert "positive means longs pay shorts; negative means shorts pay longs" in source
+    assert "account-specific payment history" in source
