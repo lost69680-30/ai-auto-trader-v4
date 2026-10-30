@@ -238,7 +238,7 @@ class PostgresMarketFeedStore:
     def _read(self) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
         with self._connect() as conn:
             hb = conn.execute(
-                """SELECT worker_id, owner_id, heartbeat_at, lease_expires_at, status
+                """SELECT worker_id, owner_id, heartbeat_at, lease_expires_at, status, details
                    FROM paper_ledger.market_worker_heartbeats
                    WHERE worker_id = %s""", (self.worker_id,)
             ).fetchone()
@@ -248,7 +248,7 @@ class PostgresMarketFeedStore:
             ).fetchall()
         return (None if hb is None else {
             "worker_id": hb[0], "owner_id": hb[1], "heartbeat_at": hb[2],
-            "lease_expires_at": hb[3], "status": hb[4],
+            "lease_expires_at": hb[3], "status": hb[4], "details": hb[5],
         }), [row[0] for row in rows]
 
     def status(self) -> dict[str, Any]:
@@ -279,6 +279,40 @@ class PostgresMarketFeedStore:
         return {"status": feed_status, "reason": None if feed_status == "HEALTHY" else "one or more symbols are unhealthy",
                 "checked_at": hb["heartbeat_at"].timestamp(), "age_seconds": age,
                 "worker_status": hb["status"], "orders_authorized": False}
+
+    def analysis_status(self) -> dict[str, Any]:
+        hb, _rows = self._read()
+        if hb is None:
+            return {
+                "enabled": True, "status": "STARTING", "research_pipeline": "STARTING",
+                "paper_simulation": "STARTING", "last_cycle_at": None,
+                "last_cycle_error": None, "orders_authorized": False,
+                "reason": "waiting for the independent paper-analysis worker",
+            }
+        age = (datetime.now(timezone.utc) - hb["heartbeat_at"]).total_seconds()
+        if age < 0 or age > self.max_age_seconds or hb["lease_expires_at"] <= datetime.now(timezone.utc) or hb["status"] in {"STOPPED", "ERROR"}:
+            return {
+                "enabled": True, "status": "ERROR", "research_pipeline": "ERROR",
+                "paper_simulation": "ERROR", "last_cycle_at": None,
+                "last_cycle_error": "WorkerHeartbeatStale", "orders_authorized": False,
+                "reason": "independent analysis worker heartbeat is stale or stopped",
+            }
+        details = hb.get("details") or {}
+        cycle_status = str(details.get("analysis_status") or "STARTING")
+        cycle_error = details.get("analysis_error")
+        status = "ERROR" if cycle_status.startswith("ANALYSIS_FAILED") or cycle_error else (
+            "DEGRADED" if cycle_status in {
+                "SKIPPED_UNHEALTHY_MARKET_DATA", "FUNDING_SYNC_DEGRADED",
+                "MARKET_UNIVERSE_STALE", "NO_HEALTHY_ALLOWLISTED_SYMBOLS",
+                "NO_ELIGIBLE_SYMBOLS", "ANALYZED_WITH_EXCLUSIONS",
+            } else ("RUNNING" if cycle_status != "STARTING" else "STARTING")
+        )
+        return {
+            "enabled": True, "status": status, "research_pipeline": status,
+            "paper_simulation": status, "last_cycle_at": details.get("last_cycle_at"),
+            "last_cycle_error": cycle_error, "orders_authorized": False,
+            "reason": cycle_status[:160],
+        }
 
     def items(self) -> list[dict[str, Any]]:
         state = self.status()
