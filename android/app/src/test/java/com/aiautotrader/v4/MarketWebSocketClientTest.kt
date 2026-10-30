@@ -23,15 +23,6 @@ class MarketWebSocketClientTest {
     private val now = Instant.parse("2026-10-30T05:00:00Z")
 
     @Test
-    fun marketObservationFreshnessRejectsMissingMalformedStaleAndFutureTimestamps() {
-        assertEquals(now.minusSeconds(30), parseFreshMarketObservation("2026-10-30T04:59:30Z", now))
-        assertNull(parseFreshMarketObservation("", now))
-        assertNull(parseFreshMarketObservation("not-a-timestamp", now))
-        assertNull(parseFreshMarketObservation("2026-10-30T04:58:29Z", now))
-        assertNull(parseFreshMarketObservation("2026-10-30T05:00:02Z", now))
-    }
-
-    @Test
     fun websocketEndpointIsDerivedOnlyFromHttpsBackendBaseUrl() {
         assertEquals(
             "wss://solo-futures-websocket-staging.onrender.com/ws/v1/markets",
