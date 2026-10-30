@@ -89,6 +89,7 @@ internal class MarketWebSocketClient(
     private var reconnectAttempt = 0
     @Volatile private var stopped = false
     private var reconnectTask: Runnable? = null
+    private var staleTask: Runnable? = null
 
     fun start() {
         if (token.length < 32 || marketStreamUrl(baseUrl) == null) {
@@ -103,6 +104,8 @@ internal class MarketWebSocketClient(
         stopped = true
         reconnectTask?.let(handler::removeCallbacks)
         reconnectTask = null
+        staleTask?.let(handler::removeCallbacks)
+        staleTask = null
         socket?.close(1000, "screen stopped")
         socket = null
         client.dispatcher.executorService.shutdown()
@@ -125,7 +128,15 @@ internal class MarketWebSocketClient(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                parseMarketStreamEvent(text)?.let(onSnapshot)
+                val snapshot = parseMarketStreamEvent(text) ?: return
+                staleTask?.let(handler::removeCallbacks)
+                val watchdog = Runnable {
+                    staleTask = null
+                    if (!stopped) onStatus("STALE")
+                }
+                staleTask = watchdog
+                handler.postDelayed(watchdog, 90_000L)
+                handler.post { if (!stopped) onSnapshot(snapshot) }
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
