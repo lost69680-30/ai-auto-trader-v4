@@ -102,6 +102,21 @@ def test_postgres_store_rejects_any_order_authorization_flag():
     store.release(now=now + timedelta(seconds=1))
 
 
+
+def test_postgres_store_rejects_healthy_futures_snapshot_without_funding_context():
+    reset_tables()
+    now = datetime.now(timezone.utc)
+    store = PostgresMarketFeedStore(DSN, worker_id="test-market-worker", owner_id="owner-a")
+    assert store.acquire_lease(now=now) is True
+    valid = healthy_poll(now)
+    bad_frame = SimpleNamespace(**vars(valid.frames[0]))
+    bad_frame.funding_rate = None
+    bad_poll = MarketPollResult(now, (bad_frame,), orders_authorized=False)
+    with pytest.raises(ValueError, match="complete index and funding context"):
+        store.publish(bad_poll, now=now)
+    store.release()
+
+
 def test_postgres_store_reports_missing_or_expired_worker_as_stale():
     reset_tables()
     store = PostgresMarketFeedStore(DSN, worker_id="test-market-worker", owner_id="owner-a")
