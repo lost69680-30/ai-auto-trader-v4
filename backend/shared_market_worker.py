@@ -53,6 +53,9 @@ def main() -> None:
                     "SKIPPED_UNHEALTHY_MARKET_DATA", "FUNDING_SYNC_DEGRADED",
                     "MARKET_UNIVERSE_STALE", "NO_HEALTHY_ALLOWLISTED_SYMBOLS",
                     "NO_ELIGIBLE_SYMBOLS", "ANALYZED_WITH_EXCLUSIONS",
+                    "FUNDING_SYNC_ERROR", "MARKET_UNIVERSE_UNAVAILABLE",
+                    "MARKET_UNIVERSE_REJECTED", "AUTHORIZATION_FLAG_REJECTED",
+                    "ANALYSIS_RESULT_MISSING", "ANALYSIS_ELIGIBILITY_INVALID",
                 } else "RUNNING"
                 store.heartbeat(
                     heartbeat_status,
@@ -73,7 +76,12 @@ def main() -> None:
             except Exception as exc:
                 logger.exception("shared market worker cycle failed; feed remains fail-closed")
                 try:
-                    store.heartbeat("DEGRADED", details={"error": type(exc).__name__, "orders_authorized": False})
+                    store.heartbeat("DEGRADED", details={
+                        "analysis_status": "ANALYSIS_FAILED:WorkerCycleError",
+                        "analysis_error": type(exc).__name__,
+                        "last_cycle_at": datetime.now(timezone.utc).isoformat(),
+                        "orders_authorized": False,
+                    })
                 except Exception:
                     logger.exception("market worker heartbeat failed; worker lease may be lost")
                     stop.set()
