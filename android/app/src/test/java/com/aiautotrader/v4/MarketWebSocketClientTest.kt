@@ -369,9 +369,22 @@ class MarketWebSocketClientTest {
     @Test
     fun unauthorizedHandshakeStopsAndDoesNotRetry() {
         val server = MockWebServer()
+        val heldCertificate = HeldCertificate.Builder()
+            .addSubjectAlternativeName("localhost")
+            .build()
+        val serverCertificates = HandshakeCertificates.Builder()
+            .heldCertificate(heldCertificate)
+            .build()
+        server.useHttps(serverCertificates.sslSocketFactory(), false)
         server.enqueue(MockResponse().setResponseCode(401))
         server.start()
-        val httpClient = OkHttpClient()
+
+        val clientCertificates = HandshakeCertificates.Builder()
+            .addTrustedCertificate(heldCertificate.certificate)
+            .build()
+        val httpClient = OkHttpClient.Builder()
+            .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
+            .build()
         val unauthorized = CountDownLatch(1)
         val unauthorizedStatus = CountDownLatch(1)
         val stream = MarketWebSocketClient(
