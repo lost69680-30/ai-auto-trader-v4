@@ -163,6 +163,7 @@ class MarketWebSocketClientTest {
 
         val snapshotReceived = CountDownLatch(1)
         val keepaliveReceived = CountDownLatch(1)
+        val peerCloseReceived = CountDownLatch(1)
         val receivedSnapshot = AtomicReference<MarketStreamSnapshot?>()
         val observedAt = Instant.now()
         val nextFundingAt = observedAt.plusSeconds(3600)
@@ -189,6 +190,11 @@ class MarketWebSocketClientTest {
                     if (text == """{"type":"keepalive"}""") {
                         keepaliveReceived.countDown()
                     }
+                }
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    webSocket.close(code, reason)
+                    peerCloseReceived.countDown()
                 }
             }),
         )
@@ -219,6 +225,7 @@ class MarketWebSocketClientTest {
             assertEquals("FUTURES", receivedSnapshot.get()!!.marketContext.marketType)
         } finally {
             stream.close()
+            assertTrue("server should complete the WebSocket close handshake", peerCloseReceived.await(2, TimeUnit.SECONDS))
             server.shutdown()
             httpClient.dispatcher.executorService.shutdown()
             httpClient.connectionPool.evictAll()
