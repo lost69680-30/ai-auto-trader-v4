@@ -66,8 +66,8 @@ jobs:
           psql "postgresql://postgres:postgres@127.0.0.1:5432/postgres" \
             -v ON_ERROR_STOP=1 \
             -f supabase/migrations/20261030010000_create_shared_market_data.sql
-          psql "postgresql://postgres:postgres@127.0.0.1:5432/postgres" \\
-            -v ON_ERROR_STOP=1 \\
+          psql "postgresql://postgres:postgres@127.0.0.1:5432/postgres" \
+            -v ON_ERROR_STOP=1 \
             -f supabase/migrations/20261030020000_create_durable_scheduled_jobs.sql
       - name: Run the complete backend test suite
         working-directory: extracted-source/ai-auto-trader-v4-assembly
