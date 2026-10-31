@@ -206,6 +206,7 @@ class OpportunityEventRecord:
     opportunity_id: str
     from_state: str | None
     to_state: str
+    opportunity_version: int
     reason: str
     actor: str
     evidence_version: str | None
@@ -277,6 +278,7 @@ class PostgresOpportunityStore:
             opportunity_id=row["opportunity_id"],
             from_state=row["from_state"],
             to_state=row["to_state"],
+            opportunity_version=row["opportunity_version"],
             reason=row["reason"],
             actor=row["actor"],
             evidence_version=row["evidence_version"],
@@ -403,7 +405,7 @@ class PostgresOpportunityStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT * FROM paper_ledger.opportunity_events
-                   WHERE opportunity_id = %s ORDER BY occurred_at, event_id""",
+                   WHERE opportunity_id = %s ORDER BY opportunity_version""",
                 (opportunity_id,),
             ).fetchall()
         return tuple(self._event(row) for row in rows)
