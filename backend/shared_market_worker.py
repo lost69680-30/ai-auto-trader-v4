@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from app.engines.paper_service_app import PaperServiceApplication
 from backend.analysis_job_dispatcher import AnalysisJobDispatcher, market_feed_health_audit
 from backend.durable_scheduler import DurableJobScheduler
-from backend.historical_candle_archive import PostgresCandleArchive, archive_market_poll, backfill_symbol_history
+from backend.historical_candle_archive import PostgresCandleArchive, archive_is_caught_up, archive_market_poll, backfill_symbol_history
 from backend.shared_market_store import PostgresMarketFeedStore
 
 
@@ -70,19 +70,25 @@ def main() -> None:
         archive = PostgresCandleArchive(dsn)
         while not stop.is_set():
             try:
+                backfill_clock = datetime.now(timezone.utc)
                 backfilled_count = 0
                 for symbol in app.config.symbols_list:
                     backfilled_count += backfill_symbol_history(
                         archive, app.worker.source, symbol=symbol, market_type="FUTURES",
-                        testnet=testnet, now=datetime.now(timezone.utc), page_size=1000, max_pages=3,
+                        testnet=testnet, now=backfill_clock, page_size=1000, max_pages=3,
                     )
+                archive_caught_up = archive_is_caught_up(
+                    archive, symbols=app.config.symbols_list, market_type="FUTURES",
+                    now=backfill_clock,
+                )
                 poll = app.worker.poll_once()
                 store.publish(poll)
-                archived_count = archive_market_poll(
-                    archive, poll, interval=app.config.candle_interval,
-                    testnet=testnet, now=datetime.now(timezone.utc),
-                )
-                archived_count += backfilled_count
+                archived_count = backfilled_count
+                if archive_caught_up:
+                    archived_count += archive_market_poll(
+                        archive, poll, interval=app.config.candle_interval,
+                        testnet=testnet, now=datetime.now(timezone.utc),
+                    )
                 report = app.process_poll(poll, now=time.time())
                 cycle_status = str(report.analysis_status)
                 analysis_error = cycle_status.partition(":")[2] if cycle_status.startswith("ANALYSIS_FAILED:") else None
@@ -103,12 +109,13 @@ def main() -> None:
                         "healthy_symbols": list(report.healthy_symbols),
                         "unhealthy_symbols": list(report.unhealthy_symbols),
                         "archived_new_candles": archived_count,
+                        "historical_archive_caught_up": archive_caught_up,
                         "orders_authorized": False,
                     },
                 )
                 logger.info(
-                    "shared market cycle status=%s healthy=%s unhealthy=%s open_positions=%d archived_new_candles=%d orders_authorized=False",
-                    report.analysis_status, report.healthy_symbols, report.unhealthy_symbols, report.open_positions, archived_count,
+                    "shared market cycle status=%s healthy=%s unhealthy=%s open_positions=%d archived_new_candles=%d archive_caught_up=%s orders_authorized=False",
+                    report.analysis_status, report.healthy_symbols, report.unhealthy_symbols, report.open_positions, archived_count, archive_caught_up,
                 )
                 try:
                     scheduler.enqueue_due()
