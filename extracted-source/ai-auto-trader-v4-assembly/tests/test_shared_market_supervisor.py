@@ -201,7 +201,8 @@ def test_supervisor_restarts_live_worker_after_stale_heartbeat(monkeypatch):
         if len(started) >= 3:
             handlers[-1](signal.SIGTERM, None)
 
-    monkeypatch.setattr(supervisor, "PostgresMarketFeedStore", FakeStore)
+    from backend import shared_market_store
+    monkeypatch.setattr(shared_market_store, "PostgresMarketFeedStore", FakeStore)
     monkeypatch.setattr(supervisor, "_start", fake_start)
     monkeypatch.setattr(supervisor.time, "monotonic", lambda: clock["now"])
     monkeypatch.setattr(supervisor.time, "sleep", fake_sleep)
