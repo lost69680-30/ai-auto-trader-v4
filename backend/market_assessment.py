@@ -73,6 +73,8 @@ class TimeframeAssessment:
     efficiency_ratio: float | None
     relative_volume: float | None
     structure: str
+    candlestick_pattern: str
+    structure_event: str
     support: float | None
     resistance: float | None
     latest_close_time: datetime | None
@@ -86,6 +88,7 @@ class MarketAssessment:
     assessed_at: datetime
     direction: str
     market_regime: str
+    market_phase: str
     long_term_bias: str
     medium_term_bias: str
     short_term_bias: str
@@ -194,15 +197,18 @@ def _safe_latest_close(rows: tuple[MarketCandle, ...]) -> datetime | None:
 
 
 def _measure(
-    timeframe: str, rows: tuple[MarketCandle, ...], now: datetime,
-) -> tuple[float, float, float, float, float, str, float, float]:
+    rows: tuple[MarketCandle, ...], minimum_directional_score: float,
+) -> tuple[float, float, float, float, float, str, str, str, float, float]:
     recent = rows[-min(20, len(rows)):]
     closes = [float(row.close) for row in recent]
     momentum = (closes[-1] / closes[0] - 1.0) * 100.0 if closes[0] else 0.0
     mean_close = fmean(closes)
     ema = _ema(closes, min(20, len(closes)))
     close_vs_mean = (closes[-1] / mean_close - 1.0) * 100.0 if mean_close else 0.0
-    trend_score = max(0.0, min(100.0, 50.0 + momentum * 0.45 + close_vs_mean * 2.5))
+    close_vs_ema = (closes[-1] / ema - 1.0) * 100.0 if ema else 0.0
+    trend_score = max(0.0, min(
+        100.0, 50.0 + momentum * 0.35 + close_vs_mean * 2.0 + close_vs_ema * 2.0
+    ))
 
     ranges: list[float] = []
     previous_close = None
@@ -235,9 +241,61 @@ def _measure(
             structure = "MIXED_STRUCTURE"
     else:
         structure = "INSUFFICIENT_STRUCTURE"
+
+    last = rows[-1]
+    previous_candle = rows[-2]
+    candle_range = max(float(last.high - last.low), 1e-12)
+    body = abs(float(last.close - last.open))
+    upper_wick = float(last.high - max(last.open, last.close))
+    lower_wick = float(min(last.open, last.close) - last.low)
+    if body / candle_range <= 0.10:
+        pattern = "DOJI"
+    elif (previous_candle.close < previous_candle.open and last.close > last.open
+          and last.open <= previous_candle.close and last.close >= previous_candle.open):
+        pattern = "BULLISH_ENGULFING"
+    elif (previous_candle.close > previous_candle.open and last.close < last.open
+          and last.open >= previous_candle.close and last.close <= previous_candle.open):
+        pattern = "BEARISH_ENGULFING"
+    elif body > 0 and lower_wick >= 2.0 * body and upper_wick <= body and last.close > last.open:
+        pattern = "BULLISH_PIN_BAR"
+    elif body > 0 and upper_wick >= 2.0 * body and lower_wick <= body and last.close < last.open:
+        pattern = "BEARISH_PIN_BAR"
+    else:
+        pattern = "NONE"
+
+    level_rows = rows[-21:-1]
+    if len(level_rows) >= 10:
+        prior_support = min(float(row.low) for row in level_rows)
+        prior_resistance = max(float(row.high) for row in level_rows)
+        if last.close > prior_resistance and relative_volume >= 1.2:
+            structure_event = "BREAKOUT_UP"
+        elif last.close < prior_support and relative_volume >= 1.2:
+            structure_event = "BREAKOUT_DOWN"
+        elif last.high > prior_resistance and last.close <= prior_resistance:
+            structure_event = "FAILED_BREAKOUT_UP"
+        elif last.low < prior_support and last.close >= prior_support:
+            structure_event = "FAILED_BREAKOUT_DOWN"
+        elif trend_score >= 50.0 + minimum_directional_score and structure == "HIGHER_HIGHS_HIGHER_LOWS":
+            structure_event = "TREND_CONTINUATION"
+        elif trend_score <= 50.0 - minimum_directional_score and structure == "LOWER_HIGHS_LOWER_LOWS":
+            structure_event = "TREND_CONTINUATION"
+        elif (trend_score >= 50.0 + minimum_directional_score and momentum < 0) or (
+            trend_score <= 50.0 - minimum_directional_score and momentum > 0
+        ):
+            structure_event = "PULLBACK"
+        elif efficiency <= 0.20:
+            structure_event = "RANGE_CONSOLIDATION"
+        else:
+            structure_event = "UNCONFIRMED"
+        support, resistance = prior_support, prior_resistance
+    else:
+        structure_event = "INSUFFICIENT_STRUCTURE"
+        support = min(float(row.low) for row in recent)
+        resistance = max(float(row.high) for row in recent)
+
     return (
         trend_score, momentum, volatility, efficiency, relative_volume,
-        structure, min(row.low for row in recent), max(row.high for row in recent),
+        structure, pattern, structure_event, support, resistance,
     )
 
 
@@ -284,7 +342,7 @@ def assess_market(
         if raw is None:
             by_name[timeframe] = TimeframeAssessment(
                 timeframe, "MISSING", "INSUFFICIENT_DATA", None, None, None,
-                None, None, "UNKNOWN", None, None, None,
+                None, None, "UNKNOWN", "UNKNOWN", "UNKNOWN", None, None, None,
                 ("timeframe history was not supplied",), False,
             )
             continue
@@ -303,13 +361,13 @@ def assess_market(
                 status = "INVALID_DATA"
             by_name[timeframe] = TimeframeAssessment(
                 timeframe, status, "INSUFFICIENT_DATA", None, None, None,
-                None, None, "UNKNOWN", None, None,
+                None, None, "UNKNOWN", "UNKNOWN", "UNKNOWN", None, None,
                 _safe_latest_close(rows),
                 (reason,), False,
             )
             continue
-        measured = _measure(timeframe, rows, stamp)
-        score, momentum, volatility, efficiency, relative_volume, structure, support, resistance = measured
+        measured = _measure(rows, cfg.minimum_directional_score)
+        score, momentum, volatility, efficiency, relative_volume, structure, pattern, structure_event, support, resistance = measured
         if score >= 50.0 + cfg.minimum_directional_score:
             direction = "BULLISH"
         elif score <= 50.0 - cfg.minimum_directional_score:
@@ -318,8 +376,8 @@ def assess_market(
             direction = "NEUTRAL"
         by_name[timeframe] = TimeframeAssessment(
             timeframe, "HEALTHY", direction, score, momentum, volatility,
-            efficiency, relative_volume, structure, support, resistance,
-            _utc(rows[-1].close_time, "latest close_time"), (), False,
+            efficiency, relative_volume, structure, pattern, structure_event,
+            support, resistance, _utc(rows[-1].close_time, "latest close_time"), (), False,
         )
 
     long_bias = _group_bias(by_name, _GROUP_WEIGHTS["long"], cfg.minimum_directional_score)
@@ -352,7 +410,30 @@ def assess_market(
     else:
         regime = "UNCERTAIN"
 
+    medium_events = [
+        by_name[name].structure_event for name in ("1d", "4h", "1h")
+        if by_name[name].status == "HEALTHY"
+    ]
+    if "BREAKOUT_UP" in medium_events:
+        market_phase = "BREAKOUT_UP"
+    elif "BREAKOUT_DOWN" in medium_events:
+        market_phase = "BREAKOUT_DOWN"
+    elif "FAILED_BREAKOUT_UP" in medium_events:
+        market_phase = "FAILED_BREAKOUT_UP"
+    elif "FAILED_BREAKOUT_DOWN" in medium_events:
+        market_phase = "FAILED_BREAKOUT_DOWN"
+    elif conflicts and "long-term and medium-term directional evidence conflicts" in conflicts:
+        market_phase = "TIMEFRAME_CONFLICT"
+    elif "PULLBACK" in medium_events:
+        market_phase = "PULLBACK"
+    elif "TREND_CONTINUATION" in medium_events:
+        market_phase = "TREND_CONTINUATION"
+    elif regime == "RANGING":
+        market_phase = "RANGE_CONSOLIDATION"
+    else:
+        market_phase = "UNCERTAIN"
+
     return MarketAssessment(
-        symbol, stamp, direction, regime, long_bias, medium_bias, short_bias,
+        symbol, stamp, direction, regime, market_phase, long_bias, medium_bias, short_bias,
         tuple(conflicts), tuple(by_name[name] for name in TIMEFRAME_ORDER), False,
     )
