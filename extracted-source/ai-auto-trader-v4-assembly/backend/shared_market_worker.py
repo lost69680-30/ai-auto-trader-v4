@@ -33,29 +33,31 @@ def main() -> None:
 
     app = None
     stop = threading.Event()
-    scheduler = DurableJobScheduler(
-        dsn, lease_seconds=max(30.0, float(os.environ.get("PAPER_SCHEDULED_JOB_LEASE_SECONDS", "60")))
-    )
-    schedule_interval = max(60, int(os.environ.get("PAPER_MARKET_HEALTH_AUDIT_INTERVAL_SECONDS", "300")))
-    scheduler.register_interval(
-        "market_feed_health_audit",
-        interval_seconds=schedule_interval,
-        first_run_at=datetime.now(timezone.utc) + timedelta(seconds=schedule_interval),
-        payload={"scope": "market_feed"},
-    )
-    dispatcher = AnalysisJobDispatcher(
-        scheduler,
-        owner=os.environ.get("PAPER_ANALYSIS_DISPATCHER_ID", f"{worker_id[:110]}-analysis"),
-        handlers={"market_feed_health_audit": market_feed_health_audit(store)},
-    )
 
     def request_stop(signum, frame) -> None:
         logger.info("shutdown requested; stopping paper-only market worker")
         stop.set()
 
-    signal.signal(signal.SIGINT, request_stop)
-    signal.signal(signal.SIGTERM, request_stop)
     try:
+        # All setup after lease acquisition is covered by finally so a startup failure
+        # cannot leave the PostgreSQL worker lease held until its timeout.
+        scheduler = DurableJobScheduler(
+            dsn, lease_seconds=max(30.0, float(os.environ.get("PAPER_SCHEDULED_JOB_LEASE_SECONDS", "60")))
+        )
+        schedule_interval = max(60, int(os.environ.get("PAPER_MARKET_HEALTH_AUDIT_INTERVAL_SECONDS", "300")))
+        scheduler.register_interval(
+            "market_feed_health_audit",
+            interval_seconds=schedule_interval,
+            first_run_at=datetime.now(timezone.utc) + timedelta(seconds=schedule_interval),
+            payload={"scope": "market_feed"},
+        )
+        dispatcher = AnalysisJobDispatcher(
+            scheduler,
+            owner=os.environ.get("PAPER_ANALYSIS_DISPATCHER_ID", f"{worker_id[:110]}-analysis"),
+            handlers={"market_feed_health_audit": market_feed_health_audit(store)},
+        )
+        signal.signal(signal.SIGINT, request_stop)
+        signal.signal(signal.SIGTERM, request_stop)
         # Acquire the durable lease before creating the paper runtime: create() performs
         # restart recovery and must never run in a duplicate worker process.
         app = PaperServiceApplication.from_env()
