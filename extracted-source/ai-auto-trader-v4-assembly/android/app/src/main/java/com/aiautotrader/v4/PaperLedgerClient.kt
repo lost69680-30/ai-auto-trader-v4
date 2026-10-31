@@ -64,8 +64,8 @@ internal data class PaperLedgerSnapshot(
 internal fun parsePaperPositions(json: JSONObject): List<PaperPositionView> {
     require(json.optBoolean("orders_authorized", true).not()) { "Unsafe positions response" }
     val rows = json.optJSONArray("items") ?: throw IllegalArgumentException("Positions response has no items array")
-    return (0 until rows.length()).mapNotNull { index ->
-        val row = rows.optJSONObject(index) ?: return@mapNotNull null
+    return (0 until rows.length()).map { index ->
+        val row = rows.optJSONObject(index) ?: throw IllegalArgumentException("Invalid position row")
         val quantity = row.optDouble("quantity", Double.NaN)
         val entry = row.optDouble("entry_price", Double.NaN)
         val mark = row.optDouble("mark_price", Double.NaN)
@@ -80,7 +80,7 @@ internal fun parsePaperPositions(json: JSONObject): List<PaperPositionView> {
             status !in setOf("OPEN", "CLOSED") ||
             listOf(quantity, entry, mark, stop, target, unrealized, total).any { !it.isFinite() } ||
             quantity <= 0.0 || entry <= 0.0 || mark <= 0.0 || stop <= 0.0 || target <= 0.0
-        ) return@mapNotNull null
+        ) throw IllegalArgumentException("Invalid position row; refusing a partial ledger view")
         PaperPositionView(
             row.optString("proposal_id"), symbol, side, quantity, entry, mark, stop, target,
             status, unrealized, total, row.optString("mark_observed_at")
@@ -91,8 +91,8 @@ internal fun parsePaperPositions(json: JSONObject): List<PaperPositionView> {
 internal fun parsePaperOrders(json: JSONObject): List<PaperOrderView> {
     require(!json.optBoolean("orders_authorized", true)) { "Unsafe orders response" }
     val rows = json.optJSONArray("items") ?: throw IllegalArgumentException("Orders response has no items array")
-    return (0 until rows.length()).mapNotNull { index ->
-        val row = rows.optJSONObject(index) ?: return@mapNotNull null
+    return (0 until rows.length()).map { index ->
+        val row = rows.optJSONObject(index) ?: throw IllegalArgumentException("Invalid order row")
         val quantity = row.optDouble("quantity", Double.NaN)
         val entry = row.optDouble("entry_price", Double.NaN)
         val stop = row.optDouble("stop_loss", Double.NaN)
@@ -102,7 +102,7 @@ internal fun parsePaperOrders(json: JSONObject): List<PaperOrderView> {
         if (symbol.isBlank() || side !in setOf("LONG", "SHORT") ||
             listOf(quantity, entry, stop, target).any { !it.isFinite() } ||
             quantity <= 0.0 || entry <= 0.0 || stop <= 0.0 || target <= 0.0
-        ) return@mapNotNull null
+        ) throw IllegalArgumentException("Invalid order row; refusing a partial ledger view")
         PaperOrderView(row.optString("proposal_id"), symbol, side, quantity, entry, stop, target,
             row.optString("status"), row.optString("recorded_at"))
     }
@@ -133,10 +133,10 @@ internal fun parsePaperRisk(json: JSONObject): PaperRiskView {
 internal fun parsePaperAudit(json: JSONObject): List<PaperAuditView> {
     require(!json.optBoolean("orders_authorized", true)) { "Unsafe audit response" }
     val rows = json.optJSONArray("items") ?: throw IllegalArgumentException("Audit response has no items array")
-    return (0 until rows.length()).mapNotNull { index ->
-        val row = rows.optJSONObject(index) ?: return@mapNotNull null
+    return (0 until rows.length()).map { index ->
+        val row = rows.optJSONObject(index) ?: throw IllegalArgumentException("Invalid audit event row")
         val eventType = row.optString("event_type").trim()
-        if (eventType.isBlank()) return@mapNotNull null
+        require(eventType.isNotBlank()) { "Invalid audit event type" }
         val payload = row.optJSONObject("payload")
         val summary = payload?.toString()?.take(180).orEmpty()
         PaperAuditView(eventType, row.optString("proposal_id"), row.optString("occurred_at"), summary)
