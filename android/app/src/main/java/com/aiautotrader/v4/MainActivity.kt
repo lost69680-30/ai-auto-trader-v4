@@ -1082,7 +1082,7 @@ private fun TraderApp() {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             screens.forEach { item ->
                 val selected = screen == item || (item == "Markets" && screen == "Charts & Analysis")
-                Box(Modifier.shadow(if (selected) 7.dp else 2.dp, RoundedCornerShape(12.dp))
+                Box(Modifier.shadow(if (selected) 2.dp else 4.dp, RoundedCornerShape(12.dp))
                     .background(if (selected) Brush.linearGradient(listOf(Gold.copy(alpha = .24f), Gold.copy(alpha = .08f))) else Brush.linearGradient(listOf(Panel, PanelAlt)), RoundedCornerShape(12.dp))
                     .border(1.dp, if (selected) Gold.copy(alpha = .75f) else GlassEdge, RoundedCornerShape(12.dp))
                     .clickable { screen = if (item == "Markets") "Charts & Analysis" else item }.padding(horizontal = 13.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
@@ -1252,7 +1252,9 @@ private fun ReadOnlyBackendConnectionCard() {
         Text("READ-ONLY BACKEND CONNECTION", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         Text("API: ${if (BuildConfig.PAPER_API_BASE_URL.isBlank()) "not configured" else BuildConfig.PAPER_API_BASE_URL}", color = Muted, fontSize = 11.sp)
         OutlinedTextField(value = token, onValueChange = { token = it }, label = { Text("Bearer API token") },
-            singleLine = true, modifier = Modifier.fillMaxWidth(), visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+            singleLine = true, shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Gold, unfocusedBorderColor = Grid, focusedLabelColor = Gold, cursorColor = Gold),
+            modifier = Modifier.fillMaxWidth().shadow(2.dp, RoundedCornerShape(12.dp)), visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
         Button(enabled = !loading && token.length >= 32 && BuildConfig.PAPER_API_BASE_URL.startsWith("https://"),
             onClick = {
       val normalizedToken = token.trim()
@@ -1349,7 +1351,9 @@ private fun ReadOnlyBackendConnectionCard() {
                     }
                     loading = false
                 }
-            }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background)) {
+            }, modifier = Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(12.dp)), shape = RoundedCornerShape(12.dp),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp, pressedElevation = 1.dp, disabledElevation = 0.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background)) {
             Text(if (loading) "CHECKING…" else "CONNECT & LOAD STATUS")
         }
         Text(status, color = if (status.startsWith("CONNECTED")) Green else Color(0xFFFFC857), fontWeight = FontWeight.Bold, fontSize = 12.sp)
@@ -1398,7 +1402,9 @@ private fun ReadOnlyBackendConnectionCard() {
                         loading = false
                     }
                 },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().shadow(5.dp, RoundedCornerShape(12.dp)),
+                shape = RoundedCornerShape(12.dp),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 5.dp, pressedElevation = 1.dp, disabledElevation = 0.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White)
             ) { Text(if (loading) "SENDING STOP…" else if (emergencyStop == "ACTIVE") "EMERGENCY STOP ACTIVE" else "ACTIVATE EMERGENCY STOP") }
         }
@@ -1418,7 +1424,8 @@ private fun ReadOnlyBackendConnectionCard() {
                 BackendSession.marketItems.value = emptyList()
                 BackendSession.marketMessage.value = "Backend token cleared; no authenticated market request will be made."
             },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().shadow(2.dp, RoundedCornerShape(12.dp)), shape = RoundedCornerShape(12.dp),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 3.dp, pressedElevation = 1.dp, disabledElevation = 0.dp),
             colors = ButtonDefaults.buttonColors(containerColor = PanelAlt, contentColor = White)
         ) { Text("FORGET SAVED TOKEN") }
         Text("The bearer token is encrypted on this device with Android Keystore. Clearing it here does not change the backend emergency-stop state. Do not use an exchange key here.", color = Muted, fontSize = 10.sp)
@@ -1484,7 +1491,7 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
         CardPanel {
             Text("CHARTS & ANALYSIS", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
             Text("Candlesticks, indicators, performance and AI market commentary", color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
-            Button(onClick = openAnalysis, colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background), modifier = Modifier.fillMaxWidth()) { Text("Open Charts & Analysis") }
+            Button(onClick = openAnalysis, colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background), modifier = Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(12.dp)), shape = RoundedCornerShape(12.dp), elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp, pressedElevation = 1.dp)) { Text("Open Charts & Analysis") }
         }
         SectionTitle("SAFETY CONTROLS")
         CardPanel {
@@ -1654,7 +1661,8 @@ private fun AnalysisScreen() {
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("Market", "Performance").forEach { t ->
-                Box(Modifier.weight(1f).background(if (selectedTab == t) Gold.copy(alpha = .15f) else Panel, RoundedCornerShape(10.dp))
+                Box(Modifier.weight(1f).shadow(if (selectedTab == t) 1.dp else 3.dp, RoundedCornerShape(10.dp))
+                    .background(if (selectedTab == t) Gold.copy(alpha = .15f) else PanelAlt, RoundedCornerShape(10.dp))
                     .border(1.dp, if (selectedTab == t) Gold else Grid, RoundedCornerShape(10.dp)).clickable { selectedTab = t }.padding(11.dp), contentAlignment = Alignment.Center) {
                     Text(t, color = if (selectedTab == t) Gold else Muted, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                 }
