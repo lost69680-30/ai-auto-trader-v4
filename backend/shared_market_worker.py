@@ -6,9 +6,11 @@ import os
 import signal
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.engines.paper_service_app import PaperServiceApplication
+from backend.analysis_job_dispatcher import AnalysisJobDispatcher, market_feed_health_audit
+from backend.durable_scheduler import DurableJobScheduler
 from backend.shared_market_store import PostgresMarketFeedStore
 
 
@@ -36,9 +38,26 @@ def main() -> None:
         logger.info("shutdown requested; stopping paper-only market worker")
         stop.set()
 
-    signal.signal(signal.SIGINT, request_stop)
-    signal.signal(signal.SIGTERM, request_stop)
     try:
+        # All setup after lease acquisition is covered by finally so a startup failure
+        # cannot leave the PostgreSQL worker lease held until its timeout.
+        scheduler = DurableJobScheduler(
+            dsn, lease_seconds=max(30.0, float(os.environ.get("PAPER_SCHEDULED_JOB_LEASE_SECONDS", "60")))
+        )
+        schedule_interval = max(60, int(os.environ.get("PAPER_MARKET_HEALTH_AUDIT_INTERVAL_SECONDS", "300")))
+        scheduler.register_interval(
+            "market_feed_health_audit",
+            interval_seconds=schedule_interval,
+            first_run_at=datetime.now(timezone.utc) + timedelta(seconds=schedule_interval),
+            payload={"scope": "market_feed"},
+        )
+        dispatcher = AnalysisJobDispatcher(
+            scheduler,
+            owner=os.environ.get("PAPER_ANALYSIS_DISPATCHER_ID", f"{worker_id[:110]}-analysis"),
+            handlers={"market_feed_health_audit": market_feed_health_audit(store)},
+        )
+        signal.signal(signal.SIGINT, request_stop)
+        signal.signal(signal.SIGTERM, request_stop)
         # Acquire the durable lease before creating the paper runtime: create() performs
         # restart recovery and must never run in a duplicate worker process.
         app = PaperServiceApplication.from_env()
@@ -72,6 +91,11 @@ def main() -> None:
                     "shared market cycle status=%s healthy=%s unhealthy=%s open_positions=%d orders_authorized=False",
                     report.analysis_status, report.healthy_symbols, report.unhealthy_symbols, report.open_positions,
                 )
+                try:
+                    scheduler.enqueue_due()
+                    dispatcher.run_once()
+                except Exception:
+                    logger.exception("durable read-only analysis scheduler cycle failed")
                 delay = app.worker.next_delay_seconds
             except Exception as exc:
                 logger.exception("shared market worker cycle failed; feed remains fail-closed")
