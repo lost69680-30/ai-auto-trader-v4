@@ -37,3 +37,58 @@ def test_supervisor_separates_api_and_worker_environment_without_leaking_api_tok
 def test_supervisor_requires_render_port():
     with pytest.raises(ValueError, match="PORT"):
         build_child_environments({"PAPER_DATABASE_URL": "postgresql://staging-db"})
+
+
+def test_supervisor_restarts_failed_worker_without_restarting_api(monkeypatch):
+    import signal
+
+    from backend import shared_market_supervisor as supervisor
+
+    monkeypatch.setenv("PORT", "10000")
+    clock = {"now": 0.0, "sleeps": 0}
+    handlers = []
+    started = []
+
+    class FakeProcess:
+        def __init__(self, module, generation):
+            self.module = module
+            self.generation = generation
+            self.terminated = False
+            self.pid = generation + 100
+
+        def poll(self):
+            if self.terminated:
+                return 0
+            if self.module == "backend.shared_market_worker" and self.generation == 0:
+                return 1
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    def fake_start(module, env):
+        process = FakeProcess(module, len(started))
+        started.append((module, env, process))
+        return process
+
+    def fake_sleep(seconds):
+        clock["sleeps"] += 1
+        clock["now"] += 2.0
+        if clock["sleeps"] == 2:
+            handlers[-1](signal.SIGTERM, None)
+
+    monkeypatch.setattr(supervisor, "_start", fake_start)
+    monkeypatch.setattr(supervisor.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(supervisor.time, "sleep", fake_sleep)
+    monkeypatch.setattr(supervisor.signal, "signal", lambda sig, handler: handlers.append(handler))
+
+    supervisor.main()
+
+    assert [item[0] for item in started] == [
+        "backend.shared_market_worker",
+        "app.engines.read_only_api",
+        "backend.shared_market_worker",
+    ]
