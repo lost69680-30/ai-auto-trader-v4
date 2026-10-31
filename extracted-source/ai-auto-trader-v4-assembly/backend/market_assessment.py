@@ -184,6 +184,15 @@ def _ema(values: list[float], period: int) -> float:
     return result
 
 
+def _safe_latest_close(rows: tuple[MarketCandle, ...]) -> datetime | None:
+    if not rows or not isinstance(rows[-1], MarketCandle):
+        return None
+    try:
+        return _utc(rows[-1].close_time, "latest close_time")
+    except ValueError:
+        return None
+
+
 def _measure(
     timeframe: str, rows: tuple[MarketCandle, ...], now: datetime,
 ) -> tuple[float, float, float, float, float, str, float, float]:
@@ -211,25 +220,21 @@ def _measure(
     baseline_volume = fmean(prior_volumes) if prior_volumes else 0.0
     relative_volume = float(rows[-1].volume) / baseline_volume if baseline_volume > 0 else 0.0
 
-    previous = rows[-10:-5]
-    latest = rows[-5:]
-    higher_highs = fmean([row.high for row in latest]) > fmean([row.high for row in previous])
-    higher_lows = fmean([row.low for row in latest]) > fmean([row.low for row in previous])
-    lower_highs = fmean([row.high for row in latest]) < fmean([row.high for row in previous])
-    lower_lows = fmean([row.low for row in latest]) < fmean([row.low for row in previous])
-    if higher_highs and higher_lows:
-        structure = "HIGHER_HIGHS_HIGHER_LOWS"
-    elif lower_highs and lower_lows:
-        structure = "LOWER_HIGHS_LOWER_LOWS"
+    if len(rows) >= 10:
+        previous = rows[-10:-5]
+        latest = rows[-5:]
+        higher_highs = fmean([row.high for row in latest]) > fmean([row.high for row in previous])
+        higher_lows = fmean([row.low for row in latest]) > fmean([row.low for row in previous])
+        lower_highs = fmean([row.high for row in latest]) < fmean([row.high for row in previous])
+        lower_lows = fmean([row.low for row in latest]) < fmean([row.low for row in previous])
+        if higher_highs and higher_lows:
+            structure = "HIGHER_HIGHS_HIGHER_LOWS"
+        elif lower_highs and lower_lows:
+            structure = "LOWER_HIGHS_LOWER_LOWS"
+        else:
+            structure = "MIXED_STRUCTURE"
     else:
-        structure = "MIXED_STRUCTURE"
-
-    if momentum > 0 and closes[-1] > ema and trend_score >= 55:
-        direction = "BULLISH"
-    elif momentum < 0 and closes[-1] < ema and trend_score <= 45:
-        direction = "BEARISH"
-    else:
-        direction = "NEUTRAL"
+        structure = "INSUFFICIENT_STRUCTURE"
     return (
         trend_score, momentum, volatility, efficiency, relative_volume,
         structure, min(row.low for row in recent), max(row.high for row in recent),
@@ -298,15 +303,15 @@ def assess_market(
             by_name[timeframe] = TimeframeAssessment(
                 timeframe, status, "INSUFFICIENT_DATA", None, None, None,
                 None, None, "UNKNOWN", None, None,
-                _utc(rows[-1].close_time, "latest close_time") if rows else None,
+                _safe_latest_close(rows),
                 (reason,), False,
             )
             continue
         measured = _measure(timeframe, rows, stamp)
         score, momentum, volatility, efficiency, relative_volume, structure, support, resistance = measured
-        if score >= 55:
+        if score >= 50.0 + cfg.minimum_directional_score:
             direction = "BULLISH"
-        elif score <= 45:
+        elif score <= 50.0 - cfg.minimum_directional_score:
             direction = "BEARISH"
         else:
             direction = "NEUTRAL"
