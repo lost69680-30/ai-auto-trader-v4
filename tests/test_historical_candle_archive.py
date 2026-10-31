@@ -253,3 +253,38 @@ def test_archive_caught_up_requires_every_symbol_to_reach_latest_closed_minute()
     assert archive_is_caught_up(
         archive, symbols=("BTCUSDT", "ETHUSDT"), market_type="FUTURES", now=now
     ) is False
+
+
+def test_backfill_rejects_missing_exchange_minutes_before_advancing_archive_cursor():
+    from types import SimpleNamespace
+
+    from backend.historical_candle_archive import backfill_symbol_history
+
+    class Archive:
+        inserted = []
+
+        def latest_open_time(self, **kwargs):
+            return BASE - timedelta(minutes=1)
+
+        def insert_closed_candles(self, candles, *, now):
+            self.inserted.extend(candles)
+            return len(tuple(candles))
+
+    class Source:
+        def fetch_klines(self, symbol, **kwargs):
+            return tuple(
+                SimpleNamespace(
+                    symbol=symbol, open_time=row.open_time, close_time=row.close_time,
+                    open=row.open, high=row.high, low=row.low, close=row.close,
+                    volume=row.volume, is_closed=True,
+                )
+                for row in (minute(0), minute(1), minute(3))
+            )
+
+    archive = Archive()
+    with pytest.raises(ValueError, match="gap"):
+        backfill_symbol_history(
+            archive, Source(), symbol="BTCUSDT", market_type="FUTURES",
+            testnet=True, now=BASE + timedelta(minutes=5), page_size=10,
+        )
+    assert archive.inserted == []
