@@ -343,7 +343,9 @@ class PostgresMarketFeedStore:
                 """SELECT status, scheduled_for, started_at, completed_at, attempts
                    FROM paper_ledger.scheduled_jobs
                    WHERE job_name = 'market_intelligence_scan'
-                   ORDER BY scheduled_for DESC, created_at DESC LIMIT 1"""
+                   ORDER BY CASE WHEN status = 'RUNNING' THEN 0
+                                 WHEN status = 'PENDING' THEN 1 ELSE 2 END,
+                            scheduled_for DESC, created_at DESC LIMIT 1"""
             ).fetchone()
             scan_meta = {
                 "scan_job_status": scan_job[0] if scan_job else "NOT_SCHEDULED",
