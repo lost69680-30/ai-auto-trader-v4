@@ -172,6 +172,7 @@ def build_market_candle_payload(
 def create_app(*, database_path: str, token: str, market_status: Callable[[], dict] | None = None,
                market_items: Callable[[], list[dict]] | None = None,
                market_candles: Callable[[str], dict] | None = None,
+               market_history: Callable[[str, datetime, datetime, int], dict] | None = None,
                account_status: Callable[[], dict] | None = None,
                analysis_status: Callable[[], dict] | None = None):
     """Create WSGI app. A strong API token is mandatory; no permissive defaults."""
@@ -256,6 +257,59 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                     body, status = _json_bytes({"error": "invalid_or_unavailable_candle_request", "orders_authorized": False}), "400 Bad Request"
                 except Exception:
                     body, status = _json_bytes({"error": "market_candles_unavailable", "orders_authorized": False}), "503 Service Unavailable"
+
+            elif path == "/api/v1/markets/history":
+                try:
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    symbol_values = query.get("symbol", [])
+                    start_values = query.get("start", [])
+                    end_values = query.get("end", [])
+                    limit_values = query.get("limit", ["5000"])
+                    symbol = symbol_values[0].strip().upper() if len(symbol_values) == 1 else ""
+                    if (not symbol or len(symbol) > 30 or not symbol.isalnum()
+                            or len(start_values) != 1 or len(end_values) != 1
+                            or len(limit_values) != 1):
+                        raise ValueError("invalid historical candle query")
+                    start_text = start_values[0].strip()
+                    end_text = end_values[0].strip()
+                    start = datetime.fromisoformat(start_text.replace("Z", "+00:00"))
+                    end = datetime.fromisoformat(end_text.replace("Z", "+00:00"))
+                    if (start.tzinfo is None or start.utcoffset() is None
+                            or end.tzinfo is None or end.utcoffset() is None or end <= start):
+                        raise ValueError("historical range must be timezone-aware and increasing")
+                    raw_limit = limit_values[0]
+                    if not raw_limit.isdigit():
+                        raise ValueError("limit must be an integer")
+                    limit = int(raw_limit)
+                    if not 1 <= limit <= 10000:
+                        raise ValueError("limit must be between 1 and 10000")
+                    if market_history is None:
+                        body, status = _json_bytes({
+                            "error": "historical_archive_unavailable",
+                            "candles": [], "orders_authorized": False,
+                        }), "503 Service Unavailable"
+                    else:
+                        payload = market_history(symbol, start, end, limit)
+                        candles = payload.get("candles") if isinstance(payload, dict) else None
+                        if (not isinstance(payload, dict) or payload.get("symbol") != symbol
+                                or payload.get("venue") != "BINANCE_USDM_TESTNET"
+                                or payload.get("market_type") != "FUTURES"
+                                or payload.get("interval") != "1m"
+                                or payload.get("orders_authorized") is not False
+                                or not isinstance(candles, list) or len(candles) > limit
+                                or any(not isinstance(row, dict) or row.get("is_closed") is not True for row in candles)):
+                            raise RuntimeError("historical archive provider returned unsafe data")
+                        body, status = _json_bytes(payload), "200 OK"
+                except ValueError:
+                    body, status = _json_bytes({
+                        "error": "invalid_historical_candle_request",
+                        "candles": [], "orders_authorized": False,
+                    }), "400 Bad Request"
+                except Exception:
+                    body, status = _json_bytes({
+                        "error": "historical_archive_unavailable",
+                        "candles": [], "orders_authorized": False,
+                    }), "503 Service Unavailable"
             elif path == "/api/v1/binance-spot-testnet/account":
                 try:
                     if account_status is None:
