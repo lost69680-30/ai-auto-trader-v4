@@ -174,7 +174,8 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                market_candles: Callable[[str], dict] | None = None,
                market_history: Callable[[str, datetime, datetime, int], dict] | None = None,
                account_status: Callable[[], dict] | None = None,
-               analysis_status: Callable[[], dict] | None = None):
+               analysis_status: Callable[[], dict] | None = None,
+               market_intelligence: Callable[[], dict] | None = None):
     """Create WSGI app. A strong API token is mandatory; no permissive defaults."""
     if not isinstance(token, str) or len(token) < 32:
         raise ValueError("API token must be at least 32 characters; configure it as a secret")
@@ -367,6 +368,38 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                 except Exception:
                     body, status = _json_bytes({"status": "UNAVAILABLE", "items": [],
                         "reason": "market feed unavailable", "orders_authorized": False}), "503 Service Unavailable"
+            elif method == "GET" and path == "/api/v1/markets/assessment":
+                try:
+                    report = market_intelligence() if market_intelligence else {
+                        "status": "NOT_CONFIGURED", "items": [], "orders_authorized": False,
+                    }
+                    items = report.get("items") if isinstance(report, dict) else None
+                    safe_items = (
+                        isinstance(items, list)
+                        and all(isinstance(item, dict) and item.get("orders_authorized") is False
+                                for item in items)
+                    )
+                    if (not isinstance(report, dict) or report.get("orders_authorized") is not False
+                            or not safe_items):
+                        raise ValueError("market intelligence provider returned an invalid or unsafe response")
+                    payload = {
+                        "status": report.get("status", "UNKNOWN"),
+                        "assessed_at": report.get("assessed_at"),
+                        "market_type": report.get("market_type"),
+                        "scan_id": report.get("scan_id"),
+                        "items": items,
+                        "reason": report.get("reason"),
+                        "orders_authorized": False,
+                    }
+                    healthy = payload["status"] in {"HEALTHY", "DEGRADED"} and bool(items)
+                    body, status = _json_bytes(payload), ("200 OK" if healthy else "503 Service Unavailable")
+                except Exception:
+                    body, status = _json_bytes({
+                        "status": "UNAVAILABLE", "items": [],
+                        "reason": "market intelligence unavailable",
+                        "orders_authorized": False,
+                    }), "503 Service Unavailable"
+
             elif path in ("/api/v1/positions", "/api/v1/orders", "/api/v1/audit", "/api/v1/funding"):
                 try:
                     with _open_ledger(database_path) as ledger:
@@ -776,7 +809,8 @@ def main() -> None:
                               market_candles=market_candles,
                               market_history=market_history,
                               account_status=binance_testnet_account.account_summary,
-                              analysis_status=(cache.analysis_status if hasattr(cache, "analysis_status") else analysis_health.status))
+                              analysis_status=(cache.analysis_status if hasattr(cache, "analysis_status") else analysis_health.status),
+                              market_intelligence=(cache.market_intelligence if hasattr(cache, "market_intelligence") else None))
         if enable_websocket:
             if len(token) < 32:
                 raise SystemExit("PAPER_WEBSOCKET_ENABLED requires a PAPER_API_TOKEN of at least 32 characters")
