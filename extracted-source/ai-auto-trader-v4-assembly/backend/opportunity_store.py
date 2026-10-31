@@ -447,6 +447,22 @@ class PostgresOpportunityStore:
                 orders_authorized=row["orders_authorized"],
             )
 
+    def list_assessments(self, opportunity_id: str) -> tuple[StrategyAssessmentRecord, ...]:
+        _required_text(opportunity_id, "opportunity_id", 160)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT * FROM paper_ledger.opportunity_assessments
+                   WHERE opportunity_id = %s ORDER BY created_at, assessment_id""",
+                (opportunity_id,),
+            ).fetchall()
+        return tuple(StrategyAssessmentRecord(
+            assessment_id=row["assessment_id"], opportunity_id=row["opportunity_id"],
+            strategy_id=row["strategy_id"], strategy_version=row["strategy_version"],
+            assessment_version=row["assessment_version"], decision=row["decision"],
+            payload=row["payload"], evidence_refs=row["evidence_refs"],
+            orders_authorized=row["orders_authorized"],
+        ) for row in rows)
+
     def append_evidence(
         self, record: OpportunityEvidenceRecord, *, idempotency_key: str,
         now: datetime | None = None,
@@ -499,8 +515,8 @@ class PostgresOpportunityStore:
                 raise ValueError("watch condition opportunity does not exist")
             if opportunity["strategy_id"] == "long_term":
                 raise ValueError("long-term analysis is not eligible for watch conditions")
-            if opportunity["state"] not in {"WAITING", "REASSESSING"}:
-                raise ValueError("watch conditions require an opportunity in WAITING or REASSESSING")
+            if opportunity["state"] not in {"ASSESSING", "WAITING", "REASSESSING"}:
+                raise ValueError("watch conditions require an opportunity in ASSESSING, WAITING or REASSESSING")
             row = conn.execute(
                 """INSERT INTO paper_ledger.opportunity_watch_conditions
                    (watch_id, opportunity_id, idempotency_key, trigger_rule,
