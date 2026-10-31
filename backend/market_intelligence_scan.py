@@ -186,6 +186,23 @@ def market_intelligence_scan(
                 "orders_authorized": False,
             })
 
+        ranked = sorted(
+            (
+                report for report in reports
+                if report["selection"].eligible_for_risk_review
+                and report["selection"].fit_score is not None
+            ),
+            key=lambda report: (
+                -float(report["selection"].fit_score),
+                report["symbol"],
+            ),
+        )
+        rank_by_symbol = {report["symbol"]: rank for rank, report in enumerate(ranked, start=1)}
+        for report in reports:
+            selection_payload = _json_safe(report["selection"])
+            selection_payload["opportunity_rank"] = rank_by_symbol.get(report["symbol"])
+            report["selection"] = selection_payload
+
         store.publish_intelligence(_json_safe({
             "scan_id": idempotency_key,
             "assessed_at": now,
