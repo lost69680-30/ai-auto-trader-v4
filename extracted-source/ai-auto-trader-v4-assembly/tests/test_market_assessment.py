@@ -125,3 +125,26 @@ def test_assessment_detects_bullish_engulfing_and_volume_confirmed_breakout():
     assert hourly.candlestick_pattern == "BULLISH_ENGULFING"
     assert hourly.structure_event == "BREAKOUT_UP"
     assert result.market_phase == "BREAKOUT_UP"
+
+def test_assessment_marks_bullish_reversal_attempt_inside_lower_structure():
+    rows = list(_fixed_series(3600, count=60, direction=-1))
+    previous = rows[-2]
+    latest = rows[-1]
+    rows[-2] = MarketCandle(
+        symbol="BTCUSDT", open_time=previous.open_time, close_time=previous.close_time,
+        open=102.0, high=103.0, low=99.0, close=100.0,
+        volume=100.0, quote_volume=10000.0, trades=10, is_closed=True,
+    )
+    rows[-1] = MarketCandle(
+        symbol="BTCUSDT", open_time=latest.open_time, close_time=latest.close_time,
+        open=99.5, high=102.8, low=99.1, close=102.5,
+        volume=150.0, quote_volume=15375.0, trades=15, is_closed=True,
+    )
+
+    result = assess_market("BTCUSDT", {"1h": rows}, now=NOW)
+    hourly = next(item for item in result.timeframes if item.timeframe == "1h")
+
+    assert hourly.candlestick_pattern == "BULLISH_ENGULFING"
+    assert hourly.structure == "LOWER_HIGHS_LOWER_LOWS"
+    assert hourly.structure_event == "REVERSAL_ATTEMPT_UP"
+    assert result.market_phase == "REVERSAL_ATTEMPT_UP"
