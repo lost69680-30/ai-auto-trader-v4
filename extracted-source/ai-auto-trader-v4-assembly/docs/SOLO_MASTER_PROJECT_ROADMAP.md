@@ -107,6 +107,8 @@ Assessment inputs include trend, momentum, volatility, ATR, structure, support/r
 
 Detect trending, ranging, high-volatility and uncertain regimes; identify continuation, pullback, reversal, breakout and failed-breakout conditions. Do not use a simple majority vote across correlated timeframes. Higher-timeframe conflicts must remain visible.
 
+The Continuous Market Search Engine extends this shared watcher; it must reuse the shared data feed and publish durable candidate evidence rather than create a competing feed. Its scan cadence, instrument coverage and data-quality failures must be observable.
+
 ## Part 6 — Adaptive Strategies and Evidence Validation
 
 **Status: strategy research exists; new autonomous ranking engine is in implementation. Profitability is unproven.**
@@ -121,6 +123,8 @@ Solo Automation uses adaptive strategy selection:
 
 Each strategy has separate required timeframes, holding horizon, entry/exit logic, invalidation, costs and performance attribution.
 
+The Multi-Strategy Assessment Engine must preserve separate assessments and decisions for each strategy. A rejection by one strategy does not cancel another strategy's independent opportunity. Strategy-specific trigger, invalidation, evidence and expiry requirements must be retained. Long-term analysis remains analysis-only and cannot enter paper-intent creation.
+
 The adaptive selector must:
 
 - Evaluate only enabled/eligible strategies.
@@ -133,11 +137,27 @@ The adaptive selector must:
 - Require reproducible walk-forward and untouched holdout testing before claiming strategy quality or profitability.
 - Never force a trade because automation is enabled.
 
+### Continuous Opportunity Engine — approved design, implementation not started
+
+The design specification is `docs/specs/2026-10-31-continuous-opportunity-engine-design.md`.
+
+The design defines three cooperating engines that extend the existing shared market-data and assessment foundation:
+
+1. **Continuous Market Search Engine:** scans configured instruments using validated shared snapshots; discovers candidates and records scan health, freshness and coverage.
+2. **Multi-Strategy Assessment Engine:** independently evaluates scalping, day trading, swing trading, position trading and long-term analysis. Strategy disagreement remains visible; long-term analysis is analysis-only.
+3. **Multi-Opportunity Waiting Engine:** persists independent opportunities, including multiple distinct setups for one symbol; monitors trigger, invalidation, expiry and reassessment conditions; recovers after worker restart.
+
+A trigger only starts fresh signal validation and independent Risk Manager review. It never directly creates a paper intent. PostgreSQL-backed state, idempotency, worker leases, audit history, bounded concurrency and fail-closed recovery are required.
+
+**Status:** design document committed for user review; no feature implementation or runtime verification is claimed. The existing `signal_watcher.py` remains in-memory and `opportunity_intelligence.py` remains stateless until the implementation is completed and tested.
+
 ## Part 7 — Paper Trading, Portfolio Risk and Position Management
 
 **Status: paper ledger, risk controls and protection foundation exist; further integrated verification remains open.**
 
 - Strategy output is a proposal only and may proceed only to independent Risk Manager review.
+- A triggered waiting opportunity must undergo fresh market/signal validation and independent Risk Manager review; trigger events are never order instructions.
+- Opportunity records, state transitions, trigger events and worker claims must be durable and idempotent in PostgreSQL, with restart recovery and duplicate-processing protection.
 - The Risk Manager has exclusive authority to accept or reject paper intents.
 - Apply portfolio-wide aggregate exposure across strategies and symbols.
 - Revalidate market freshness, sizing, balance, stop/invalidation, daily loss, allocation, leverage and Emergency Stop.
@@ -173,6 +193,13 @@ The adaptive selector must:
 `Part 0 → Part 1 → Part 2 → Part 3 → Part 5 → Part 6 → Part 7 → Part 9`
 
 Part 4 consumes stable backend contracts and proceeds alongside integration. Part 8 remains later research work. Do not skip data/reliability gates to accelerate strategy or AI work.
+
+**Continuous Opportunity Engine — design recorded, not implemented.**
+
+- Design specification: `docs/specs/2026-10-31-continuous-opportunity-engine-design.md`.
+- The design is for user review before implementation planning.
+- No new opportunity schema, persistent waiting engine, trigger-to-Risk-Manager handoff or Android opportunity workflow is claimed as implemented.
+- Existing in-memory/stateless component limitations remain until implementation and verification.
 
 ## Current implementation checkpoint — 2026-10-31
 
