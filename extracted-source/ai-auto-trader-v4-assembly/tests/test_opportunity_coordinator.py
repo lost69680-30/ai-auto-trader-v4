@@ -122,12 +122,12 @@ def coordinator(store):
     )
 
 
-def register(engine, store, *, result=None, trigger=101.0, signal_id="signal-1", timeframe="1h", now=None):
+def register(engine, store, *, result=None, trigger=101.0, signal_id="signal-1", timeframe="1h", expires=None, now=None):
     now = now or datetime.now(timezone.utc)
     result = result or assessment()
     return engine.register_assessed_opportunity(
         result,
-        price_plan_result=price_plan(trigger=trigger, signal_id=signal_id, now=now),
+        price_plan_result=price_plan(trigger=trigger, signal_id=signal_id, expires=expires, now=now),
         symbol="BTCUSDT",
         market_type="FUTURES",
         venue="BINANCE_USDM_TESTNET",
@@ -246,20 +246,17 @@ def test_invalidation_and_expiry_are_terminal_and_audited():
     now = datetime.now(timezone.utc)
     store = PostgresOpportunityStore(DSN)
     engine = coordinator(store)
-    invalidated = register(engine, store, trigger=101.0, signal_id="signal-invalid", now=now)
+    invalidated = register(
+        engine, store, trigger=101.0, signal_id="signal-invalid",
+        expires=now + timedelta(minutes=20), now=now,
+    )
     expired = register(
         engine, store, trigger=105.0, signal_id="signal-expired",
-        now=now, timeframe="4h",
+        expires=now + timedelta(minutes=1), now=now, timeframe="4h",
     )
-    # Make the second watch's explicit expiry elapsed while the market update itself remains fresh.
-    with store._connect() as conn:
-        conn.execute(
-            "UPDATE paper_ledger.opportunity_watch_conditions SET expires_at = %s WHERE opportunity_id = %s",
-            (now - timedelta(seconds=1), expired.opportunity_id),
-        )
-
+    later = now + timedelta(minutes=2)
     results = engine.evaluate_market_update(
-        "BTCUSDT", MarketTick("BTCUSDT", 94.0, now, candle_close=94.0), now=now,
+        "BTCUSDT", MarketTick("BTCUSDT", 94.0, later, candle_close=94.0), now=later,
     )
     by_id = {item.opportunity_id: item for item in results}
 
