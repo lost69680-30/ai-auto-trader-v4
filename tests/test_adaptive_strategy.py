@@ -160,3 +160,12 @@ def test_future_timeframe_observation_is_rejected():
     )
     assert result.status == "WAIT"
     assert result.orders_authorized is False
+
+
+def test_adaptive_selector_matches_deployment_package_copy():
+    from pathlib import Path
+
+    root = Path(__file__).parents[1]
+    source = root / "backend" / "adaptive_strategy.py"
+    packaged = root / "extracted-source" / "ai-auto-trader-v4-assembly" / "backend" / "adaptive_strategy.py"
+    assert source.read_text(encoding="utf-8") == packaged.read_text(encoding="utf-8")
