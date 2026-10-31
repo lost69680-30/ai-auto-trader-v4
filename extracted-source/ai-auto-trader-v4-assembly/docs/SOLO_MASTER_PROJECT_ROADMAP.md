@@ -40,6 +40,8 @@ Never infer live connectivity, profitability, production readiness, or phone ins
 - Independent API/worker restart and recovery tests.
 - Graceful shutdown, readiness/health reporting, logs and operational alerts.
 - Verify backup/restore, deployment/rollback, uptime, worker restart and database recovery in staging.
+- **Hosting gate:** the current `solo-futures-websocket-staging` Render service is on the Free plan. Its worker/API processes received SIGTERM and stopped at 2026-10-31 15:41 UTC; the Supabase worker lease then became stale. It is not currently proven to be an always-on host.
+- Preserve the zero-spend constraint. No provider migration, paid plan, or new service is authorized. Northflank Sandbox was previously considered for staging only, but no hosting provider was selected; verify current limits/pricing before any choice.
 - Keep Supabase PostgreSQL, GitHub deployment and encrypted server-side secrets. Do not migrate providers or incur charges without separate approval.
 
 ## Part 2 — Shared Market Data and Timeframes
