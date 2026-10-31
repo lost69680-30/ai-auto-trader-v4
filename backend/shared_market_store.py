@@ -231,8 +231,8 @@ class PostgresMarketFeedStore:
         if not isinstance(payload, dict) or payload.get("orders_authorized") is not False:
             raise ValueError("market intelligence payload must explicitly deny order authorization")
         scan_id = payload.get("scan_id")
-        if not isinstance(scan_id, str) or not scan_id.strip() or len(scan_id) > 200:
-            raise ValueError("market intelligence scan_id must contain 1 to 200 characters")
+        if not isinstance(scan_id, str) or not scan_id.strip() or scan_id != scan_id.strip() or len(scan_id) > 200:
+            raise ValueError("market intelligence scan_id must be a trimmed string of 1 to 200 characters")
         assessed_text = payload.get("assessed_at")
         if not isinstance(assessed_text, str):
             raise ValueError("market intelligence assessed_at is required")
@@ -249,6 +249,8 @@ class PostgresMarketFeedStore:
             raise ValueError("market intelligence payload is future-dated or stale")
 
         market_type = payload.get("market_type")
+        if market_type not in {"SPOT", "FUTURES"}:
+            raise ValueError("market intelligence market_type must be SPOT or FUTURES")
         environment = payload.get("environment")
         venue = payload.get("venue")
         expected_venue = "BINANCE_USDM_TESTNET" if market_type == "FUTURES" else (
