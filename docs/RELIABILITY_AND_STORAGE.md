@@ -114,3 +114,10 @@ The workflows are intentionally manual. GitHub scheduled workflows execute from 
 ### No-cost boundary
 
 No Render plan, Supabase plan, database, or paid add-on was upgraded or created. No keep-alive polling was added to defeat Render Free suspension. Free hosting may still suspend; health probes and scheduled recovery checks do not create an always-on guarantee.
+
+
+### Staging health-probe deployment result
+
+The health-probe code was deployed to staging as Render deployment `dep-dbit5f142hec73beeoq0`, which reached `live`. During the rolling replacement, the new worker correctly refused to start while the old worker still held the PostgreSQL lease. The supervisor retried with bounded backoff; after the old process stopped and its lease was released/expired, the new worker started and resumed publishing. The post-recovery database check at 11:40:06 UTC observed worker status `RUNNING`, 10/10 healthy snapshots, all snapshot authorization flags false, 126 successful scheduler jobs, and zero paper orders or positions. This is evidence of one successful rolling-deploy overlap recovery, not proof of repeated fault injection or uninterrupted availability.
+
+A manual GitHub Actions workflow `.github/workflows/solo-staging-health-check.yml` is also available on this staging branch. It checks `/healthz` and waits up to three minutes for `/readyz` to report a healthy shared worker. It is deliberately manual so it does not create keep-alive traffic or mask Render Free suspension. The workflow has not yet been run from GitHub Actions; direct HTTP verification from this environment was unavailable, so the successful CI tests and Render/database observations are the current evidence.
