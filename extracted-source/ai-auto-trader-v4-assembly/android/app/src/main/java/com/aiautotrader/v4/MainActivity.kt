@@ -38,6 +38,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -49,8 +51,11 @@ internal const val BACKEND_MARKET_READ_TIMEOUT_MS = 75_000
 // UI-only theme preference. This changes presentation only; it cannot affect trading or risk controls.
 private var lightTheme by mutableStateOf(false)
 private val Background: Color get() = if (lightTheme) Color(0xFFF7F5F0) else Color(0xFF0B1018)
-private val Panel: Color get() = if (lightTheme) Color(0xFFFFFFFF) else Color(0xFF151D29)
-private val PanelAlt: Color get() = if (lightTheme) Color(0xFFEEEAE1) else Color(0xFF1B2635)
+private val Panel: Color get() = if (lightTheme) Color(0xEFFFFFFF) else Color(0xD91A2330)
+private val PanelAlt: Color get() = if (lightTheme) Color(0xFFF0EDE6) else Color(0xFF202B3A)
+private val GlassEdge: Color get() = if (lightTheme) Color(0xFFFFFFFF).copy(alpha = .88f) else Color(0xFFE8EEF8).copy(alpha = .13f)
+private val GlassHighlight: Color get() = if (lightTheme) Color(0xFFFFFFFF).copy(alpha = .78f) else Color(0xFF52657D).copy(alpha = .20f)
+private val GlassShade: Color get() = if (lightTheme) Color(0xFFD9D1C4).copy(alpha = .18f) else Color(0xFF05080D).copy(alpha = .30f)
 private val Gold = Color(0xFFD8B878)
 private val Green: Color get() = if (lightTheme) Color(0xFF087F5B) else Color(0xFF43D9A3)
 private val Red: Color get() = if (lightTheme) Color(0xFFC6283D) else Color(0xFFFF6B78)
@@ -1077,8 +1082,9 @@ private fun TraderApp() {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             screens.forEach { item ->
                 val selected = screen == item || (item == "Markets" && screen == "Charts & Analysis")
-                Box(Modifier.background(if (selected) Gold.copy(alpha = .16f) else Panel, RoundedCornerShape(12.dp))
-                    .border(1.dp, if (selected) Gold.copy(alpha = .8f) else Grid, RoundedCornerShape(12.dp))
+                Box(Modifier.shadow(if (selected) 7.dp else 2.dp, RoundedCornerShape(12.dp))
+                    .background(if (selected) Brush.linearGradient(listOf(Gold.copy(alpha = .24f), Gold.copy(alpha = .08f))) else Brush.linearGradient(listOf(Panel, PanelAlt)), RoundedCornerShape(12.dp))
+                    .border(1.dp, if (selected) Gold.copy(alpha = .75f) else GlassEdge, RoundedCornerShape(12.dp))
                     .clickable { screen = if (item == "Markets") "Charts & Analysis" else item }.padding(horizontal = 13.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
                     Text(item, color = if (selected) Gold else Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
@@ -1774,8 +1780,21 @@ private fun EmptyChart(modifier: Modifier, kind: ChartKind) {
 
 @Composable
 private fun CardPanel(content: @Composable ColumnScope.() -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(16.dp)) {
-        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+    val shape = RoundedCornerShape(18.dp)
+    Card(
+        modifier = Modifier.shadow(if (lightTheme) 5.dp else 9.dp, shape)
+            .border(1.dp, GlassEdge, shape),
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = shape,
+        elevation = CardDefaults.cardElevation(defaultElevation = if (lightTheme) 2.dp else 4.dp)
+    ) {
+        Column(
+            Modifier.fillMaxWidth()
+                .background(Brush.linearGradient(listOf(GlassHighlight, Panel, GlassShade)), shape)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            content = content
+        )
     }
 }
 
@@ -1784,9 +1803,19 @@ private fun SectionTitle(text: String) { Text(text, color = Muted, fontSize = 11
 
 @Composable
 private fun MetricCard(title: String, value: String, note: String, modifier: Modifier = Modifier) {
-    Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(15.dp)) {
-        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(title, color = Muted, fontSize = 11.sp); Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold); Text(note, color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+    val shape = RoundedCornerShape(16.dp)
+    Card(
+        modifier = modifier.shadow(if (lightTheme) 4.dp else 7.dp, shape).border(1.dp, GlassEdge, shape),
+        colors = CardDefaults.cardColors(containerColor = Panel), shape = shape,
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+    ) {
+        Column(
+            Modifier.background(Brush.linearGradient(listOf(GlassHighlight, Panel, GlassShade)), shape).padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(title, color = Muted, fontSize = 11.sp)
+            Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(note, color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
         }
     }
 }
@@ -1803,8 +1832,14 @@ private fun StatusLine(symbol: String, text: String, color: Color) { Row(vertica
 
 @Composable
 private fun ChoiceChip(text: String, selected: Boolean, onClick: () -> Unit) {
-    Box(Modifier.background(if (selected) Gold.copy(alpha=.17f) else PanelAlt, RoundedCornerShape(9.dp)).border(1.dp, if (selected) Gold else Grid, RoundedCornerShape(9.dp)).clickable(onClick = onClick).padding(horizontal=11.dp, vertical=8.dp)) {
-        Text(text, color=if(selected) Gold else Muted, fontSize=11.sp, fontWeight=FontWeight.SemiBold)
+    val shape = RoundedCornerShape(10.dp)
+    Box(
+        Modifier.shadow(if (selected) 4.dp else 1.dp, shape)
+            .background(if (selected) Brush.linearGradient(listOf(Gold.copy(alpha = .24f), Gold.copy(alpha = .08f))) else Brush.linearGradient(listOf(PanelAlt, Panel)), shape)
+            .border(1.dp, if (selected) Gold.copy(alpha = .78f) else GlassEdge, shape)
+            .clickable(onClick = onClick).padding(horizontal = 11.dp, vertical = 8.dp)
+    ) {
+        Text(text, color = if (selected) Gold else Muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
