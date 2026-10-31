@@ -83,7 +83,7 @@ class StrategySelection:
     selected_strategy: str | None
     direction: str
     fit_score: float | None
-    execution_eligible: bool
+    eligible_for_risk_review: bool
     no_trade_reason: str | None
     ranking: tuple[StrategyRank, ...]
     orders_authorized: bool = False
