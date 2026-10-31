@@ -263,6 +263,35 @@ private data class MarketFetchResult(
     val safeResponse: Boolean,
 )
 
+private data class MarketIntelligenceItem(
+    val symbol: String,
+    val direction: String,
+    val marketRegime: String,
+    val longTermBias: String,
+    val mediumTermBias: String,
+    val shortTermBias: String,
+    val decision: String,
+    val selectedStrategy: String,
+    val proposedDirection: String,
+    val fitScore: String,
+    val eligibleForRiskReview: Boolean,
+    val noTradeReason: String,
+    val conflicts: List<String>,
+    val inProgressTimeframes: List<String>,
+    val dataQualityIssues: List<String>,
+)
+
+private data class MarketIntelligenceFetchResult(
+    val status: String,
+    val assessedAt: String,
+    val marketType: String,
+    val environment: String,
+    val venue: String,
+    val items: List<MarketIntelligenceItem>,
+    val reason: String,
+    val safeResponse: Boolean,
+)
+
 // App-level observable state deliberately lives above individual navigation screens.
 // Removing a composable from the screen tree must not erase an authenticated session.
 private object BackendSession {
@@ -282,6 +311,11 @@ private object BackendSession {
     val marketItems = mutableStateOf<List<MarketInstrument>>(emptyList())
     val marketLoading = mutableStateOf(false)
     val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+    val marketIntelligence = mutableStateOf<List<MarketIntelligenceItem>>(emptyList())
+    val marketIntelligenceStatus = mutableStateOf("NOT CHECKED")
+    val marketIntelligenceMessage = mutableStateOf("Waiting for the first scheduled market scan.")
+    val marketIntelligenceAssessedAt = mutableStateOf("")
+    val marketIntelligenceEnvironment = mutableStateOf("UNKNOWN")
     // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
     val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
 }
