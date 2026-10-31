@@ -303,6 +303,31 @@ class OpportunityCoordinator:
             idempotency_key=f"assessment:{opportunity_id}:{assessment.strategy_id}:{assessment.assessment_version}",
             now=stamp,
         )
+        for reference in refs:
+            evidence_hash = hashlib.sha256(
+                f"{opportunity_id}|{reference}".encode("utf-8")
+            ).hexdigest()[:40]
+            evidence_type = (
+                "MARKET_SNAPSHOT" if reference.startswith("market-snapshot:")
+                else "CLOSED_CANDLE" if reference.startswith("closed-candle:")
+                else "MARKET_REFERENCE"
+            )
+            self.store.append_evidence(
+                OpportunityEvidenceRecord(
+                    evidence_id="evidence-" + evidence_hash,
+                    opportunity_id=opportunity_id,
+                    evidence_type=evidence_type,
+                    reference_id=reference,
+                    observed_at=market_data_at,
+                    payload={
+                        "strategy_assessment_id": persisted_assessment_id,
+                        "orders_authorized": False,
+                    },
+                    orders_authorized=False,
+                ),
+                idempotency_key=f"evidence:{opportunity_id}:{evidence_hash}",
+                now=stamp,
+            )
 
         if saved.state == "DISCOVERED":
             saved = self.store.transition(
@@ -430,9 +455,10 @@ class OpportunityCoordinator:
                     direction=record.direction,
                     trigger_price=watch.trigger_price,
                     trigger_rule=watch.trigger_rule,
-                    created_at=_utc(record.metadata["price_plan"]["created_at"] and datetime.fromisoformat(
-                        record.metadata["price_plan"]["created_at"]
-                    ), "price plan created_at"),
+                    created_at=_utc(
+                        datetime.fromisoformat(record.metadata["price_plan"]["created_at"]),
+                        "price plan created_at",
+                    ),
                     expires_at=watch.expires_at,
                     invalidation_price=watch.invalidation_price,
                 )
