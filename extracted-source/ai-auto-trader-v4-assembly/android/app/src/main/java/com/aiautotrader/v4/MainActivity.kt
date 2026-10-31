@@ -1662,6 +1662,8 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
                         Tag(item.decision, if (item.decision == "SELECTED") Green else Gold)
                     }
                     IndicatorRow("Market regime", item.marketRegime)
+                    IndicatorRow("Market phase", item.marketPhase)
+                    IndicatorRow("Opportunity rank", item.opportunityRank?.let { "#$it" } ?: "Not ranked")
                     IndicatorRow("Adaptive strategy", item.selectedStrategy)
                     Text(
                         when (item.decision) {
