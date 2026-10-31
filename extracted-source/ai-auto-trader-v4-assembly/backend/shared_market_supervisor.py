@@ -10,6 +10,8 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from backend.shared_market_store import PostgresMarketFeedStore
+
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +53,39 @@ def _start(module: str, env: dict[str, str]) -> subprocess.Popen:
     return subprocess.Popen([sys.executable, "-m", module], env=env)
 
 
+def worker_heartbeat_requires_restart(
+    status: Any, *, uptime_seconds: float, startup_grace_seconds: float = 180.0
+) -> bool:
+    """Return true only for a confirmed stale/missing worker after startup grace.
+
+    A database read exception is handled by the caller and must not be treated as
+    proof of worker failure. DEGRADED is deliberately not stale: a worker that is
+    still publishing fresh health is allowed to recover its data source.
+    """
+    if uptime_seconds < startup_grace_seconds or not isinstance(status, dict):
+        return False
+    worker_status = status.get("worker_status")
+    return (
+        status.get("status") == "STALE"
+        or worker_status in {"STOPPED", "ERROR"}
+        or worker_status == "MISSING"
+    )
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     worker_env, api_env = build_child_environments(os.environ)
     max_delay = max(1.0, float(os.environ.get("PAPER_SUPERVISOR_MAX_RESTART_DELAY_SECONDS", "30")))
+    max_market_age = max(5.0, float(os.environ.get("PAPER_MAX_MARKET_AGE_SECONDS", "90")))
+    startup_grace = max(30.0, float(os.environ.get("PAPER_SUPERVISOR_WORKER_STARTUP_GRACE_SECONDS", "180")))
+    health_check_interval = max(2.0, float(os.environ.get("PAPER_SUPERVISOR_WORKER_HEALTH_CHECK_SECONDS", "5")))
+    market_store = PostgresMarketFeedStore(
+        os.environ.get("PAPER_DATABASE_URL", "").strip(),
+        worker_id=os.environ.get("PAPER_MARKET_WORKER_ID", "solo-market-worker"),
+        max_age_seconds=max_market_age,
+        lease_seconds=max(90.0, float(os.environ.get("PAPER_MARKET_WORKER_LEASE_SECONDS", "90"))),
+    )
+    last_worker_health_check = 0.0
     modules = {
         "worker": ("backend.shared_market_worker", worker_env),
         "api": ("app.engines.read_only_api", api_env),
@@ -87,6 +118,27 @@ def main() -> None:
                 proc = state["process"]
                 exit_code = proc.poll()
                 if exit_code is None:
+                    if name == "worker" and now - last_worker_health_check >= health_check_interval:
+                        last_worker_health_check = now
+                        try:
+                            worker_status = market_store.status()
+                        except Exception:
+                            # A transient PostgreSQL read failure is not proof that the
+                            # worker is dead. The API readiness check remains fail-closed.
+                            logger.exception("worker heartbeat health check unavailable; preserving worker process")
+                        else:
+                            if worker_heartbeat_requires_restart(
+                                worker_status,
+                                uptime_seconds=now - state["started_at"],
+                                startup_grace_seconds=startup_grace,
+                            ):
+                                logger.error(
+                                    "worker heartbeat stale while process is alive; terminating for supervised recovery status=%s worker_status=%s age_seconds=%s",
+                                    worker_status.get("status"),
+                                    worker_status.get("worker_status"),
+                                    worker_status.get("age_seconds"),
+                                )
+                                proc.terminate()
                     if now - state["started_at"] >= 30:
                         state["restart_delay"] = 1.0
                     continue
