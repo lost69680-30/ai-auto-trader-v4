@@ -675,6 +675,34 @@ def main() -> None:
             limit=analysis_candle_limit,
         )
 
+    market_history = None
+    if testnet and market_mode == "futures" and os.environ.get("PAPER_DATABASE_URL", "").strip():
+        from backend.historical_candle_archive import PostgresCandleArchive
+        history_archive = PostgresCandleArchive(os.environ["PAPER_DATABASE_URL"])
+
+        def market_history(symbol: str, start: datetime, end: datetime, limit: int) -> dict:
+            if symbol not in symbols:
+                raise ValueError("symbol is not in the configured market allowlist")
+            rows = history_archive.read_closed_candles(
+                venue="BINANCE_USDM_TESTNET", market_type="FUTURES",
+                symbol=symbol, start=start, end=end, limit=limit,
+            )
+            return {
+                "symbol": symbol,
+                "venue": "BINANCE_USDM_TESTNET",
+                "market_type": "FUTURES",
+                "interval": "1m",
+                "candles": [{
+                    "open_time": row.open_time.isoformat(),
+                    "close_time": row.close_time.isoformat(),
+                    "open": row.open, "high": row.high, "low": row.low,
+                    "close": row.close, "volume": row.volume, "is_closed": True,
+                } for row in rows],
+                "orders_authorized": False,
+                "mode": "PAPER_ONLY",
+            }
+        logging.info("Authenticated read-only historical candle archive endpoint enabled for Futures Testnet")
+
     stop = threading.Event()
 
     def poll_loop() -> None:
@@ -718,6 +746,7 @@ def main() -> None:
         http_app = create_app(database_path=database, token=token,
                               market_status=cache.status, market_items=cache.items,
                               market_candles=market_candles,
+                              market_history=market_history,
                               account_status=binance_testnet_account.account_summary,
                               analysis_status=(cache.analysis_status if hasattr(cache, "analysis_status") else analysis_health.status))
         if enable_websocket:
