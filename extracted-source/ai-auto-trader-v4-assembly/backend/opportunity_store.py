@@ -517,6 +517,13 @@ class PostgresOpportunityStore:
                 raise ValueError("long-term analysis is not eligible for watch conditions")
             if opportunity["state"] not in {"ASSESSING", "WAITING", "REASSESSING"}:
                 raise ValueError("watch conditions require an opportunity in ASSESSING, WAITING or REASSESSING")
+            expiry = _utc(record.expires_at, field_name="expires_at")
+            stored_opportunity = conn.execute(
+                "SELECT expires_at FROM paper_ledger.opportunities WHERE opportunity_id = %s",
+                (record.opportunity_id,),
+            ).fetchone()
+            if stored_opportunity["expires_at"] is not None and expiry > stored_opportunity["expires_at"]:
+                raise ValueError("watch condition cannot outlive its opportunity")
             row = conn.execute(
                 """INSERT INTO paper_ledger.opportunity_watch_conditions
                    (watch_id, opportunity_id, idempotency_key, trigger_rule,
@@ -650,11 +657,10 @@ class PostgresOpportunityStore:
                    LEFT JOIN paper_ledger.opportunity_claims c
                      ON c.opportunity_id = o.opportunity_id
                    WHERE o.state IN ('WAITING', 'REASSESSING')
-                     AND (o.expires_at IS NULL OR o.expires_at > %s)
                      AND (c.opportunity_id IS NULL OR c.lease_expires_at <= %s)
                    ORDER BY o.updated_at, o.opportunity_id
                    FOR UPDATE OF o SKIP LOCKED LIMIT %s""",
-                (stamp, stamp, limit),
+                (stamp, limit),
             ).fetchall()
             for row in rows:
                 lease = conn.execute(
