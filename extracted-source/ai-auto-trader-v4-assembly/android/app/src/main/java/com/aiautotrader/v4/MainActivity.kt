@@ -1508,6 +1508,21 @@ private fun PositionsScreen() {
                 IndicatorRow("Recorded", order.recordedAt)
             }
         }
+        SectionTitle("PAPER FILLS")
+        if (snapshot == null || snapshot.fills.isEmpty()) {
+            CardPanel { Text(if (snapshot == null) "Fill history unavailable" else "No paper fills recorded", color = Muted, fontSize = 12.sp) }
+        } else snapshot.fills.take(30).forEach { fill ->
+            CardPanel {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(displaySymbol(fill.symbol), fontWeight = FontWeight.SemiBold)
+                    Tag(fill.side, Color(0xFFFFC857))
+                }
+                IndicatorRow("Quantity", fill.quantity.toString())
+                IndicatorRow("Market / fill price", formatMarketPrice(fill.marketPrice) + " / " + formatMarketPrice(fill.fillPrice))
+                IndicatorRow("Fee / slippage", fill.fee.toString() + " / " + fill.slippageBps + " bps")
+                IndicatorRow("Filled at", fill.filledAt)
+            }
+        }
         SectionTitle("ORDER SAFETY")
         CardPanel {
             SafetyRow("Live exchange orders", "DISABLED", Green)
