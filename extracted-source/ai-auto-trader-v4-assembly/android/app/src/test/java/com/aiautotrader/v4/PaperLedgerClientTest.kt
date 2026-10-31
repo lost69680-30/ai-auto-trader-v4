@@ -88,4 +88,22 @@ class PaperLedgerClientTest {
                 .put("items", JSONArray().put(valid).put(JSONObject())))
         }
     }
+    @Test
+    fun parsesPaperFillsAndRejectsUnsafePartialResponses() {
+        val fill = JSONObject().put("fill_id", 1).put("proposal_id", "p-1")
+            .put("symbol", "BTCUSDT").put("side", "LONG").put("quantity", 0.01)
+            .put("market_price", 60000.0).put("fill_price", 60001.0).put("fee", 0.1)
+            .put("slippage_bps", 0.2).put("filled_at", "2026-10-31T00:00:00Z")
+        val parsed = parsePaperFills(JSONObject().put("orders_authorized", false)
+            .put("items", JSONArray().put(fill)))
+        assertEquals(1, parsed.size)
+        assertEquals(60001.0, parsed.single().fillPrice, 0.0)
+        assertThrows(IllegalArgumentException::class.java) {
+            parsePaperFills(JSONObject().put("orders_authorized", true).put("items", JSONArray()))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            parsePaperFills(JSONObject().put("orders_authorized", false).put("items", JSONArray().put(JSONObject())))
+        }
+    }
+
 }
