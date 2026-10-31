@@ -272,6 +272,7 @@ private data class MarketIntelligenceItem(
     val mediumTermBias: String,
     val shortTermBias: String,
     val decision: String,
+    val opportunityRank: Int?,
     val selectedStrategy: String,
     val proposedDirection: String,
     val fitScore: String,
@@ -987,6 +988,7 @@ private fun fetchMarketIntelligence(token: String): MarketIntelligenceFetchResul
                 mediumTermBias = assessment.optString("medium_term_bias", "UNKNOWN"),
                 shortTermBias = assessment.optString("short_term_bias", "UNKNOWN"),
                 decision = selection.optString("decision", "UNKNOWN"),
+                opportunityRank = selection.optInt("opportunity_rank", -1).takeIf { it > 0 },
                 selectedStrategy = selectedStrategy,
                 proposedDirection = selection.optString("direction", "NONE"),
                 fitScore = fitScore,
@@ -1869,6 +1871,7 @@ private fun AnalysisScreen() {
                     IndicatorRow("Market phase", selectedIntelligence.marketPhase)
                     IndicatorRow("Overall direction", selectedIntelligence.direction)
                     IndicatorRow("Long / medium / short", "${selectedIntelligence.longTermBias} / ${selectedIntelligence.mediumTermBias} / ${selectedIntelligence.shortTermBias}")
+                    IndicatorRow("Opportunity rank", selectedIntelligence.opportunityRank?.let { "#$it" } ?: "Not ranked")
                     IndicatorRow("Selected strategy", selectedIntelligence.selectedStrategy)
                     IndicatorRow("Candidate direction", selectedIntelligence.proposedDirection)
                     IndicatorRow("Strategy fit score", selectedIntelligence.fitScore)
