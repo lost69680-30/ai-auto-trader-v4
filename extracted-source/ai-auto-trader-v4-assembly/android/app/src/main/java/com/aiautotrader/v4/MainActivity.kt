@@ -297,6 +297,10 @@ private data class MarketIntelligenceFetchResult(
     val items: List<MarketIntelligenceItem>,
     val reason: String,
     val safeResponse: Boolean,
+    val scanJobStatus: String = "UNKNOWN",
+    val scanStartedAt: String = "",
+    val scanCompletedAt: String = "",
+    val scanAttempts: Int = 0,
 )
 
 // App-level observable state deliberately lives above individual navigation screens.
