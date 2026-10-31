@@ -426,20 +426,30 @@ class BinanceUsdMFuturesAdapter:
         interval: str = "1m",
         limit: int = 100,
         now: datetime | None = None,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
     ) -> tuple[MarketCandle, ...]:
         """Retrieve validated klines; current in-progress candle is marked open."""
+
         if not isinstance(symbol, str) or not symbol or symbol != symbol.upper():
             raise ValueError("symbol must be non-empty and uppercase-normalized")
         if interval not in SUPPORTED_INTERVALS:
             raise ValueError("unsupported kline interval")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1500:
             raise ValueError("limit must be an integer from 1 through 1500")
+        for name, value in (("start_time_ms", start_time_ms), ("end_time_ms", end_time_ms)):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+                raise ValueError(f"{name} must be a non-negative integer")
+        if start_time_ms is not None and end_time_ms is not None and end_time_ms < start_time_ms:
+            raise ValueError("end_time_ms must be greater than or equal to start_time_ms")
         supplied_clock = now is not None
         requested_at = _aware_utc(now)
-        payload = self._list_payload(
-            self._get(self.kline_path, {"symbol": symbol, "interval": interval, "limit": limit}),
-            self.kline_path,
-        )
+        params = {"symbol": symbol, "interval": interval, "limit": limit}
+        if start_time_ms is not None:
+            params["startTime"] = start_time_ms
+        if end_time_ms is not None:
+            params["endTime"] = end_time_ms
+        payload = self._list_payload(self._get(self.kline_path, params), self.kline_path)
         # Resolve the wall clock at response completion by default, so a request
         # crossing a candle boundary does not misclassify the new candle as future.
         now_utc = requested_at if supplied_clock else datetime.now(timezone.utc)
