@@ -346,7 +346,15 @@ class MarketWebSocketClientTest {
                 }
             }),
         )
-        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {}))
+        val peerCloseReceived = CountDownLatch(1)
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(code, reason)
+            }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                peerCloseReceived.countDown()
+            }
+        }))
         val stream = MarketWebSocketClient(
             onStatus = { if (it == "RECONNECTING") reconnecting.countDown() },
             onSnapshot = {
@@ -376,9 +384,11 @@ class MarketWebSocketClientTest {
             assertNotNull(server.takeRequest(3, TimeUnit.SECONDS))
         } finally {
             stream.close()
-            server.shutdown()
+            val closeHandshakeCompleted = peerCloseReceived.await(2, TimeUnit.SECONDS)
             httpClient.dispatcher.executorService.shutdown()
             httpClient.connectionPool.evictAll()
+            server.shutdown()
+            assertTrue("server should complete the WebSocket close handshake", closeHandshakeCompleted)
         }
     }
 
