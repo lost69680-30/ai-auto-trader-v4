@@ -153,6 +153,9 @@ def test_valid_assessment_and_explicit_price_plan_create_durable_waiting_opportu
     saved_assessments = store.list_assessments(created.opportunity_id)
     assert len(saved_assessments) == 1
     assert saved_assessments[0].orders_authorized is False
+    saved_evidence = store.list_evidence(created.opportunity_id)
+    assert len(saved_evidence) == 3
+    assert all(item.orders_authorized is False for item in saved_evidence)
     assert [event.to_state for event in store.list_events(created.opportunity_id)] == [
         "DISCOVERED", "ASSESSING", "WAITING"
     ]
@@ -334,3 +337,24 @@ def test_non_numeric_market_tick_fails_closed_without_triggering():
 
     assert result[0].status == "WAIT_RECHECK"
     assert store.get_opportunity(created.opportunity_id).state == "WAITING"
+
+
+def test_reassessment_provider_failure_keeps_waiting_state_and_releases_lease():
+    reset_registry()
+    now = datetime.now(timezone.utc)
+    store = PostgresOpportunityStore(DSN)
+    engine = coordinator(store)
+    created = register(engine, store, now=now)
+
+    def unavailable(symbol, stamp):
+        raise TimeoutError("private upstream response details")
+
+    run = engine.reassess_due(
+        now=now, market_update_provider=unavailable, limit=10,
+    )
+
+    assert run.results[0].status == "WAIT_RECHECK"
+    assert "TimeoutError" in run.results[0].reason
+    assert "private upstream response details" not in run.results[0].reason
+    assert store.get_opportunity(created.opportunity_id).state == "WAITING"
+    assert store.release_claim(created.opportunity_id, owner="test-opportunity-coordinator") is False
