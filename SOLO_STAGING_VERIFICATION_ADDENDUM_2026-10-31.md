@@ -46,3 +46,24 @@ Earlier Render logs showed the supervisor starting the API and market-worker chi
 6. Keep PR #60 unmerged until remaining phone acceptance and review are complete.
 
 **Safety invariant:** paper-only/read-only; `orders_authorized=false`. AI/strategy components cannot override the independent risk manager.
+
+
+## Follow-up source-integrity and live staging check — 2026-10-31 02:33 UTC
+
+A further read-only review of the mainline source and current staging records found:
+
+- PostgreSQL worker heartbeat: `RUNNING` at 02:32:32 UTC; lease expiry 02:34:02 UTC; analysis status `ANALYZED`; no unhealthy symbols; `orders_authorized=false`.
+- Ten allowlisted Futures symbols had healthy snapshots checked at 02:32:37 UTC: BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT, ADAUSDT, DOGEUSDT, TRXUSDT, LINKUSDT and AVAXUSDT. Snapshot payloads identify Futures mark-price data and all report `orders_authorized=false`.
+- Durable scheduler records: 17 succeeded; no pending or failed jobs were returned by the status query. The only registered handler remains the read-only market-feed health audit.
+- Render application logs showed the shared market worker analyzing all ten symbols at roughly 24–25 second intervals, with scheduled health-audit jobs completing. This is a point-in-time/short-window check, not a 24-hour uptime guarantee.
+- The Render service remains Free, one instance, auto-deploy disabled, and points to `fix/futures-context-mainline`. No service configuration, secret, plan, or billing change was made.
+- The supervisor source starts API and worker as separate child processes, strips the API bearer token and Binance credentials from the worker environment, and strips Binance credentials from the API environment. Unit tests exercise isolated worker/API child restart behavior with mocked processes. Hosted independent API-only/worker-only fault injection remains unverified.
+- Six Android source/mirror pairs were compared by Git blob SHA on the staging APK branch; all six matched exactly (Gradle config, MainActivity, encrypted token store, WebSocket client, freshness validator, and manifest).
+- Android token storage uses AES-GCM with an Android Keystore key and persists ciphertext in private app preferences. Startup reads/decrypts the saved token into the connection field. This is source inspection only; user confirmation after app restart remains outstanding.
+- PR #60 remains open with no submitted reviews. Its head branch is 8 commits ahead and 5 commits behind the current mainline branch. Do not merge until branch freshness/conflict status is rechecked, review is completed, and the remaining phone acceptance checks pass.
+
+## Research and risk interpretation
+
+The current research stack is explicitly heuristic: strategy confidence and opportunity scores are screening values, not calibrated probabilities or profitability estimates. The research pipeline requires agreement between opportunity, strategy, and liquidity/structure engines and returns `NO_TRADE` when evidence is missing or conflicting. The independent risk guardian caps daily loss at 2% of the formal equity baseline, single-asset allocation at 10%, and gross exposure at 1x, and recomputes stop-distance risk. These source-level checks do not establish profitability or prove every runtime lifecycle path; calibration, baseline comparison, leakage-safe walk-forward/holdout tests, and adversarial risk testing remain open.
+
+**Safety unchanged:** staging only; paper-only/read-only; `orders_authorized=false`. Production service/database, credentials, billing, and live trading authorization were not changed.
