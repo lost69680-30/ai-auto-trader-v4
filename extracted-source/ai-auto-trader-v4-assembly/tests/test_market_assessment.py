@@ -31,7 +31,7 @@ def _fixed_series(interval_seconds, *, count=60, direction=1, gap_at=None):
 def test_assessment_separates_long_medium_and_short_timeframe_context():
     candles = {
         "1w": _fixed_series(7 * 86400, direction=-1),
-        "1d": _fixed_series(86400, direction=-1),
+        "1d": _fixed_series(86400, direction=1),
         "4h": _fixed_series(4 * 3600, direction=1),
         "1h": _fixed_series(3600, direction=1),
         "15m": _fixed_series(900, direction=1),
@@ -69,7 +69,12 @@ def test_assessment_rejects_gapped_duplicate_stale_and_future_candle_series():
     gapped = _fixed_series(60, gap_at=30)
     duplicate = list(_fixed_series(60))
     duplicate[40] = duplicate[39]
-    stale = _fixed_series(60)
+    fresh_rows = _fixed_series(60)
+    stale = tuple(
+        _candle("BTCUSDT", row.open_time - timedelta(days=2),
+                row.close_time - timedelta(days=2), row.close)
+        for row in fresh_rows
+    )
     future = list(_fixed_series(60))
     last = future[-1]
     future[-1] = _candle(
