@@ -197,7 +197,7 @@ def test_backfill_paginates_from_last_archived_minute_and_recovers_gap():
 
         def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
             self.calls.append((symbol, interval, limit, start_time_ms, end_time_ms))
-            all_rows = [minute(i) for i in range(5)]
+            all_rows = [minute(i) for i in range(6)]
             return tuple(
                 SimpleNamespace(
                     symbol=symbol, open_time=row.open_time, close_time=row.close_time,
@@ -216,9 +216,9 @@ def test_backfill_paginates_from_last_archived_minute_and_recovers_gap():
         testnet=True, now=BASE + timedelta(minutes=6), page_size=2,
     )
 
-    assert count == 5
+    assert count == 6
     assert len(source.calls) == 3
-    assert [row.open_time for row in archive.inserted] == [BASE + timedelta(minutes=i) for i in range(5)]
+    assert [row.open_time for row in archive.inserted] == [BASE + timedelta(minutes=i) for i in range(6)]
 
 
 def test_backfill_refuses_production_or_unsupported_market_type():
