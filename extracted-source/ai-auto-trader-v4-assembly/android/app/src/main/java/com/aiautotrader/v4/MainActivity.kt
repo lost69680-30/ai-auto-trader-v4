@@ -943,7 +943,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        BackendSession.token.value = BackendTokenStore(applicationContext).read().orEmpty()
+        val restoredSession = restoredBackendSession(BackendTokenStore(applicationContext).read())
+        BackendSession.token.value = restoredSession.editableToken
+        BackendSession.activeToken.value = restoredSession.activeToken
         setContent {
             MaterialTheme(colorScheme = if (lightTheme) lightColorScheme(primary = Gold, background = Background, surface = Panel,
                 onBackground = White, onSurface = White) else darkColorScheme(primary = Gold, background = Background, surface = Panel,
