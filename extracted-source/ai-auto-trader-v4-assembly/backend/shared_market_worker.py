@@ -99,9 +99,13 @@ def main() -> None:
             intelligence_candle_limit = int(
                 os.environ.get("PAPER_MARKET_INTELLIGENCE_CANDLE_LIMIT", "200")
             )
+            intelligence_fetch_workers = int(
+                os.environ.get("PAPER_MARKET_INTELLIGENCE_FETCH_WORKERS", "12")
+            )
             intelligence_handlers["market_intelligence_scan"] = market_intelligence_scan(
                 store, app.worker.source, app.config.symbols,
                 market_type="FUTURES", candle_limit=intelligence_candle_limit,
+                max_fetch_workers=intelligence_fetch_workers,
             )
         dispatcher = AnalysisJobDispatcher(
             scheduler,
