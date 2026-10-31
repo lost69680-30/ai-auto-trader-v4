@@ -13,7 +13,18 @@ Task 1: complete
 - The PostgreSQL tests ran against disposable GitHub Actions PostgreSQL services. The Supabase database was not migrated or modified.
 - No deployment, hosting, secret, billing, or live-trading configuration was changed.
 
-Task 2: not started
+Task 2: complete
+
+- Added independent, versioned assessments for scalping, day, swing, position and long-term analysis.
+- Reused the timeframe requirements already defined by the existing adaptive strategy module; did not introduce a new timeframe schedule.
+- Preserved strategy disagreement and per-strategy decisions without a majority vote.
+- Long-term analysis is structurally analysis-only and cannot become risk-review or paper eligible.
+- Missing evidence and assessor exceptions fail closed; scores remain heuristic and NOT_CALIBRATED.
+- TDD RED observed: initial CI collection failed because backend.strategy_assessment_engine did not exist.
+- Verification: Durable Paper Ledger workflow passed (6 PostgreSQL ledger tests; full backend suite 487 passed, 13 skipped); ASGI runtime and Step 3 source-parity/market-data validation passed.
+- No live order capability, database migration application, deployment, hosting, secrets, or billing changes were made.
+
+
 Task 3: not started
 Task 4: not started
 Task 5: not started
