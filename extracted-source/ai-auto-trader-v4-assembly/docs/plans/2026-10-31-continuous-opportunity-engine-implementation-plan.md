@@ -52,7 +52,7 @@ All new paths below are proposed; preserve the assembly's existing package and t
 ## Task 1: Add the durable opportunity registry and append-only event store
 
 **Files:**
-- Create: `supabase/migrations/<new_timestamp>_create_opportunity_registry.sql` (proposed; timestamp must be unique and later than the current migration set).
+- Create: `supabase/migrations/20261031170000_create_opportunity_registry.sql` (proposed; proposed timestamp; confirm no later migration exists before applying).
 - Create: `extracted-source/ai-auto-trader-v4-assembly/backend/opportunity_store.py` (proposed).
 - Test: `extracted-source/ai-auto-trader-v4-assembly/tests/test_opportunity_store.py` (proposed).
 - Modify: migration test setup in `extracted-source/ai-auto-trader-v4-assembly/tests/test_shared_market_data_store.py` only to include the new migration in the test database reset sequence, if that test harness remains the shared migration runner.
@@ -100,7 +100,7 @@ Enforce `orders_authorized = false` with database CHECK constraints on all oppor
 
 Implement transitions in a database transaction using row locking or a compare-and-swap version predicate. The event append and state update must commit or roll back together. A duplicate event key returns the recorded outcome without repeating side effects. A claim lease is owner-bound and reclaimable only after expiry. Never treat a lost claim or database exception as permission to continue processing.
 
-The state transition validator must encode the design's allowed lifecycle and terminal states. It must reject direct transitions to `PAPER_OPEN` from search, assessment, waiting or trigger code; only the later risk-approved integration may mark paper-open after the existing paper ledger confirms the intent was recorded.
+The state transition validator must encode the design's allowed lifecycle and terminal states. It must reject direct transitions to `PAPER_OPEN` from search, assessment, waiting or trigger code. The later risk-approved integration must use a distinct recorded-intent state/event if the paper ledger only accepts an intent; it may transition to `PAPER_OPEN` only if the existing paper ledger confirms the simulated position is actually open. Final state mapping is gated by product decision 6 below.
 
 - [ ] **Step 4: Verify the focused pass**
 
@@ -125,7 +125,7 @@ Expected: existing shared market-data and scheduled-job behavior remains green; 
 - [ ] **Step 6: Commit the passing deliverable**
 
 ```bash
-git add supabase/migrations/<new_timestamp>_create_opportunity_registry.sql extracted-source/ai-auto-trader-v4-assembly/backend/opportunity_store.py extracted-source/ai-auto-trader-v4-assembly/tests/test_opportunity_store.py extracted-source/ai-auto-trader-v4-assembly/tests/test_shared_market_data_store.py
+git add supabase/migrations/20261031170000_create_opportunity_registry.sql extracted-source/ai-auto-trader-v4-assembly/backend/opportunity_store.py extracted-source/ai-auto-trader-v4-assembly/tests/test_opportunity_store.py extracted-source/ai-auto-trader-v4-assembly/tests/test_shared_market_data_store.py
 git commit -m "feat: add durable opportunity registry"
 ```
 
@@ -385,7 +385,7 @@ Expected: new worker/API tests fail until the handlers and routes exist; existin
 
 Register new scheduled jobs through the existing durable scheduler and allowlist only research, reassessment and validation handlers. Keep scan/reassessment execution independent of feed polling and worker heartbeat. Use existing worker lease and restart supervision; do not add another supervisor or market-data connection.
 
-For a triggered opportunity, enqueue fresh validation. The validation handler must reload the current closed-candle/snapshot evidence, confirm the opportunity is still active and unexpired, create or retrieve an explicit strategy-approved price plan, call the existing `prepare_signal` validation boundary, and then pass the valid signal through the existing `PaperSignalCycle`/orchestrator. If a price plan cannot be produced from explicit evidence, record `BLOCKED` or `NO_TRADE`; never infer entry/stop/target from a heuristic score. The independent Risk Manager must approve before the existing ledger records a paper intent. Long-term analysis is filtered by strategy eligibility in both coordinator and handoff boundary.
+For a triggered opportunity, enqueue fresh validation. The validation handler must reload the current closed-candle/snapshot evidence, confirm the opportunity is still active and unexpired, create or retrieve an explicit strategy-approved price plan, call the existing `prepare_signal` validation boundary, and then pass the valid signal through the existing `PaperSignalCycle`/orchestrator. If a price plan cannot be produced from explicit evidence, record `BLOCKED` or `NO_TRADE`; never infer entry/stop/target from a heuristic score. The independent Risk Manager must approve before the existing ledger records a paper intent. Persist the intent-recorded event separately from a position-open event; use the product-approved state mapping to decide when `PAPER_OPEN` is valid. Long-term analysis is filtered by strategy eligibility in both coordinator and handoff boundary.
 
 The API is read-only for opportunity records and event history. It must not expose database DSNs, worker owner secrets, exchange credentials or unbounded evidence blobs. Keep pagination bounded and use stable ordering.
 
@@ -428,7 +428,7 @@ These are intentionally not silently fixed by the implementation plan. Engineeri
 3. **Opportunity identity/deduplication:** approve the fingerprint boundary. Recommended inputs are market type, symbol, strategy ID/version, direction, timeframe set, trigger definition and evidence/config version; two materially different trigger definitions must never collapse into one record.
 4. **Universe and workload limits:** confirm the maximum enabled instruments, timeframe lookback, scan interval, per-cycle fetch concurrency, active-opportunity cap and reassessment batch size. Existing scan components currently constrain configured policies to 1–20 symbols and fetch concurrency to at most 20; expanding those limits needs separate capacity evidence.
 5. **Price-plan source and eligibility:** confirm which existing price-planning method is permitted to create explicit entry/stop/target values for each strategy. If no valid plan exists, the correct outcome is no trade—not a guessed price.
-6. **Paper position lifecycle mapping:** confirm whether `PAPER_OPEN` means an accepted paper intent or a ledger-confirmed open position. The implementation must distinguish those events; it must not label an intent as a filled/open position.
+6. **Paper position lifecycle mapping:** confirm whether `PAPER_OPEN` means an accepted paper intent or a ledger-confirmed open position. Until this decision is approved, the implementation must persist separate intent-recorded and position-open events and must not label an intent as a filled/open position.
 7. **Notification behavior:** confirm whether users should be notified on every state transition or only on meaningful events such as new waiting opportunity, trigger, invalidation, expiry and Risk Manager block.
 8. **Activation gate:** continuous scanning cannot be claimed operational until an always-on worker host and its recovery behavior are verified. The current Render Free API-only service does not satisfy this requirement. This plan does not authorize a hosting change or deployment.
 
