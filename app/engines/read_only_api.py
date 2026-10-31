@@ -386,6 +386,8 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                         "status": report.get("status", "UNKNOWN"),
                         "assessed_at": report.get("assessed_at"),
                         "market_type": report.get("market_type"),
+                        "environment": report.get("environment"),
+                        "venue": report.get("venue"),
                         "scan_id": report.get("scan_id"),
                         "items": items,
                         "reason": report.get("reason"),
