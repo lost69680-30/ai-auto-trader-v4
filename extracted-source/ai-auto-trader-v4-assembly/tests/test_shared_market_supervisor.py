@@ -217,3 +217,11 @@ def test_supervisor_restarts_live_worker_after_stale_heartbeat(monkeypatch):
     ]
     assert started[0][2].terminated is True
     assert started[1][2].terminated is True
+
+
+def test_supervisor_shutdown_grace_exceeds_worker_scheduler_grace():
+    from backend.shared_market_supervisor import configured_child_shutdown_grace
+
+    assert configured_child_shutdown_grace({}) == 25.0
+    assert configured_child_shutdown_grace({"PAPER_SUPERVISOR_CHILD_SHUTDOWN_GRACE_SECONDS": "40"}) == 40.0
+    assert configured_child_shutdown_grace({"PAPER_SUPERVISOR_CHILD_SHUTDOWN_GRACE_SECONDS": "5"}) == 15.0
