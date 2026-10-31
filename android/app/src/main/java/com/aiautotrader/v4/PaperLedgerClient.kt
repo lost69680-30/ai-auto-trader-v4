@@ -113,7 +113,7 @@ internal fun parsePaperOrders(json: JSONObject): List<PaperOrderView> {
         val target = row.optDouble("take_profit", Double.NaN)
         val symbol = row.optString("symbol").trim()
         val side = row.optString("side").uppercase()
-        if (symbol.isBlank() || side !in setOf("LONG", "SHORT") ||
+        if (symbol.isBlank() || side !in setOf("LONG", "SHORT", "BUY", "SELL") ||
             listOf(quantity, entry, stop, target).any { !it.isFinite() } ||
             quantity <= 0.0 || entry <= 0.0 || stop <= 0.0 || target <= 0.0
         ) throw IllegalArgumentException("Invalid order row; refusing a partial ledger view")
