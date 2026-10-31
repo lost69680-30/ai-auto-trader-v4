@@ -19,6 +19,22 @@ from backend.shared_market_store import PostgresMarketFeedStore
 logger = logging.getLogger(__name__)
 
 
+def run_scheduled_jobs(stop: threading.Event, scheduler: DurableJobScheduler,
+                       dispatcher: AnalysisJobDispatcher, *, poll_interval: float = 1.0) -> None:
+    """Run durable analysis jobs off the market-feed polling thread."""
+    if not isinstance(stop, threading.Event):
+        raise ValueError("stop must be a threading.Event")
+    if not isinstance(poll_interval, (int, float)) or poll_interval <= 0:
+        raise ValueError("poll_interval must be positive")
+    while not stop.is_set():
+        try:
+            scheduler.enqueue_due()
+            dispatcher.run_once()
+        except Exception:
+            logger.exception("durable read-only analysis scheduler thread failed")
+        stop.wait(float(poll_interval))
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     dsn = os.environ.get("PAPER_DATABASE_URL", "").strip()
@@ -96,17 +112,9 @@ def main() -> None:
         if not 1 <= archive_lookback_days <= 365:
             raise SystemExit("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS must be between 1 and 365")
 
-        def run_scheduled_jobs() -> None:
-            while not stop.is_set():
-                try:
-                    scheduler.enqueue_due()
-                    dispatcher.run_once()
-                except Exception:
-                    logger.exception("durable read-only analysis scheduler thread failed")
-                stop.wait(1.0)
-
         job_runner = threading.Thread(
             target=run_scheduled_jobs,
+            args=(stop, scheduler, dispatcher),
             name=f"{worker_id[:80]}-scheduled-jobs",
             daemon=True,
         )
