@@ -188,7 +188,35 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
         supplied = environ.get("HTTP_AUTHORIZATION", "")
         expected = "Bearer " + token
         authorized = hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
-        if not authorized:
+        if method == "GET" and path == "/healthz":
+            # Public liveness probe: disclose no credentials, account data, or worker internals.
+            body, status = _json_bytes({
+                "status": "ok", "service": "solo-api", "mode": "PAPER_ONLY",
+                "orders_authorized": False,
+            }), "200 OK"
+        elif method == "GET" and path == "/readyz":
+            # Readiness is stricter than liveness: the independent shared worker and its
+            # validated market snapshots must both be fresh before this returns 200.
+            try:
+                feed = market_status() if market_status else {}
+                worker_status = feed.get("worker_status", "UNKNOWN") if isinstance(feed, dict) else "UNKNOWN"
+                ready = (
+                    isinstance(feed, dict)
+                    and feed.get("status") == "HEALTHY"
+                    and worker_status == "RUNNING"
+                    and feed.get("orders_authorized") is False
+                )
+                body, status = _json_bytes({
+                    "status": "ready" if ready else "not_ready",
+                    "worker_status": worker_status,
+                    "orders_authorized": False,
+                }), ("200 OK" if ready else "503 Service Unavailable")
+            except Exception:
+                body, status = _json_bytes({
+                    "status": "not_ready", "worker_status": "UNKNOWN",
+                    "orders_authorized": False,
+                }), "503 Service Unavailable"
+        elif not authorized:
             body, status = _json_bytes({"error": "unauthorized", "orders_authorized": False}), "401 Unauthorized"
         elif method == "POST" and path == "/api/v1/emergency-stop":
             try:
