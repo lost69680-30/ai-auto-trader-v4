@@ -339,9 +339,24 @@ class PostgresMarketFeedStore:
                    FROM paper_ledger.market_intelligence_reports
                    ORDER BY assessed_at DESC, scan_id DESC LIMIT 1"""
             ).fetchone()
+            scan_job = conn.execute(
+                """SELECT status, scheduled_for, started_at, completed_at, attempts
+                   FROM paper_ledger.scheduled_jobs
+                   WHERE job_name = 'market_intelligence_scan'
+                   ORDER BY scheduled_for DESC, created_at DESC LIMIT 1"""
+            ).fetchone()
+            scan_meta = {
+                "scan_job_status": scan_job[0] if scan_job else "NOT_SCHEDULED",
+                "scan_scheduled_for": scan_job[1].astimezone(timezone.utc).isoformat() if scan_job and scan_job[1] else None,
+                "scan_started_at": scan_job[2].astimezone(timezone.utc).isoformat() if scan_job and scan_job[2] else None,
+                "scan_completed_at": scan_job[3].astimezone(timezone.utc).isoformat() if scan_job and scan_job[3] else None,
+                "scan_attempts": int(scan_job[4]) if scan_job else 0,
+            }
             if latest is None:
-                return {"status": "STARTING", "reason": "waiting for the first scheduled market scan",
-                        "items": [], "orders_authorized": False}
+                return {
+                    "status": "STARTING", "reason": "waiting for the first scheduled market scan",
+                    "items": [], "orders_authorized": False, **scan_meta,
+                }
             scan_id, assessed_at, market_type, environment, venue = latest
             rows = conn.execute(
                 """SELECT symbol, assessment, selection, liquidity_evidence,
@@ -353,12 +368,12 @@ class PostgresMarketFeedStore:
 
         if not isinstance(assessed_at, datetime) or assessed_at.tzinfo is None:
             return {"status": "INVALID", "reason": "market intelligence timestamp is invalid",
-                    "items": [], "orders_authorized": False}
+                    "items": [], "orders_authorized": False, **scan_meta}
         scan_age = (current - assessed_at.astimezone(timezone.utc)).total_seconds()
         max_scan_age = max(1800.0, self.max_age_seconds * 20.0)
         if scan_age < -1.0 or scan_age > max_scan_age:
             return {"status": "STALE", "reason": "market intelligence scan is stale",
-                    "items": [], "orders_authorized": False}
+                    "items": [], "orders_authorized": False, **scan_meta}
 
         items = []
         for row in rows:
@@ -367,7 +382,7 @@ class PostgresMarketFeedStore:
                     or assessment.get("orders_authorized") is not False
                     or not isinstance(selection, dict) or selection.get("orders_authorized") is not False):
                 return {"status": "INVALID", "reason": "market intelligence failed safety validation",
-                        "items": [], "orders_authorized": False}
+                        "items": [], "orders_authorized": False, **scan_meta}
             items.append({
                 "symbol": symbol,
                 "assessment": assessment,
@@ -379,7 +394,7 @@ class PostgresMarketFeedStore:
             })
         if not items:
             return {"status": "STARTING", "reason": "the latest market scan contains no symbol reports",
-                    "items": [], "orders_authorized": False}
+                    "items": [], "orders_authorized": False, **scan_meta}
         return {
             "status": "HEALTHY" if hb["status"] == "RUNNING" else "DEGRADED",
             "assessed_at": assessed_at.astimezone(timezone.utc).isoformat(),
@@ -389,6 +404,7 @@ class PostgresMarketFeedStore:
             "scan_id": scan_id,
             "items": items,
             "orders_authorized": False,
+            **scan_meta,
         }
 
     def release(self, *, now: datetime | None = None) -> None:
