@@ -1752,6 +1752,18 @@ private fun AnalysisScreen() {
     val isForeground = BackendSession.appInForeground.value
     val loadedMarkets = BackendSession.marketItems.value
     val selectedMarket = loadedMarkets.firstOrNull { normalizeSymbol(it.symbol) == normalizeSymbol(symbol) }
+    var freshnessClock by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(selectedMarket?.markObservedAt, BackendSession.websocketStatus.value) {
+        while (selectedMarket != null) {
+            freshnessClock = Instant.now()
+            delay(1_000)
+        }
+    }
+    val marketDisplayFreshness = classifyMarketDisplayFreshness(
+        selectedMarket?.markObservedAt,
+        BackendSession.websocketStatus.value,
+        freshnessClock,
+    )
     val selectedIntelligence = BackendSession.marketIntelligence.value.firstOrNull {
         normalizeSymbol(it.symbol) == normalizeSymbol(selectedMarket?.symbol ?: symbol)
     }
@@ -1804,10 +1816,18 @@ private fun AnalysisScreen() {
                         val isFutures = selectedMarket.marketContext.marketType == "FUTURES"
                         Text(
                             "${if (isFutures) "Futures mark price" else "Spot last price"}: ${formatMarketPrice(selectedMarket.markPrice)}",
-                            color = Green,
+                            color = if (marketDisplayFreshness == MarketDisplayFreshness.LIVE) Green else Color(0xFFFFC857),
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
+                        val freshnessLabel = when (marketDisplayFreshness) {
+                            MarketDisplayFreshness.LIVE -> "LIVE · STREAM CONNECTED"
+                            MarketDisplayFreshness.RECENT_DISCONNECTED -> "RECENT SNAPSHOT · STREAM RECONNECTING"
+                            MarketDisplayFreshness.STALE -> "STALE PRICE · DO NOT RELY ON THIS VALUE"
+                            MarketDisplayFreshness.UNAVAILABLE -> "NO VERIFIED PRICE"
+                        }
+                        Text(freshnessLabel, color = if (marketDisplayFreshness == MarketDisplayFreshness.LIVE) Green else Color(0xFFFFC857),
+                            fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .4.sp)
                     }
                 }
                 Tag(
