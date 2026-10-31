@@ -218,7 +218,7 @@ class PostgresMarketFeedStore:
                 """UPDATE paper_ledger.market_worker_heartbeats
                    SET heartbeat_at = %s::timestamptz,
                        lease_expires_at = %s::timestamptz + (%s * interval '1 second'),
-                       status = %s, details = COALESCE(details, '{}'::jsonb) || %s::jsonb
+                       status = %s, details = %s::jsonb
                    WHERE worker_id = %s AND owner_id = %s RETURNING worker_id""",
                 (stamp, stamp, self.lease_seconds, status,
                  json.dumps(details or {"orders_authorized": False}), self.worker_id, self.owner_id),
@@ -227,42 +227,99 @@ class PostgresMarketFeedStore:
                 raise RuntimeError("market worker lease lost")
 
     def publish_intelligence(self, payload: dict[str, Any], *, now: datetime | None = None) -> None:
-        """Persist the latest advisory scan inside the active worker heartbeat record."""
+        """Persist one idempotent scan without bloating the worker heartbeat record."""
         if not isinstance(payload, dict) or payload.get("orders_authorized") is not False:
             raise ValueError("market intelligence payload must explicitly deny order authorization")
-        assessed_at = payload.get("assessed_at")
-        if not isinstance(assessed_at, str):
+        scan_id = payload.get("scan_id")
+        if not isinstance(scan_id, str) or not scan_id.strip() or len(scan_id) > 200:
+            raise ValueError("market intelligence scan_id must contain 1 to 200 characters")
+        assessed_text = payload.get("assessed_at")
+        if not isinstance(assessed_text, str):
             raise ValueError("market intelligence assessed_at is required")
         try:
-            assessed_dt = datetime.fromisoformat(assessed_at.replace("Z", "+00:00"))
+            assessed_at = datetime.fromisoformat(assessed_text.replace("Z", "+00:00"))
         except ValueError as exc:
             raise ValueError("market intelligence assessed_at is invalid") from exc
-        if assessed_dt.tzinfo is None or assessed_dt.utcoffset() is None:
+        if assessed_at.tzinfo is None or assessed_at.utcoffset() is None:
             raise ValueError("market intelligence assessed_at must be timezone-aware")
+        assessed_at = assessed_at.astimezone(timezone.utc)
         current = datetime.fromisoformat(_iso(now or datetime.now(timezone.utc)))
-        report_age = (current - assessed_dt.astimezone(timezone.utc)).total_seconds()
-        if report_age < -1.0 or report_age > max(1800.0, self.max_age_seconds * 20.0):
+        age = (current - assessed_at).total_seconds()
+        if age < -1.0 or age > max(1800.0, self.max_age_seconds * 20.0):
             raise ValueError("market intelligence payload is future-dated or stale")
+
+        market_type = payload.get("market_type")
+        environment = payload.get("environment")
+        venue = payload.get("venue")
+        expected_venue = "BINANCE_USDM_TESTNET" if market_type == "FUTURES" else (
+            "BINANCE_SPOT_TESTNET" if market_type == "SPOT" else None
+        )
+        if environment != "TESTNET" or venue != expected_venue:
+            raise ValueError("market intelligence source must be an explicitly labeled Testnet venue")
+
         symbols = payload.get("symbols")
-        if not isinstance(symbols, list):
-            raise ValueError("market intelligence symbols must be a list")
-        if any(not isinstance(item, dict) or item.get("orders_authorized") is not False for item in symbols):
-            raise ValueError("every market intelligence symbol must deny order authorization")
-        body = json.dumps(payload, separators=(",", ":"), allow_nan=False)
+        if not isinstance(symbols, list) or not symbols:
+            raise ValueError("market intelligence symbols must be a non-empty list")
+        seen_symbols: set[str] = set()
+        validated: list[tuple[str, str, str, str, str]] = []
+        for item in symbols:
+            if not isinstance(item, dict) or item.get("orders_authorized") is not False:
+                raise ValueError("every market intelligence symbol must deny order authorization")
+            symbol = item.get("symbol")
+            assessment = item.get("assessment")
+            selection = item.get("selection")
+            liquidity = item.get("liquidity_evidence")
+            in_progress = item.get("in_progress_timeframes")
+            errors = item.get("timeframe_errors")
+            if (not isinstance(symbol, str) or not symbol or symbol != symbol.strip().upper()
+                    or len(symbol) > 30 or symbol in seen_symbols):
+                raise ValueError("market intelligence symbols must be unique uppercase identifiers")
+            if (not isinstance(assessment, dict) or assessment.get("orders_authorized") is not False
+                    or not isinstance(selection, dict) or selection.get("orders_authorized") is not False):
+                raise ValueError("assessment and selection must explicitly deny order authorization")
+            if not isinstance(liquidity, dict) or not isinstance(in_progress, list) or not isinstance(errors, dict):
+                raise ValueError("market intelligence evidence payload is malformed")
+            seen_symbols.add(symbol)
+            validated.append((
+                symbol,
+                json.dumps(assessment, separators=(",", ":"), allow_nan=False),
+                json.dumps(selection, separators=(",", ":"), allow_nan=False),
+                json.dumps(liquidity, separators=(",", ":"), allow_nan=False),
+                json.dumps({"in_progress_timeframes": in_progress, "timeframe_errors": errors},
+                           separators=(",", ":"), allow_nan=False),
+            ))
+
         with self._connect() as conn:
-            row = conn.execute(
-                """UPDATE paper_ledger.market_worker_heartbeats
-                   SET details = COALESCE(details, '{}'::jsonb)
-                       || jsonb_build_object('market_intelligence', %s::jsonb)
-                   WHERE worker_id = %s AND owner_id = %s
-                   RETURNING worker_id""",
-                (body, self.worker_id, self.owner_id),
+            lease = conn.execute(
+                """SELECT owner_id, lease_expires_at FROM paper_ledger.market_worker_heartbeats
+                   WHERE worker_id = %s""",
+                (self.worker_id,),
             ).fetchone()
-        if row is None:
-            raise RuntimeError("market worker lease lost before intelligence publication")
+            if lease is None or lease[0] != self.owner_id or lease[1] <= current:
+                raise RuntimeError("market worker lease lost before intelligence publication")
+            for symbol, assessment_json, selection_json, liquidity_json, extra_json in validated:
+                extra = json.loads(extra_json)
+                conn.execute(
+                    """INSERT INTO paper_ledger.market_intelligence_reports
+                       (scan_id, symbol, assessed_at, market_type, environment, venue,
+                        assessment, selection, liquidity_evidence, in_progress_timeframes,
+                        timeframe_errors, orders_authorized)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb,
+                               %s::jsonb, %s::jsonb, %s::jsonb, false)
+                       ON CONFLICT (scan_id, symbol) DO NOTHING""",
+                    (scan_id, symbol, assessed_at, market_type, environment, venue,
+                     assessment_json, selection_json, liquidity_json,
+                     json.dumps(extra["in_progress_timeframes"]),
+                     json.dumps(extra["timeframe_errors"])),
+                )
+            conn.execute(
+                """DELETE FROM paper_ledger.market_intelligence_reports
+                   WHERE assessed_at < %s::timestamptz - interval '30 days'""",
+                (current,),
+            )
 
     def market_intelligence(self, *, now: datetime | None = None) -> dict[str, Any]:
-        """Return only a fresh advisory scan from the current worker lease."""
+        """Return the latest durable advisory scan only while the worker lease is fresh."""
         hb, _rows = self._read()
         current = datetime.fromisoformat(_iso(now or datetime.now(timezone.utc)))
         if hb is None:
@@ -273,34 +330,61 @@ class PostgresMarketFeedStore:
                 or hb["lease_expires_at"] <= current or hb["status"] in {"STOPPED", "ERROR"}):
             return {"status": "STALE", "reason": "market worker heartbeat is stale or stopped",
                     "items": [], "orders_authorized": False}
-        details = hb.get("details") or {}
-        report = details.get("market_intelligence") if isinstance(details, dict) else None
-        if not isinstance(report, dict) or report.get("orders_authorized") is not False:
-            return {"status": "STARTING", "reason": "waiting for the first market intelligence scan",
+
+        with self._connect() as conn:
+            latest = conn.execute(
+                """SELECT scan_id, assessed_at, market_type, environment, venue
+                   FROM paper_ledger.market_intelligence_reports
+                   ORDER BY assessed_at DESC, scan_id DESC LIMIT 1"""
+            ).fetchone()
+            if latest is None:
+                return {"status": "STARTING", "reason": "waiting for the first scheduled market scan",
+                        "items": [], "orders_authorized": False}
+            scan_id, assessed_at, market_type, environment, venue = latest
+            rows = conn.execute(
+                """SELECT symbol, assessment, selection, liquidity_evidence,
+                          in_progress_timeframes, timeframe_errors, orders_authorized
+                   FROM paper_ledger.market_intelligence_reports
+                   WHERE scan_id = %s ORDER BY symbol""",
+                (scan_id,),
+            ).fetchall()
+
+        if not isinstance(assessed_at, datetime) or assessed_at.tzinfo is None:
+            return {"status": "INVALID", "reason": "market intelligence timestamp is invalid",
                     "items": [], "orders_authorized": False}
-        try:
-            assessed_at = datetime.fromisoformat(str(report.get("assessed_at", "")).replace("Z", "+00:00"))
-        except ValueError:
-            assessed_at = None
+        scan_age = (current - assessed_at.astimezone(timezone.utc)).total_seconds()
         max_scan_age = max(1800.0, self.max_age_seconds * 20.0)
-        if (assessed_at is None or assessed_at.tzinfo is None or assessed_at.utcoffset() is None
-                or (current - assessed_at.astimezone(timezone.utc)).total_seconds() < -1.0
-                or (current - assessed_at.astimezone(timezone.utc)).total_seconds() > max_scan_age):
-            return {"status": "STALE", "reason": "market intelligence scan is stale or invalid",
+        if scan_age < -1.0 or scan_age > max_scan_age:
+            return {"status": "STALE", "reason": "market intelligence scan is stale",
                     "items": [], "orders_authorized": False}
-        items = report.get("symbols")
-        if not isinstance(items, list) or any(
-            not isinstance(item, dict) or item.get("orders_authorized") is not False for item in items
-        ):
-            return {"status": "INVALID", "reason": "market intelligence payload failed safety validation",
+
+        items = []
+        for row in rows:
+            symbol, assessment, selection, liquidity, in_progress, errors, authorized = row
+            if (authorized is not False or not isinstance(assessment, dict)
+                    or assessment.get("orders_authorized") is not False
+                    or not isinstance(selection, dict) or selection.get("orders_authorized") is not False):
+                return {"status": "INVALID", "reason": "market intelligence failed safety validation",
+                        "items": [], "orders_authorized": False}
+            items.append({
+                "symbol": symbol,
+                "assessment": assessment,
+                "selection": selection,
+                "liquidity_evidence": liquidity,
+                "in_progress_timeframes": in_progress,
+                "timeframe_errors": errors,
+                "orders_authorized": False,
+            })
+        if not items:
+            return {"status": "STARTING", "reason": "the latest market scan contains no symbol reports",
                     "items": [], "orders_authorized": False}
         return {
             "status": "HEALTHY" if hb["status"] == "RUNNING" else "DEGRADED",
             "assessed_at": assessed_at.astimezone(timezone.utc).isoformat(),
-            "market_type": report.get("market_type"),
-            "environment": report.get("environment"),
-            "venue": report.get("venue"),
-            "scan_id": report.get("scan_id"),
+            "market_type": market_type,
+            "environment": environment,
+            "venue": venue,
+            "scan_id": scan_id,
             "items": items,
             "orders_authorized": False,
         }
