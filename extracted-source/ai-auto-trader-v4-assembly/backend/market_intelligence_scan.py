@@ -1,6 +1,7 @@
 """Scheduled, read-only multi-timeframe market intelligence scan."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 import logging
@@ -59,6 +60,7 @@ def market_intelligence_scan(
     venue: str = "BINANCE_USDM_TESTNET",
     candle_limit: int = DEFAULT_CANDLE_LIMIT,
     max_snapshot_age_seconds: float = 120.0,
+    max_fetch_workers: int = 12,
 ):
     """Create a durable-scheduler handler for market assessment and strategy ranking.
 
@@ -80,6 +82,8 @@ def market_intelligence_scan(
         raise ValueError("candle_limit must be between 30 and 500")
     if not math.isfinite(max_snapshot_age_seconds) or max_snapshot_age_seconds <= 0:
         raise ValueError("max_snapshot_age_seconds must be finite and positive")
+    if isinstance(max_fetch_workers, bool) or not isinstance(max_fetch_workers, int) or not 1 <= max_fetch_workers <= 20:
+        raise ValueError("max_fetch_workers must be between 1 and 20")
     symbols = [getattr(policy, "symbol", None) for policy in policies]
     if any(not isinstance(symbol, str) or not symbol or symbol != symbol.strip().upper() for symbol in symbols):
         raise ValueError("each symbol policy must expose a trimmed uppercase symbol")
@@ -100,29 +104,47 @@ def market_intelligence_scan(
             snapshot_counts[snapshot.symbol] = snapshot_counts.get(snapshot.symbol, 0) + 1
             snapshot_by_symbol[snapshot.symbol] = snapshot
 
-        reports: list[dict[str, Any]] = []
-        for policy in policies:
-            symbol = policy.symbol
-            candle_map: dict[str, tuple[MarketCandle, ...]] = {}
-            in_progress: list[str] = []
-            timeframe_errors: dict[str, str] = {}
-            for interval in SCAN_INTERVALS:
+        fetched: dict[tuple[str, str], tuple[MarketCandle, ...]] = {}
+        in_progress_by_symbol: dict[str, list[str]] = {symbol: [] for symbol in symbols}
+        errors_by_symbol: dict[str, dict[str, str]] = {symbol: {} for symbol in symbols}
+
+        def fetch_one(symbol: str, interval: str) -> tuple[str, str, tuple[MarketCandle, ...]]:
+            rows = tuple(source.fetch_klines(
+                symbol, interval=interval, limit=candle_limit, now=now,
+            ))
+            if any(not isinstance(row, MarketCandle) for row in rows):
+                raise ValueError("market source returned a malformed candle row")
+            return symbol, interval, rows
+
+        with ThreadPoolExecutor(max_workers=min(max_fetch_workers, len(symbols) * len(SCAN_INTERVALS))) as pool:
+            futures = {
+                pool.submit(fetch_one, symbol, interval): (symbol, interval)
+                for symbol in symbols for interval in SCAN_INTERVALS
+            }
+            for future in as_completed(futures):
+                symbol, interval = futures[future]
                 try:
-                    rows = tuple(source.fetch_klines(
-                        symbol, interval=interval, limit=candle_limit, now=now,
-                    ))
-                    if any(not isinstance(row, MarketCandle) for row in rows):
-                        raise ValueError("market source returned a malformed candle row")
+                    _symbol, _interval, rows = future.result()
                     if any(not row.is_closed for row in rows):
-                        in_progress.append(interval)
-                    candle_map[interval] = tuple(row for row in rows if row.is_closed)
+                        in_progress_by_symbol[symbol].append(interval)
+                    fetched[(symbol, interval)] = tuple(row for row in rows if row.is_closed)
                 except Exception as exc:
-                    candle_map[interval] = ()
-                    timeframe_errors[interval] = type(exc).__name__
+                    errors_by_symbol[symbol][interval] = type(exc).__name__
+                    fetched[(symbol, interval)] = ()
                     logger.warning(
                         "market intelligence timeframe unavailable symbol=%s interval=%s error=%s",
                         symbol, interval, type(exc).__name__,
                     )
+
+        reports: list[dict[str, Any]] = []
+        for policy in policies:
+            symbol = policy.symbol
+            candle_map = {
+                interval: fetched.get((symbol, interval), ())
+                for interval in SCAN_INTERVALS
+            }
+            in_progress = sorted(in_progress_by_symbol[symbol])
+            timeframe_errors = errors_by_symbol[symbol]
             candle_map["1Y"] = _yearly_candles(symbol, candle_map.get("1M", ()))
 
             assessment = assess_market(symbol, candle_map, now=now)
