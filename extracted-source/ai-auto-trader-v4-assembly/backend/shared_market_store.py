@@ -218,13 +218,93 @@ class PostgresMarketFeedStore:
                 """UPDATE paper_ledger.market_worker_heartbeats
                    SET heartbeat_at = %s::timestamptz,
                        lease_expires_at = %s::timestamptz + (%s * interval '1 second'),
-                       status = %s, details = %s::jsonb
+                       status = %s, details = COALESCE(details, '{}'::jsonb) || %s::jsonb
                    WHERE worker_id = %s AND owner_id = %s RETURNING worker_id""",
                 (stamp, stamp, self.lease_seconds, status,
                  json.dumps(details or {"orders_authorized": False}), self.worker_id, self.owner_id),
             ).fetchone()
             if row is None:
                 raise RuntimeError("market worker lease lost")
+
+    def publish_intelligence(self, payload: dict[str, Any], *, now: datetime | None = None) -> None:
+        """Persist the latest advisory scan inside the active worker heartbeat record."""
+        if not isinstance(payload, dict) or payload.get("orders_authorized") is not False:
+            raise ValueError("market intelligence payload must explicitly deny order authorization")
+        assessed_at = payload.get("assessed_at")
+        if not isinstance(assessed_at, str):
+            raise ValueError("market intelligence assessed_at is required")
+        try:
+            assessed_dt = datetime.fromisoformat(assessed_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("market intelligence assessed_at is invalid") from exc
+        if assessed_dt.tzinfo is None or assessed_dt.utcoffset() is None:
+            raise ValueError("market intelligence assessed_at must be timezone-aware")
+        current = now or datetime.now(timezone.utc)
+        current_iso = _iso(current)
+        if (current.astimezone(timezone.utc) - assessed_dt.astimezone(timezone.utc)).total_seconds() > max(
+            1800.0, self.max_age_seconds * 20.0
+        ):
+            raise ValueError("market intelligence payload is already stale")
+        symbols = payload.get("symbols")
+        if not isinstance(symbols, list):
+            raise ValueError("market intelligence symbols must be a list")
+        if any(not isinstance(item, dict) or item.get("orders_authorized") is not False for item in symbols):
+            raise ValueError("every market intelligence symbol must deny order authorization")
+        body = json.dumps(payload, separators=(",", ":"), allow_nan=False)
+        with self._connect() as conn:
+            row = conn.execute(
+                """UPDATE paper_ledger.market_worker_heartbeats
+                   SET details = COALESCE(details, '{}'::jsonb)
+                       || jsonb_build_object('market_intelligence', %s::jsonb)
+                   WHERE worker_id = %s AND owner_id = %s
+                   RETURNING worker_id""",
+                (body, self.worker_id, self.owner_id),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("market worker lease lost before intelligence publication")
+
+    def market_intelligence(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """Return only a fresh advisory scan from the current worker lease."""
+        hb, _rows = self._read()
+        current = now or datetime.now(timezone.utc)
+        current = current.astimezone(timezone.utc)
+        if hb is None:
+            return {"status": "STARTING", "reason": "market worker has not published a heartbeat",
+                    "items": [], "orders_authorized": False}
+        heartbeat_age = (current - hb["heartbeat_at"].astimezone(timezone.utc)).total_seconds()
+        if (heartbeat_age < -1.0 or heartbeat_age > self.max_age_seconds
+                or hb["lease_expires_at"] <= current or hb["status"] in {"STOPPED", "ERROR"}):
+            return {"status": "STALE", "reason": "market worker heartbeat is stale or stopped",
+                    "items": [], "orders_authorized": False}
+        details = hb.get("details") or {}
+        report = details.get("market_intelligence") if isinstance(details, dict) else None
+        if not isinstance(report, dict) or report.get("orders_authorized") is not False:
+            return {"status": "STARTING", "reason": "waiting for the first market intelligence scan",
+                    "items": [], "orders_authorized": False}
+        try:
+            assessed_at = datetime.fromisoformat(str(report.get("assessed_at", "")).replace("Z", "+00:00"))
+        except ValueError:
+            assessed_at = None
+        max_scan_age = max(1800.0, self.max_age_seconds * 20.0)
+        if (assessed_at is None or assessed_at.tzinfo is None or assessed_at.utcoffset() is None
+                or (current - assessed_at.astimezone(timezone.utc)).total_seconds() < -1.0
+                or (current - assessed_at.astimezone(timezone.utc)).total_seconds() > max_scan_age):
+            return {"status": "STALE", "reason": "market intelligence scan is stale or invalid",
+                    "items": [], "orders_authorized": False}
+        items = report.get("symbols")
+        if not isinstance(items, list) or any(
+            not isinstance(item, dict) or item.get("orders_authorized") is not False for item in items
+        ):
+            return {"status": "INVALID", "reason": "market intelligence payload failed safety validation",
+                    "items": [], "orders_authorized": False}
+        return {
+            "status": "HEALTHY" if hb["status"] == "RUNNING" else "DEGRADED",
+            "assessed_at": assessed_at.astimezone(timezone.utc).isoformat(),
+            "market_type": report.get("market_type"),
+            "scan_id": report.get("scan_id"),
+            "items": items,
+            "orders_authorized": False,
+        }
 
     def release(self, *, now: datetime | None = None) -> None:
         stamp = _iso(now or datetime.now(timezone.utc))
