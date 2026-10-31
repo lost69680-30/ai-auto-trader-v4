@@ -121,7 +121,8 @@ Each strategy has separate required timeframes, holding horizon, entry/exit logi
 The adaptive selector must:
 
 - Evaluate only enabled/eligible strategies.
-- Rank opportunities using regime fit, aligned timeframe evidence, liquidity, spread, estimated fees/slippage and validated historical performance.
+- Rank opportunities across configured symbols using regime fit, aligned timeframe evidence, liquidity, spread and estimated fees/slippage.
+- Explicitly mark strategy performance as `NOT_CALIBRATED` until walk-forward and untouched holdout evidence is available; the current fit score does not use validated historical performance.
 - Select the strongest eligible strategy, or explicitly return **NO_TRADE**.
 - Treat long-term analysis as advisory-only.
 - Label heuristic fit scores as uncalibrated; never present them as win probabilities.
