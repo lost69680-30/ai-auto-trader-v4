@@ -895,6 +895,128 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
     }
 }
 
+private fun fetchMarketIntelligence(token: String): MarketIntelligenceFetchResult {
+    val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
+    if (!base.startsWith("https://") || token.length < 32) {
+        return MarketIntelligenceFetchResult(
+            "NOT CONFIGURED", "", "", "", "", emptyList(),
+            "A valid authenticated HTTPS backend session is required.", false
+        )
+    }
+    val connection = URL("$base/api/v1/markets/assessment").openConnection() as HttpURLConnection
+    try {
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 10000
+        connection.readTimeout = 15000
+        connection.setRequestProperty("Authorization", "Bearer $token")
+        connection.setRequestProperty("Accept", "application/json")
+        connection.useCaches = false
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        val raw = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        if (raw.isBlank()) {
+            return MarketIntelligenceFetchResult(
+                "UNAVAILABLE", "", "", "", "", emptyList(),
+                "Market intelligence endpoint returned an empty response (HTTP $code).", false
+            )
+        }
+        val root = JSONObject(raw)
+        if (root.optBoolean("orders_authorized", true)) {
+            return MarketIntelligenceFetchResult(
+                "UNSAFE RESPONSE", "", "", "", "", emptyList(),
+                "Market intelligence response did not explicitly disable order authorization.", false
+            )
+        }
+        val array = root.optJSONArray("items") ?: JSONArray()
+        val items = mutableListOf<MarketIntelligenceItem>()
+        for (index in 0 until array.length()) {
+            val row = array.optJSONObject(index)
+                ?: return MarketIntelligenceFetchResult(
+                    "UNSAFE RESPONSE", "", "", "", "", emptyList(),
+                    "Market intelligence response contained a malformed symbol row.", false
+                )
+            val assessment = row.optJSONObject("assessment")
+            val selection = row.optJSONObject("selection")
+            if (row.optBoolean("orders_authorized", true) ||
+                assessment == null || assessment.optBoolean("orders_authorized", true) ||
+                selection == null || selection.optBoolean("orders_authorized", true)) {
+                return MarketIntelligenceFetchResult(
+                    "UNSAFE RESPONSE", "", "", "", "", emptyList(),
+                    "A symbol assessment or strategy selection did not explicitly deny order authorization.", false
+                )
+            }
+            val conflicts = mutableListOf<String>()
+            val conflictArray = assessment.optJSONArray("conflicts") ?: JSONArray()
+            for (i in 0 until conflictArray.length()) {
+                conflictArray.optString(i).takeIf { it.isNotBlank() && it != "null" }?.let(conflicts::add)
+            }
+            val inProgress = mutableListOf<String>()
+            val inProgressArray = row.optJSONArray("in_progress_timeframes") ?: JSONArray()
+            for (i in 0 until inProgressArray.length()) {
+                inProgressArray.optString(i).takeIf { it.isNotBlank() && it != "null" }?.let(inProgress::add)
+            }
+            val dataIssues = mutableListOf<String>()
+            val timeframeArray = assessment.optJSONArray("timeframes") ?: JSONArray()
+            for (i in 0 until timeframeArray.length()) {
+                val timeframe = timeframeArray.optJSONObject(i) ?: continue
+                val name = timeframe.optString("timeframe", "unknown")
+                val timeframeStatus = timeframe.optString("status", "UNKNOWN")
+                if (timeframeStatus != "HEALTHY") dataIssues.add("$name: $timeframeStatus")
+            }
+            val errors = row.optJSONObject("timeframe_errors")
+            if (errors != null) {
+                val keys = errors.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    dataIssues.add("${key}: request ${errors.optString(key, "failed")}")
+                }
+            }
+            val selectedStrategy = selection.optString("selected_strategy", "")
+                .takeIf { it.isNotBlank() && it != "null" } ?: "None"
+            val score = selection.optDouble("fit_score", Double.NaN)
+            val fitScore = if (score.isFinite()) {
+                String.format(Locale.US, "%.1f / 100 · heuristic", score)
+            } else "Not available"
+            items.add(MarketIntelligenceItem(
+                symbol = row.optString("symbol", "UNKNOWN"),
+                direction = assessment.optString("direction", "UNKNOWN"),
+                marketRegime = assessment.optString("market_regime", "UNKNOWN"),
+                longTermBias = assessment.optString("long_term_bias", "UNKNOWN"),
+                mediumTermBias = assessment.optString("medium_term_bias", "UNKNOWN"),
+                shortTermBias = assessment.optString("short_term_bias", "UNKNOWN"),
+                decision = selection.optString("decision", "UNKNOWN"),
+                selectedStrategy = selectedStrategy,
+                proposedDirection = selection.optString("direction", "NONE"),
+                fitScore = fitScore,
+                eligibleForRiskReview = selection.optBoolean("eligible_for_risk_review", false),
+                noTradeReason = selection.optString("no_trade_reason", "").takeIf { it != "null" }.orEmpty(),
+                conflicts = conflicts,
+                inProgressTimeframes = inProgress,
+                dataQualityIssues = dataIssues,
+            ))
+        }
+        val status = root.optString("status", if (code in 200..299) "UNKNOWN" else "UNAVAILABLE")
+        val reason = root.optString("reason", if (code in 200..299) "Scheduled market scan status received." else "Market scan is not currently healthy.")
+        return MarketIntelligenceFetchResult(
+            status = status,
+            assessedAt = root.optString("assessed_at", ""),
+            marketType = root.optString("market_type", ""),
+            environment = root.optString("environment", ""),
+            venue = root.optString("venue", ""),
+            items = items,
+            reason = reason,
+            safeResponse = true,
+        )
+    } catch (e: Exception) {
+        return MarketIntelligenceFetchResult(
+            "UNAVAILABLE", "", "", "", "", emptyList(),
+            "Market intelligence request failed (${e.javaClass.simpleName}).", false
+        )
+    } finally {
+        connection.disconnect()
+    }
+}
+
 private fun fetchCandleHistory(token: String, symbol: String): Map<String, List<MarketCandle>> {
     val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
     if (!base.startsWith("https://") || token.length < 32 || normalizeSymbol(symbol).isBlank()) return emptyMap()
