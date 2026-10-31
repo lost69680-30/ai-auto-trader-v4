@@ -45,7 +45,7 @@ def main() -> None:
     )
     dispatcher = AnalysisJobDispatcher(
         scheduler,
-        owner=os.environ.get("PAPER_ANALYSIS_DISPATCHER_ID", f"{worker_id}-analysis"),
+        owner=os.environ.get("PAPER_ANALYSIS_DISPATCHER_ID", f"{worker_id[:110]}-analysis"),
         handlers={"market_feed_health_audit": market_feed_health_audit(store)},
     )
 
