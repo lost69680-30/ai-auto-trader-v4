@@ -233,3 +233,23 @@ def test_backfill_refuses_production_or_unsupported_market_type():
     with pytest.raises(ValueError, match="Testnet"):
         backfill_symbol_history(Archive(), SimpleNamespace(), symbol="BTCUSDT",
                                 market_type="FUTURES", testnet=False, now=BASE)
+
+
+def test_archive_caught_up_requires_every_symbol_to_reach_latest_closed_minute():
+    from backend.historical_candle_archive import archive_is_caught_up
+
+    class Archive:
+        rows = {"BTCUSDT": BASE + timedelta(minutes=5), "ETHUSDT": BASE + timedelta(minutes=4)}
+
+        def latest_open_time(self, *, venue, market_type, symbol):
+            return self.rows.get(symbol)
+
+    archive = Archive()
+    now = BASE + timedelta(minutes=6)
+
+    assert archive_is_caught_up(
+        archive, symbols=("BTCUSDT",), market_type="FUTURES", now=now
+    ) is True
+    assert archive_is_caught_up(
+        archive, symbols=("BTCUSDT", "ETHUSDT"), market_type="FUTURES", now=now
+    ) is False
