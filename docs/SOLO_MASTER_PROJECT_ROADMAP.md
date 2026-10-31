@@ -174,14 +174,30 @@ The adaptive selector must:
 
 Part 4 consumes stable backend contracts and proceeds alongside integration. Part 8 remains later research work. Do not skip data/reliability gates to accelerate strategy or AI work.
 
-## Current implementation branch
+## Current implementation checkpoint — 2026-10-31
 
-The new market-assessment/adaptive-strategy work is being developed in a separate feature branch and draft PR, based on the shared-market-data/reliability branch. It is not merged or deployed. Automated test results must be checked against the latest commit before this roadmap status is advanced.
+**Market Watcher / Multi-Timeframe Assessment / Adaptive Strategy selection — merged to the staging integration branch, not deployed.**
+
+- PR #72 was squash-merged into `fix/futures-context-mainline` at commit `361d0c60aa4c39f99e9338b0eee758b0be95c568`.
+- Backend/PostgreSQL CI at the tested PR head: **468 passed, 13 skipped**. ASGI, market-data mirror/regression and Android unit/extended-timeframe checks passed.
+- A debug APK was built successfully. It targets the existing Render staging URL; it has not been installed or phone-verified.
+- The additive `market_intelligence_reports` migration is applied and verified in `solo-ai-auto-trader-staging` only. The main Supabase project is unchanged.
+- No Render deployment was performed. The current Render Free staging service stopped after SIGTERM at 15:41 UTC and its worker heartbeat expired. The service is not an always-on host for this workload.
+- The new worker, scheduled scan, assessment API and Android visibility are implemented in the staging branch, but the Market Watcher is **not currently running on a host**.
+- The adaptive selector produces ranked market candidates only. It does not yet hand candidates to the independent Risk Manager or create paper intents.
+- Strategy performance remains `NOT_CALIBRATED`; fit scores are heuristic. Forex data/session support is not included.
+
+### Next gates
+
+1. Preserve zero spend; select and verify an always-on host only after confirming hard spending controls. No provider or paid plan is authorized.
+2. Deploy the merged staging branch only after the hosting decision; verify worker heartbeat, scheduled scan publication, authenticated API response, and Android display.
+3. Validate each strategy with realistic fees/slippage, walk-forward and untouched holdout tests.
+4. Only then implement and test the proposal-to-Risk-Manager handoff and paper-position integration. Live order authorization remains separately disabled.
 
 ## Explicit limitations
 
 - The shared worker currently uses Binance USDⓈ-M Futures market data in its Testnet configuration; Testnet observations are not production-market evidence.
 - A Forex data/broker adapter and Forex session-calendar implementation are not established by this work.
-- Strategy fit scores are heuristic, not calibrated confidence.
-- No profitability guarantee is supported.
+- Strategy fit scores are heuristic, not calibrated confidence; profitability is unproven.
+- The Market Watcher candidate stream is not yet connected to the Risk Manager or paper execution.
 - No live exchange order authorization is part of this roadmap update.
