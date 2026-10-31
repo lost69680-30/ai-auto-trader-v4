@@ -132,13 +132,13 @@ def test_assessment_marks_bullish_reversal_attempt_inside_lower_structure():
     latest = rows[-1]
     rows[-2] = MarketCandle(
         symbol="BTCUSDT", open_time=previous.open_time, close_time=previous.close_time,
-        open=102.0, high=103.0, low=99.0, close=100.0,
-        volume=100.0, quote_volume=10000.0, trades=10, is_closed=True,
+        open=71.1, high=71.4, low=70.6, close=70.8,
+        volume=100.0, quote_volume=7080.0, trades=10, is_closed=True,
     )
     rows[-1] = MarketCandle(
         symbol="BTCUSDT", open_time=latest.open_time, close_time=latest.close_time,
-        open=99.5, high=102.8, low=99.1, close=102.5,
-        volume=150.0, quote_volume=15375.0, trades=15, is_closed=True,
+        open=70.7, high=71.4, low=70.6, close=71.2,
+        volume=150.0, quote_volume=10680.0, trades=15, is_closed=True,
     )
 
     result = assess_market("BTCUSDT", {"1h": rows}, now=NOW)
