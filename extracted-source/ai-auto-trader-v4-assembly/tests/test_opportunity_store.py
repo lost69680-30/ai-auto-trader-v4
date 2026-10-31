@@ -164,12 +164,26 @@ def test_transitions_are_atomic_versioned_and_reject_illegal_or_stale_updates():
     assert [event.to_state for event in events] == ["DISCOVERED", "ASSESSING"]
 
 
+def _create_waiting_opportunity(store, record, *, key, now):
+    store.create_or_get_opportunity(record, idempotency_key=f"{key}:create", now=now)
+    store.transition(
+        record.opportunity_id, expected_version=0, to_state="ASSESSING",
+        reason="assessment started", event_id=f"{key}:assessing",
+        actor="assessment_engine", evidence_version="e1", now=now,
+    )
+    store.transition(
+        record.opportunity_id, expected_version=1, to_state="WAITING",
+        reason="setup is waiting", event_id=f"{key}:waiting",
+        actor="opportunity_coordinator", evidence_version="e1", now=now,
+    )
+
+
 def test_concurrent_claims_are_exclusive_and_expired_claim_can_be_reclaimed():
     apply_migrations_and_reset()
     now = datetime.now(timezone.utc)
-    record = make_opportunity(state="WAITING")
+    record = make_opportunity()
     store = PostgresOpportunityStore(DSN)
-    store.create_or_get_opportunity(record, idempotency_key="claim-create", now=now)
+    _create_waiting_opportunity(store, record, key="claim", now=now)
 
     def claim(owner):
         return PostgresOpportunityStore(DSN).claim_due_opportunities(
@@ -231,7 +245,7 @@ def test_assessment_and_watch_condition_are_persisted_idempotently():
     now = datetime.now(timezone.utc)
     record = make_opportunity()
     store = PostgresOpportunityStore(DSN)
-    store.create_or_get_opportunity(record, idempotency_key="assessment-create", now=now)
+    _create_waiting_opportunity(store, record, key="assessment", now=now)
 
     assessment = StrategyAssessmentRecord(
         assessment_id="assessment-1",
@@ -262,3 +276,85 @@ def test_assessment_and_watch_condition_are_persisted_idempotently():
     saved = store.save_watch_condition(watch, idempotency_key="watch-key", now=now)
     assert saved == store.get_watch_condition(record.opportunity_id)
     assert saved.orders_authorized is False
+
+
+def test_new_opportunity_cannot_be_created_in_a_later_lifecycle_state():
+    apply_migrations_and_reset()
+    store = PostgresOpportunityStore(DSN)
+    now = datetime.now(timezone.utc)
+
+    for state in ("ASSESSING", "WAITING", "TRIGGERED", "RISK_CHECK", "INTENT_RECORDED", "PAPER_OPEN"):
+        record = make_opportunity(state=state)
+        with pytest.raises(ValueError, match="DISCOVERED"):
+            store.create_or_get_opportunity(
+                record, idempotency_key=f"unsafe-create:{state}", now=now
+            )
+
+
+def test_watch_condition_requires_waiting_non_long_term_opportunity():
+    apply_migrations_and_reset()
+    store = PostgresOpportunityStore(DSN)
+    now = datetime.now(timezone.utc)
+    executable = make_opportunity()
+    long_term = make_opportunity(strategy_id="long_term", setup_fingerprint="long-term-context")
+    store.create_or_get_opportunity(executable, idempotency_key="watch-executable", now=now)
+    store.create_or_get_opportunity(long_term, idempotency_key="watch-long-term", now=now)
+
+    def watch_for(record, watch_id):
+        return WatchConditionRecord(
+            watch_id=watch_id,
+            opportunity_id=record.opportunity_id,
+            trigger_rule="CANDLE_CLOSE_ABOVE",
+            trigger_price=100.0,
+            invalidation_price=95.0,
+            timeframe="4h",
+            expires_at=record.expires_at,
+            payload={"orders_authorized": False},
+            orders_authorized=False,
+        )
+
+    with pytest.raises(ValueError, match="WAITING"):
+        store.save_watch_condition(
+            watch_for(executable, "premature-watch"),
+            idempotency_key="premature-watch-key", now=now,
+        )
+
+    _create_waiting_opportunity(store, executable, key="watch-ready", now=now)
+    with pytest.raises(ValueError, match="long.term|analysis.only"):
+        store.save_watch_condition(
+            watch_for(long_term, "long-term-watch"),
+            idempotency_key="long-term-watch-key", now=now,
+        )
+
+
+def test_risk_manager_intent_requires_explicit_evidence_version():
+    apply_migrations_and_reset()
+    now = datetime.now(timezone.utc)
+    record = make_opportunity()
+    store = PostgresOpportunityStore(DSN)
+    store.create_or_get_opportunity(record, idempotency_key="risk-create", now=now)
+    transitions = (
+        ("ASSESSING", "risk-assessing", "assessment_engine", "e1"),
+        ("WAITING", "risk-waiting", "opportunity_coordinator", "e1"),
+        ("TRIGGERED", "risk-triggered", "opportunity_coordinator", "e2"),
+        ("RISK_CHECK", "risk-check", "signal_validator", "e2"),
+    )
+    for version, (state, event, actor, evidence) in enumerate(transitions):
+        store.transition(
+            record.opportunity_id, expected_version=version, to_state=state,
+            reason="test lifecycle", event_id=event, actor=actor,
+            evidence_version=evidence, now=now,
+        )
+
+    with pytest.raises(ValueError, match="Risk Manager"):
+        store.transition(
+            record.opportunity_id, expected_version=4, to_state="INTENT_RECORDED",
+            reason="unapproved intent", event_id="unapproved-intent",
+            actor="strategy_agent", evidence_version="e3", now=now,
+        )
+    with pytest.raises(ValueError, match="evidence"):
+        store.transition(
+            record.opportunity_id, expected_version=4, to_state="INTENT_RECORDED",
+            reason="missing risk evidence", event_id="missing-risk-evidence",
+            actor="risk_manager", evidence_version=None, now=now,
+        )
