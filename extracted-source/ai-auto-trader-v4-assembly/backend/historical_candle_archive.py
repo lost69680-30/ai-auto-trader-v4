@@ -89,7 +89,8 @@ def validate_minute_candle(candle: ArchivedCandle, *, now: datetime) -> Archived
 
 
 def aggregate_candles(
-    candles: Iterable[ArchivedCandle], *, interval: str
+    candles: Iterable[ArchivedCandle], *, interval: str,
+    now: datetime | None = None,
 ) -> tuple[ArchivedCandle, ...]:
     """Derive fixed-duration bars only from complete, contiguous minute windows."""
     seconds_by_interval = {
@@ -100,11 +101,11 @@ def aggregate_candles(
     seconds = seconds_by_interval.get(interval)
     if seconds is None:
         raise ValueError("unsupported fixed-duration derived interval")
-    rows = tuple(candles)
-    if not rows:
+    raw_rows = tuple(candles)
+    if not raw_rows:
         return ()
-    if any(row.interval != "1m" or row.is_closed is not True for row in rows):
-        raise ValueError("aggregation requires closed canonical one-minute candles")
+    current = now or datetime.now(timezone.utc)
+    rows = tuple(validate_minute_candle(row, now=current) for row in raw_rows)
     identity = (rows[0].venue, rows[0].market_type, rows[0].symbol)
     if any((row.venue, row.market_type, row.symbol) != identity for row in rows):
         raise ValueError("cannot aggregate across venues, market types, or symbols")
