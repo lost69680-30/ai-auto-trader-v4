@@ -298,6 +298,8 @@ class PostgresMarketFeedStore:
             "status": "HEALTHY" if hb["status"] == "RUNNING" else "DEGRADED",
             "assessed_at": assessed_at.astimezone(timezone.utc).isoformat(),
             "market_type": report.get("market_type"),
+            "environment": report.get("environment"),
+            "venue": report.get("venue"),
             "scan_id": report.get("scan_id"),
             "items": items,
             "orders_authorized": False,
