@@ -38,7 +38,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1753,6 +1752,18 @@ private fun AnalysisScreen() {
     val isForeground = BackendSession.appInForeground.value
     val loadedMarkets = BackendSession.marketItems.value
     val selectedMarket = loadedMarkets.firstOrNull { normalizeSymbol(it.symbol) == normalizeSymbol(symbol) }
+    var freshnessClock by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(selectedMarket?.markObservedAt, BackendSession.websocketStatus.value) {
+        while (selectedMarket != null) {
+            freshnessClock = Instant.now()
+            delay(1_000)
+        }
+    }
+    val marketDisplayFreshness = classifyMarketDisplayFreshness(
+        selectedMarket?.markObservedAt,
+        BackendSession.websocketStatus.value,
+        freshnessClock,
+    )
     val selectedIntelligence = BackendSession.marketIntelligence.value.firstOrNull {
         normalizeSymbol(it.symbol) == normalizeSymbol(selectedMarket?.symbol ?: symbol)
     }
@@ -1805,10 +1816,18 @@ private fun AnalysisScreen() {
                         val isFutures = selectedMarket.marketContext.marketType == "FUTURES"
                         Text(
                             "${if (isFutures) "Futures mark price" else "Spot last price"}: ${formatMarketPrice(selectedMarket.markPrice)}",
-                            color = Green,
+                            color = if (marketDisplayFreshness == MarketDisplayFreshness.LIVE) Green else Color(0xFFFFC857),
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
+                        val freshnessLabel = when (marketDisplayFreshness) {
+                            MarketDisplayFreshness.LIVE -> "LIVE · STREAM CONNECTED"
+                            MarketDisplayFreshness.RECENT_DISCONNECTED -> "RECENT SNAPSHOT · STREAM RECONNECTING"
+                            MarketDisplayFreshness.STALE -> "STALE PRICE · DO NOT RELY ON THIS VALUE"
+                            MarketDisplayFreshness.UNAVAILABLE -> "NO VERIFIED PRICE"
+                        }
+                        Text(freshnessLabel, color = if (marketDisplayFreshness == MarketDisplayFreshness.LIVE) Green else Color(0xFFFFC857),
+                            fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .4.sp)
                     }
                 }
                 Tag(
@@ -2052,7 +2071,19 @@ private fun AnalyticsChartCard(title: String, note: String, kind: ChartKind) {
     CardPanel {
         Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         Text(note, color = Muted, fontSize = 11.sp)
-        EmptyChart(Modifier.fillMaxWidth().height(92.dp), kind)
+        Text(
+            "NO VERIFIED LEDGER DATA",
+            color = Muted,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.sp
+        )
+        Text(
+            "No verified ledger data is connected. This chart will appear only when real paper-ledger history is available.",
+            color = Muted,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
     }
 }
 
@@ -2093,28 +2124,6 @@ private fun formatMarketPrice(value: Double): String = when {
     value >= 1000.0 -> String.format(Locale.US, "%.2f", value)
     value >= 1.0 -> String.format(Locale.US, "%.4f", value)
     else -> String.format(Locale.US, "%.8f", value)
-}
-
-@Composable
-private fun EmptyChart(modifier: Modifier, kind: ChartKind) {
-    Canvas(modifier.background(PanelAlt, RoundedCornerShape(10.dp)).padding(8.dp)) {
-        for (i in 0..3) drawLine(Grid, Offset(0f,size.height*i/3), Offset(size.width,size.height*i/3), 1f)
-        if (kind == ChartKind.ALLOCATION) {
-            drawCircle(Grid, radius = minOf(size.height*.35f, size.width*.12f), center = Offset(size.width/2,size.height/2), style = androidx.compose.ui.graphics.drawscope.Stroke(width=14f))
-        } else if (kind == ChartKind.BARS) {
-            val bw = size.width / 12f
-            for (i in 0..7) {
-                val bh = size.height * ((i*5%8)+1) / 10f
-                drawRect(if (i%3==0) Red.copy(alpha=.6f) else Green.copy(alpha=.6f), Offset(bw*(i+2), size.height-bh), Size(bw*.55f,bh))
-            }
-        } else {
-            val path = Path().apply {
-                moveTo(0f,size.height*.72f); lineTo(size.width*.16f,size.height*.62f); lineTo(size.width*.31f,size.height*.68f)
-                lineTo(size.width*.48f,size.height*.37f); lineTo(size.width*.64f,size.height*.48f); lineTo(size.width*.81f,size.height*.24f); lineTo(size.width,size.height*.30f)
-            }
-            drawPath(path, Muted.copy(alpha=.7f), style=androidx.compose.ui.graphics.drawscope.Stroke(width=2.5f))
-        }
-    }
 }
 
 @Composable
