@@ -67,3 +67,21 @@ Not yet verified / remains an operational blocker:
 5. A manual off-site database backup and successful restore drill.
 
 Do not mark Part 1 fully production-ready until these open checks are closed. Keep staging paper-only and keep production untouched until the separate migration, hosting, and recovery plan has been reviewed.
+
+
+## Post-deploy recovery recheck — 2026-10-31 11:28 UTC
+
+The documentation-only staging deployment `dep-dbisrqnlk1mc73fl00n0` completed successfully and Render reported it as `live`. Startup logs showed the API process completed startup and the read-only WebSocket endpoint was enabled. The process log also explicitly identified the API-only role; the shared worker's activity was therefore verified from its durable PostgreSQL heartbeat and fresh snapshots rather than inferred from the API startup message.
+
+A read-only PostgreSQL recheck after this deploy observed:
+- `solo-market-worker` heartbeat status `RUNNING`, with heartbeat at 11:28:02 UTC and lease expiry at 11:29:32 UTC.
+- All 10 configured market symbols had `HEALTHY` snapshots checked at 11:27:39 UTC.
+- 432,287 archived candle rows; latest archive timestamp 11:28:16 UTC; all inspected archive rows retained `orders_authorized=false`.
+- 124 scheduled jobs in `SUCCEEDED` state and no other job statuses in the grouped result. This closes the earlier three-job backlog for this recovery check.
+- Emergency Stop was inactive; this is a state observation, not an instruction to enable execution.
+
+Render metrics now returned sparse CPU samples and memory samples of approximately 120–154 MB for recent instances, but no HTTP request or latency series. The service configuration still shows the Free plan, one web service, and an empty health-check path. This confirms one successful cold-start/recovery cycle; it does not establish continuous uptime, repeated fault recovery, or application-level readiness monitoring.
+
+## Updated Part 1 status
+
+The post-deploy check closes the specific post-wake heartbeat and scheduler-backlog verification for this staging restart. The remaining blockers are: (1) continuous compute without Free-plan idle suspension, (2) a live fault-injection test of API and worker child recovery, (3) an unauthenticated application liveness/readiness endpoint wired into Render's health-check setting and useful HTTP metrics, and (4) a retained off-site database export followed by a successful restore drill. No production service, database, or configuration was changed.
