@@ -1774,6 +1774,7 @@ private fun ReadOnlyBackendConnectionCard() {
 
 @Composable
 private fun DashboardScreen(openAnalysis: () -> Unit) {
+    PaperLedgerRefreshEffect()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         ReadOnlyBackendConnectionCard()
         CardPanel {
@@ -1785,11 +1786,11 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
         }
         SectionTitle("ACCOUNT OVERVIEW")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricCard("Paper equity", "—", "Waiting for backend", Modifier.weight(1f))
-            MetricCard("Daily P&L", "—", "No account data", Modifier.weight(1f))
+            MetricCard("Paper equity", BackendSession.paperLedger.value?.risk?.accountEquity?.let { String.format(Locale.US, "%.4f", it) } ?: "—", "Verified ledger snapshot only", Modifier.weight(1f))
+            MetricCard("Closed-position P&L", BackendSession.paperLedger.value?.let { String.format(Locale.US, "%.4f", it.performanceRealizedPnl) } ?: "—", "Historical closed positions only", Modifier.weight(1f))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricCard("Open positions", BackendSession.openPositions.value, "Positions API", Modifier.weight(1f))
+            MetricCard("Open positions", BackendSession.paperLedger.value?.risk?.openPositionCount?.toString() ?: "—", "Verified paper ledger", Modifier.weight(1f))
             MetricCard("Market feed", BackendSession.feedStatus.value, BackendSession.marketMessage.value, Modifier.weight(1f))
         }
         SectionTitle("SOLO MARKET WATCHER")
