@@ -29,6 +29,8 @@ def test_supervisor_separates_api_and_worker_environment_without_leaking_api_tok
     assert api_env["PAPER_API_PORT"] == "10000"
     assert api_env["PAPER_API_HTTPS_TERMINATED"] == "1"
     assert api_env["PAPER_API_TOKEN"] == "secret-api-token"
+    assert "BINANCE_SPOT_TESTNET_API_KEY" not in api_env
+    assert "BINANCE_SPOT_TESTNET_API_SECRET" not in api_env
     assert parent["PAPER_API_TOKEN"] == "secret-api-token"
 
 
