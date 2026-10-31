@@ -1426,16 +1426,52 @@ private fun ReadOnlyBackendConnectionCard() {
 }
 
 @Composable
+private fun DashboardHeroCard() {
+    val connected = BackendSession.status.value.startsWith("CONNECTED")
+    val socket = BackendSession.websocketStatus.value
+    val feed = BackendSession.feedStatus.value
+    val statusColor = if (connected) Green else Color(0xFFFFC857)
+    CardPanel {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text("MARKET INTELLIGENCE", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                Text("Your market, in focus.", color = White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text("Live analysis workspace · paper environment", color = Muted, fontSize = 11.sp)
+            }
+            Tag(if (connected) "CONNECTED" else "OFFLINE", statusColor)
+        }
+        Spacer(Modifier.height(3.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatusTile("API", if (connected) "READY" else "OFFLINE", statusColor, Modifier.weight(1f))
+            StatusTile("STREAM", socket, if (socket == "CONNECTED") Green else Color(0xFFFFC857), Modifier.weight(1f))
+            StatusTile("FEED", feed, if (feed == "HEALTHY") Green else Color(0xFFFFC857), Modifier.weight(1f))
+        }
+        Text(
+            if (connected) BackendSession.marketMessage.value
+            else "Connect the authenticated backend to load validated market data. The app remains paper-only.",
+            color = Muted, fontSize = 12.sp, lineHeight = 17.sp
+        )
+    }
+}
+
+@Composable
+private fun StatusTile(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier.background(Brush.linearGradient(listOf(GlassHighlight, PanelAlt, GlassShade)), RoundedCornerShape(11.dp))
+            .border(1.dp, GlassEdge, RoundedCornerShape(11.dp))
+            .padding(horizontal = 9.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Text(label, color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .8.sp)
+        Text(value, color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
+}
+
+@Composable
 private fun DashboardScreen(openAnalysis: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         ReadOnlyBackendConnectionCard()
-        CardPanel {
-            val connected = BackendSession.status.value.startsWith("CONNECTED")
-            StatusLine("●", if (connected) "BACKEND CONNECTED · PAPER ONLY" else "BACKEND STATUS · ${BackendSession.status.value}", if (connected) Green else Color(0xFFFFC857))
-            Spacer(Modifier.height(8.dp))
-            Text("Paper mode only", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text(if (connected) "Authenticated backend session retained across navigation. Market feed: ${BackendSession.feedStatus.value}. ${BackendSession.marketMessage.value}" else "Live balances, positions and market data remain unavailable until the authenticated API is connected.", color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
-        }
+        DashboardHeroCard()
         SectionTitle("ACCOUNT OVERVIEW")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             MetricCard("Paper equity", "—", "Waiting for backend", Modifier.weight(1f))
