@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from app.engines.paper_service_app import PaperServiceApplication
 from backend.analysis_job_dispatcher import AnalysisJobDispatcher, market_feed_health_audit
 from backend.durable_scheduler import DurableJobScheduler
+from backend.market_intelligence_scan import market_intelligence_scan
 from backend.historical_candle_archive import PostgresCandleArchive, archive_is_caught_up, archive_market_poll, backfill_older_symbol_history, backfill_symbol_history
 from backend.shared_market_store import PostgresMarketFeedStore
 
@@ -52,11 +53,19 @@ def main() -> None:
             first_run_at=datetime.now(timezone.utc) + timedelta(seconds=schedule_interval),
             payload={"scope": "market_feed"},
         )
-        dispatcher = AnalysisJobDispatcher(
-            scheduler,
-            owner=os.environ.get("PAPER_ANALYSIS_DISPATCHER_ID", f"{worker_id[:110]}-analysis"),
-            handlers={"market_feed_health_audit": market_feed_health_audit(store)},
-        )
+        intelligence_enabled = str(
+            os.environ.get("PAPER_MARKET_INTELLIGENCE_ENABLED", "true")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if intelligence_enabled:
+            intelligence_interval = max(
+                300, int(os.environ.get("PAPER_MARKET_INTELLIGENCE_INTERVAL_SECONDS", "900"))
+            )
+            scheduler.register_interval(
+                "market_intelligence_scan",
+                interval_seconds=intelligence_interval,
+                first_run_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+                payload={"scope": "market_intelligence"},
+            )
         signal.signal(signal.SIGINT, request_stop)
         signal.signal(signal.SIGTERM, request_stop)
         # Acquire the durable lease before creating the paper runtime: create() performs
@@ -68,6 +77,20 @@ def main() -> None:
         if app.config.candle_interval != "1m":
             raise SystemExit("shared historical archive requires PAPER_CANDLE_INTERVAL=1m")
         archive = PostgresCandleArchive(dsn)
+        intelligence_handlers = {"market_feed_health_audit": market_feed_health_audit(store)}
+        if intelligence_enabled:
+            intelligence_candle_limit = int(
+                os.environ.get("PAPER_MARKET_INTELLIGENCE_CANDLE_LIMIT", "200")
+            )
+            intelligence_handlers["market_intelligence_scan"] = market_intelligence_scan(
+                store, app.worker.source, app.config.symbols,
+                market_type="FUTURES", candle_limit=intelligence_candle_limit,
+            )
+        dispatcher = AnalysisJobDispatcher(
+            scheduler,
+            owner=os.environ.get("PAPER_ANALYSIS_DISPATCHER_ID", f"{worker_id[:110]}-analysis"),
+            handlers=intelligence_handlers,
+        )
         archive_lookback_days = int(os.environ.get("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS", "30"))
         if not 1 <= archive_lookback_days <= 365:
             raise SystemExit("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS must be between 1 and 365")
