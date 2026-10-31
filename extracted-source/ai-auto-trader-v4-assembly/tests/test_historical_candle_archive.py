@@ -118,3 +118,54 @@ def test_aggregation_never_combines_different_venues_or_market_types():
 
     with pytest.raises(ValueError):
         aggregate_candles(tuple(rows), interval="5m")
+
+
+def test_archive_poll_converts_healthy_futures_frames_to_testnet_minute_rows():
+    from types import SimpleNamespace
+
+    from backend.historical_candle_archive import archive_market_poll
+
+    source = minute(0)
+    market_candle = SimpleNamespace(
+        symbol="BTCUSDT", open_time=source.open_time, close_time=source.close_time,
+        open=source.open, high=source.high, low=source.low, close=source.close,
+        volume=source.volume, is_closed=True,
+    )
+    frame = SimpleNamespace(
+        symbol="BTCUSDT", market_type="FUTURES", status=SimpleNamespace(value="HEALTHY"),
+        closed_candles=(market_candle,), orders_authorized=False,
+    )
+    poll = SimpleNamespace(frames=(frame,), orders_authorized=False)
+    inserted = []
+
+    class Archive:
+        def insert_closed_candles(self, candles, *, now):
+            inserted.extend(candles)
+            return len(candles)
+
+    count = archive_market_poll(
+        Archive(), poll, interval="1m", testnet=True,
+        now=BASE + timedelta(minutes=2),
+    )
+
+    assert count == 1
+    assert inserted[0].venue == "BINANCE_USDM_TESTNET"
+    assert inserted[0].market_type == "FUTURES"
+    assert inserted[0].symbol == "BTCUSDT"
+
+
+def test_archive_poll_refuses_non_testnet_or_non_minute_source():
+    from types import SimpleNamespace
+
+    from backend.historical_candle_archive import archive_market_poll
+
+    poll = SimpleNamespace(frames=(), orders_authorized=False)
+
+    class Archive:
+        def insert_closed_candles(self, candles, *, now):
+            return 0
+
+    with pytest.raises(ValueError, match="Testnet"):
+        archive_market_poll(Archive(), poll, interval="1m", testnet=False, now=BASE + timedelta(minutes=2))
+    with pytest.raises(ValueError, match="1m"):
+        archive_market_poll(Archive(), poll, interval="5m", testnet=True, now=BASE + timedelta(minutes=2))
