@@ -35,7 +35,6 @@ class MarketObservationFreshnessTest {
         assertNull(parseFreshMarketObservation("2026-10-30T11:59:30Z", now, 0.0))
         assertNull(parseFreshMarketObservation("2026-10-30T11:59:30Z", now, Double.NaN))
     }
-}
 
     @Test
     fun labelsOnlyFreshConnectedStreamAsLive() {
