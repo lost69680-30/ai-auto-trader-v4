@@ -291,10 +291,14 @@ def backfill_symbol_history(
     venue = "BINANCE_USDM_TESTNET" if market_type == "FUTURES" else "BINANCE_SPOT_TESTNET"
     latest = archive.latest_open_time(venue=venue, market_type=market_type, symbol=symbol)
     end_ms = int(current.timestamp() * 1000)
-    if latest is None:
-        cursor_ms = (end_ms // 60_000) * 60_000 - page_size * 60_000
+    expected_latest_ms = (end_ms // 60_000) * 60_000 - 60_000
+    if latest is not None:
+        latest_ms = int(_aware_utc(latest, "latest_open_time").timestamp() * 1000)
+        if latest_ms >= expected_latest_ms:
+            return 0
+        cursor_ms = latest_ms + 60_000
     else:
-        cursor_ms = int(_aware_utc(latest, "latest_open_time").timestamp() * 1000) + 60_000
+        cursor_ms = expected_latest_ms - (page_size - 1) * 60_000
     if cursor_ms >= end_ms:
         return 0
     inserted = 0
