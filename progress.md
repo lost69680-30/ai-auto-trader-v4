@@ -25,6 +25,16 @@ Task 2: complete
 - No live order capability, database migration application, deployment, hosting, secrets, or billing changes were made.
 
 
-Task 3: not started
+Task 3: complete (search handler implemented; worker activation is Task 5)
+
+- Added a continuous Testnet search handler that reuses the existing shared worker's market source and existing multi-timeframe scan; no second exchange client or polling loop was introduced.
+- Each symbol now gets five independent strategy assessments persisted inside the existing durable market-intelligence report, including evidence references, per-strategy reasons, calibration status, and paper-only flags.
+- The search handler returns coverage and candidate counts, enforces Futures Testnet-only configuration, and preserves bounded timeframe fetch concurrency.
+- Durable opportunity rows and waiting conditions are deliberately deferred to Task 4: a scan-only heuristic does not yet contain an approved trigger/price plan, so creating registry rows now would risk duplicate or misleading setup identities.
+- TDD RED observed: initial CI collection failed because backend.continuous_opportunity_search did not exist.
+- Verification: Durable Paper Ledger workflow passed (6 PostgreSQL ledger tests; full backend suite 491 passed, 13 skipped); ASGI runtime and Step 3 market-data/source-parity workflows passed.
+- The new handler is not yet registered in the shared worker scheduler; that is Task 5. Continuous runtime is not active until worker integration and a verified always-on host.
+
+
 Task 4: not started
 Task 5: not started
