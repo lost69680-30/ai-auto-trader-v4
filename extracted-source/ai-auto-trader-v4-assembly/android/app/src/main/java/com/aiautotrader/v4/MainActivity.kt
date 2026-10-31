@@ -1145,6 +1145,40 @@ private fun BackendMarketSessionEffect() {
 }
 
 @Composable
+private fun BackendMarketIntelligenceEffect() {
+    val sessionToken = BackendSession.activeToken.value
+    val isForeground = BackendSession.appInForeground.value
+
+    LaunchedEffect(sessionToken, isForeground) {
+        if (sessionToken.length >= 32 && isForeground) {
+            while (true) {
+                val response = withContext(Dispatchers.IO) {
+                    fetchMarketIntelligence(sessionToken)
+                }
+                BackendSession.marketIntelligenceStatus.value = response.status
+                BackendSession.marketIntelligenceMessage.value = response.reason
+                if (response.assessedAt.isNotBlank()) {
+                    BackendSession.marketIntelligenceAssessedAt.value = response.assessedAt
+                }
+                if (response.environment.isNotBlank()) {
+                    BackendSession.marketIntelligenceEnvironment.value = response.environment
+                }
+                if (!response.safeResponse && response.status == "UNSAFE RESPONSE") {
+                    BackendSession.marketIntelligence.value = emptyList()
+                } else if (response.items.isNotEmpty()) {
+                    BackendSession.marketIntelligence.value = response.items
+                } else if (response.status == "HEALTHY") {
+                    BackendSession.marketIntelligence.value = emptyList()
+                }
+                delay(60_000)
+            }
+        } else {
+            BackendSession.marketIntelligenceStatus.value = "PAUSED"
+        }
+    }
+}
+
+@Composable
 private fun BackendMarketWebSocketEffect() {
     val sessionToken = BackendSession.activeToken.value
     val isForeground = BackendSession.appInForeground.value
@@ -1205,6 +1239,7 @@ private fun BackendMarketWebSocketEffect() {
 @Composable
 private fun TraderApp() {
     BackendMarketSessionEffect()
+    BackendMarketIntelligenceEffect()
     BackendMarketWebSocketEffect()
     var screen by remember { mutableStateOf("Dashboard") }
     val screens = listOf("Dashboard", "AI Agents", "Markets", "Positions", "Risk Center")
