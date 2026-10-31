@@ -734,6 +734,9 @@ def test_market_assessment_endpoint_exposes_only_authenticated_advisory_results(
         "assessed_at": "2026-10-31T12:00:00+00:00",
         "market_type": "FUTURES",
         "scan_id": "scan-123",
+        "scan_job_status": "RUNNING",
+        "scan_started_at": "2026-10-31T12:00:00+00:00",
+        "scan_attempts": 1,
         "items": [{
             "symbol": "BTCUSDT",
             "assessment": {"direction": "MIXED"},
@@ -752,6 +755,8 @@ def test_market_assessment_endpoint_exposes_only_authenticated_advisory_results(
     assert status.startswith("200")
     assert body["items"][0]["symbol"] == "BTCUSDT"
     assert body["items"][0]["orders_authorized"] is False
+    assert body["scan_job_status"] == "RUNNING"
+    assert body["scan_attempts"] == 1
     assert body["orders_authorized"] is False
 
 
