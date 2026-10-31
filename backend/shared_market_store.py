@@ -316,7 +316,7 @@ class PostgresMarketFeedStore:
                 )
             conn.execute(
                 """DELETE FROM paper_ledger.market_intelligence_reports
-                   WHERE assessed_at < %s::timestamptz - interval '30 days'""",
+                   WHERE assessed_at < %s::timestamptz - interval '7 days'""",
                 (current,),
             )
 
