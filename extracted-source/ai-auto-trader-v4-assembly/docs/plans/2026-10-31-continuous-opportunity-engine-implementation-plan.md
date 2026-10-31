@@ -143,7 +143,7 @@ git commit -m "feat: add durable opportunity registry"
 - `MultiStrategyAssessmentEngine(profiles, assessors).assess(candidate, evidence, *, now) -> tuple[StrategyAssessmentRecord, ...]`.
 - `assessors` is an explicit registry keyed by strategy ID; a missing or failed assessor yields a recorded `REQUEST_MORE_EVIDENCE` or `NO_TRADE` result, never an implicit approval.
 
-- [ ] **Step 1: Add failing tests for strategy independence and authority boundaries**
+- [x] **Step 1: Add failing tests for strategy independence and authority boundaries**
 
 Cover:
 1. Each of the five strategy IDs receives its own assessment record and version.
@@ -155,7 +155,7 @@ Cover:
 7. Scores include `NOT_CALIBRATED` until an independently verified calibration artifact is supplied.
 8. Every assessment explicitly has `orders_authorized=false`.
 
-- [ ] **Step 2: Verify the expected failures**
+- [x] **Step 2: Verify the expected failures**
 
 Run:
 
@@ -165,7 +165,7 @@ pytest -q tests/test_strategy_assessment_engine.py
 
 Expected: collection fails until the new strategy profile and assessment interfaces are defined.
 
-- [ ] **Step 3: Implement the assessment registry and five isolated profiles**
+- [x] **Step 3: Implement the assessment registry and five isolated profiles**
 
 Implement the five explicit strategy identities: scalping, day trading, swing trading, position trading and long-term analysis. Reuse existing market assessment and research outputs as evidence; do not relabel a single existing consensus score as five independent assessments. Each profile must evaluate its own configured evidence/timeframes and emit its own decision, reasons, uncertainty, version, evidence references, costs where available, trigger/invalidation proposal where justified, expiry policy reference and calibration label.
 
@@ -173,7 +173,7 @@ Keep the assessment engine pure with respect to persistence, exchange access, ac
 
 Do not implement a profitability model or claim statistical calibration. Do not permit the long-term profile to create a watch condition eligible for the paper path.
 
-- [ ] **Step 4: Verify the focused pass**
+- [x] **Step 4: Verify the focused pass**
 
 Run:
 
@@ -183,7 +183,7 @@ pytest -q tests/test_strategy_assessment_engine.py backend/tests/test_opportunit
 
 Expected: new per-strategy tests pass and existing research/market-assessment behavior remains unchanged.
 
-- [ ] **Step 5: Run affected integration checks**
+- [x] **Step 5: Run affected integration checks**
 
 Run:
 
@@ -193,7 +193,7 @@ pytest -q tests/test_market_intelligence_scan.py tests/test_complete_analysis_pi
 
 Expected: existing scan and research-to-signal boundaries remain intact; the new strategy engine does not create signals or paper intents.
 
-- [ ] **Step 6: Commit the passing deliverable**
+- [x] **Step 6: Commit the passing deliverable**
 
 ```bash
 git add extracted-source/ai-auto-trader-v4-assembly/backend/strategy_assessment_engine.py extracted-source/ai-auto-trader-v4-assembly/backend/strategy_profiles.py extracted-source/ai-auto-trader-v4-assembly/tests/test_strategy_assessment_engine.py
