@@ -293,6 +293,8 @@ class PostgresOpportunityStore:
     ) -> OpportunityRecord:
         if not isinstance(record, OpportunityRecord) or record.orders_authorized is not False:
             raise ValueError("opportunity record must deny order authorization")
+        if record.state != "DISCOVERED" or record.version != 0:
+            raise ValueError("new opportunities must start in DISCOVERED at version 0")
         key = self._idempotency(idempotency_key)
         stamp = _utc(now)
         metadata = _json(record.metadata, "metadata")
@@ -488,6 +490,17 @@ class PostgresOpportunityStore:
         stamp = _utc(now)
         payload = _json(record.payload, "watch payload")
         with self._connect() as conn:
+            opportunity = conn.execute(
+                """SELECT strategy_id, state FROM paper_ledger.opportunities
+                   WHERE opportunity_id = %s FOR UPDATE""",
+                (record.opportunity_id,),
+            ).fetchone()
+            if opportunity is None:
+                raise ValueError("watch condition opportunity does not exist")
+            if opportunity["strategy_id"] == "long_term":
+                raise ValueError("long-term analysis is not eligible for watch conditions")
+            if opportunity["state"] not in {"WAITING", "REASSESSING"}:
+                raise ValueError("watch conditions require an opportunity in WAITING or REASSESSING")
             row = conn.execute(
                 """INSERT INTO paper_ledger.opportunity_watch_conditions
                    (watch_id, opportunity_id, idempotency_key, trigger_rule,
@@ -570,10 +583,15 @@ class PostgresOpportunityStore:
             from_state = current["state"]
             if from_state in _TERMINAL_STATES or to_state not in _ALLOWED_TRANSITIONS.get(from_state, set()):
                 raise ValueError(f"invalid opportunity transition: {from_state} -> {to_state}")
+            if current["strategy_id"] == "long_term" and to_state in {
+                "WAITING", "REASSESSING", "TRIGGERED", "RISK_CHECK",
+                "INTENT_RECORDED", "PAPER_OPEN",
+            }:
+                raise ValueError("long-term analysis cannot enter the paper-eligible lifecycle")
             if to_state == "INTENT_RECORDED" and (
-                from_state != "RISK_CHECK" or actor != "risk_manager"
+                from_state != "RISK_CHECK" or actor != "risk_manager" or evidence_version is None
             ):
-                raise ValueError("intent recording requires Risk Manager approval")
+                raise ValueError("intent recording requires Risk Manager approval and evidence version")
             if to_state == "PAPER_OPEN" and (
                 from_state != "INTENT_RECORDED" or actor != "paper_ledger" or evidence_version is None
             ):
