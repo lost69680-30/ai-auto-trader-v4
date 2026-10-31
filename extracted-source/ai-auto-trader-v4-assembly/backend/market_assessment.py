@@ -243,6 +243,7 @@ def _measure(
 
 def _group_bias(
     assessments: Mapping[str, TimeframeAssessment], weights: Mapping[str, float],
+    minimum_directional_score: float,
 ) -> str:
     usable = [(assessments[name], weight) for name, weight in weights.items()
               if name in assessments and assessments[name].status == "HEALTHY"
@@ -251,9 +252,9 @@ def _group_bias(
         return "INSUFFICIENT_DATA"
     total_weight = sum(weight for _, weight in usable)
     score = sum(item.trend_score * weight for item, weight in usable) / total_weight
-    if score >= 55:
+    if score >= 50.0 + minimum_directional_score:
         return "BULLISH"
-    if score <= 45:
+    if score <= 50.0 - minimum_directional_score:
         return "BEARISH"
     return "NEUTRAL"
 
@@ -321,9 +322,9 @@ def assess_market(
             _utc(rows[-1].close_time, "latest close_time"), (), False,
         )
 
-    long_bias = _group_bias(by_name, _GROUP_WEIGHTS["long"])
-    medium_bias = _group_bias(by_name, _GROUP_WEIGHTS["medium"])
-    short_bias = _group_bias(by_name, _GROUP_WEIGHTS["short"])
+    long_bias = _group_bias(by_name, _GROUP_WEIGHTS["long"], cfg.minimum_directional_score)
+    medium_bias = _group_bias(by_name, _GROUP_WEIGHTS["medium"], cfg.minimum_directional_score)
+    short_bias = _group_bias(by_name, _GROUP_WEIGHTS["short"], cfg.minimum_directional_score)
     conflicts: list[str] = []
     if long_bias in {"BULLISH", "BEARISH"} and medium_bias in {"BULLISH", "BEARISH"} and long_bias != medium_bias:
         conflicts.append("long-term and medium-term directional evidence conflicts")
