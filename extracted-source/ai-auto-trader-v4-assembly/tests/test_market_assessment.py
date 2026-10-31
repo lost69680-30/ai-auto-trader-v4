@@ -95,3 +95,10 @@ def test_month_and_year_are_distinct_calendar_timeframes():
     assert "1m" in labels
     assert "1M" in labels
     assert "1Y" in labels
+
+def test_authenticated_market_candle_api_includes_30m_monthly_and_derived_yearly_intervals():
+    from pathlib import Path
+
+    api_source = (Path(__file__).parents[1] / "app/engines/read_only_api.py").read_text(encoding="utf-8")
+    assert 'analysis_intervals = ("1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M")' in api_source
+    assert "aggregate_complete_yearly_candles" in api_source
