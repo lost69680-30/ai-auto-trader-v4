@@ -179,6 +179,26 @@ class PostgresCandleArchive:
                     inserted += 1
         return inserted
 
+
+    def latest_open_time(self, *, venue: str, market_type: str, symbol: str) -> datetime | None:
+        """Return the newest archived minute for one exact venue/market/symbol key."""
+        if venue not in {"BINANCE_USDM_TESTNET", "BINANCE_SPOT_TESTNET"}:
+            raise ValueError("unsupported archive venue")
+        if (market_type, venue) not in {
+            ("FUTURES", "BINANCE_USDM_TESTNET"), ("SPOT", "BINANCE_SPOT_TESTNET")
+        }:
+            raise ValueError("venue and market_type do not match")
+        if not isinstance(symbol, str) or not symbol or symbol != symbol.upper().strip():
+            raise ValueError("symbol must be non-empty, trimmed and uppercase-normalized")
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT max(open_time) FROM paper_ledger.market_candles
+                   WHERE venue = %s AND market_type = %s AND symbol = %s
+                     AND interval = '1m' AND orders_authorized = false""",
+                (venue, market_type, symbol),
+            ).fetchone()
+        return None if row is None else row[0]
+
     def read_closed_candles(
         self, *, venue: str, market_type: str, symbol: str,
         start: datetime, end: datetime, limit: int = 10000,
@@ -243,3 +263,61 @@ def archive_market_poll(
                 is_closed=candle.is_closed, interval="1m",
             ))
     return archive.insert_closed_candles(rows, now=now)
+
+
+def backfill_symbol_history(
+    archive: "PostgresCandleArchive",
+    source: object,
+    *,
+    symbol: str,
+    market_type: str,
+    testnet: bool,
+    now: datetime | None = None,
+    page_size: int = 1000,
+    max_pages: int = 100,
+) -> int:
+    """Recover missing trailing minute candles using bounded, paginated public GETs."""
+    if testnet is not True:
+        raise ValueError("historical candle backfill accepts Testnet market data only")
+    if market_type not in {"FUTURES", "SPOT"}:
+        raise ValueError("market_type must be FUTURES or SPOT")
+    if not isinstance(symbol, str) or not symbol or symbol != symbol.upper().strip():
+        raise ValueError("symbol must be non-empty, trimmed and uppercase-normalized")
+    if isinstance(page_size, bool) or not isinstance(page_size, int) or not 1 <= page_size <= 1000:
+        raise ValueError("page_size must be from 1 through 1000")
+    if isinstance(max_pages, bool) or not isinstance(max_pages, int) or not 1 <= max_pages <= 1000:
+        raise ValueError("max_pages must be from 1 through 1000")
+    current = _aware_utc(now or datetime.now(timezone.utc), "now")
+    venue = "BINANCE_USDM_TESTNET" if market_type == "FUTURES" else "BINANCE_SPOT_TESTNET"
+    latest = archive.latest_open_time(venue=venue, market_type=market_type, symbol=symbol)
+    end_ms = int(current.timestamp() * 1000)
+    if latest is None:
+        cursor_ms = (end_ms // 60_000) * 60_000 - page_size * 60_000
+    else:
+        cursor_ms = int(_aware_utc(latest, "latest_open_time").timestamp() * 1000) + 60_000
+    if cursor_ms >= end_ms:
+        return 0
+    inserted = 0
+    for _ in range(max_pages):
+        page = tuple(source.fetch_klines(
+            symbol, interval="1m", limit=page_size, now=current,
+            start_time_ms=cursor_ms, end_time_ms=end_ms,
+        ))
+        if not page:
+            break
+        if any(getattr(row, "symbol", None) != symbol for row in page):
+            raise ValueError("backfill response contains a different symbol")
+        if any(page[i].open_time >= page[i + 1].open_time for i in range(len(page) - 1)):
+            raise ValueError("backfill response timestamps are not strictly increasing")
+        closed = tuple(row for row in page if getattr(row, "is_closed", False) is True)
+        archived = tuple(ArchivedCandle(
+            venue=venue, market_type=market_type, symbol=symbol,
+            open_time=row.open_time, close_time=row.close_time,
+            open=row.open, high=row.high, low=row.low, close=row.close,
+            volume=row.volume, is_closed=True, interval="1m",
+        ) for row in closed)
+        inserted += archive.insert_closed_candles(archived, now=current)
+        cursor_ms = int(page[-1].open_time.timestamp() * 1000) + 60_000
+        if len(page) < page_size or len(closed) < len(page) or cursor_ms >= end_ms:
+            break
+    return inserted
