@@ -45,6 +45,7 @@ def test_supervisor_restarts_failed_worker_without_restarting_api(monkeypatch):
     from backend import shared_market_supervisor as supervisor
 
     monkeypatch.setenv("PORT", "10000")
+    monkeypatch.setenv("PAPER_DATABASE_URL", "postgresql://test")
     clock = {"now": 0.0, "sleeps": 0}
     handlers = []
     started = []
@@ -100,6 +101,7 @@ def test_supervisor_restarts_failed_api_without_restarting_worker(monkeypatch):
     from backend import shared_market_supervisor as supervisor
 
     monkeypatch.setenv("PORT", "10000")
+    monkeypatch.setenv("PAPER_DATABASE_URL", "postgresql://test")
     clock = {"now": 0.0, "sleeps": 0}
     handlers = []
     started = []
@@ -147,3 +149,70 @@ def test_supervisor_restarts_failed_api_without_restarting_worker(monkeypatch):
         "app.engines.read_only_api",
         "app.engines.read_only_api",
     ]
+
+
+
+def test_supervisor_restarts_live_worker_after_stale_heartbeat(monkeypatch):
+    import signal
+
+    from backend import shared_market_supervisor as supervisor
+
+    monkeypatch.setenv("PORT", "10000")
+    monkeypatch.setenv("PAPER_DATABASE_URL", "postgresql://test")
+    monkeypatch.setenv("PAPER_SUPERVISOR_WORKER_STARTUP_GRACE_SECONDS", "30")
+    monkeypatch.setenv("PAPER_SUPERVISOR_WORKER_HEALTH_CHECK_SECONDS", "2")
+    clock = {"now": 0.0, "sleeps": 0}
+    handlers = []
+    started = []
+
+    class FakeStore:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self):
+            if clock["now"] >= 30:
+                return {"status": "STALE", "worker_status": "RUNNING", "age_seconds": 120}
+            return {"status": "HEALTHY", "worker_status": "RUNNING", "age_seconds": 1}
+
+    class FakeProcess:
+        def __init__(self, module, generation):
+            self.module = module
+            self.generation = generation
+            self.terminated = False
+            self.pid = generation + 300
+
+        def poll(self):
+            return 0 if self.terminated else None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    def fake_start(module, env):
+        process = FakeProcess(module, len(started))
+        started.append((module, env, process))
+        return process
+
+    def fake_sleep(seconds):
+        clock["sleeps"] += 1
+        clock["now"] += 5.0
+        if len(started) >= 3:
+            handlers[-1](signal.SIGTERM, None)
+
+    monkeypatch.setattr(supervisor, "PostgresMarketFeedStore", FakeStore)
+    monkeypatch.setattr(supervisor, "_start", fake_start)
+    monkeypatch.setattr(supervisor.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(supervisor.time, "sleep", fake_sleep)
+    monkeypatch.setattr(supervisor.signal, "signal", lambda sig, handler: handlers.append(handler))
+
+    supervisor.main()
+
+    assert [item[0] for item in started] == [
+        "backend.shared_market_worker",
+        "app.engines.read_only_api",
+        "backend.shared_market_worker",
+    ]
+    assert started[0][2].terminated is True
+    assert started[1][2].terminated is True
