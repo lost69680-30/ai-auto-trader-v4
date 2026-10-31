@@ -73,7 +73,7 @@ class StrategyRank:
     fit_score: float | None
     direction: str
     reasons: tuple[str, ...]
-    execution_eligible: bool
+    eligible_for_risk_review: bool
     orders_authorized: bool = False
 
 
@@ -208,7 +208,7 @@ def select_strategy(
             eligible, False,
         ))
 
-    eligible_rows = [row for row in ranking if row.eligible and row.execution_eligible]
+    eligible_rows = [row for row in ranking if row.eligible and row.eligible_for_risk_review]
     if eligible_rows:
         selected = sorted(
             eligible_rows,
