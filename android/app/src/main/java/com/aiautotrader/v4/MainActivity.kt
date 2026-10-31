@@ -263,6 +263,35 @@ private data class MarketFetchResult(
     val safeResponse: Boolean,
 )
 
+private data class MarketIntelligenceItem(
+    val symbol: String,
+    val direction: String,
+    val marketRegime: String,
+    val longTermBias: String,
+    val mediumTermBias: String,
+    val shortTermBias: String,
+    val decision: String,
+    val selectedStrategy: String,
+    val proposedDirection: String,
+    val fitScore: String,
+    val eligibleForRiskReview: Boolean,
+    val noTradeReason: String,
+    val conflicts: List<String>,
+    val inProgressTimeframes: List<String>,
+    val dataQualityIssues: List<String>,
+)
+
+private data class MarketIntelligenceFetchResult(
+    val status: String,
+    val assessedAt: String,
+    val marketType: String,
+    val environment: String,
+    val venue: String,
+    val items: List<MarketIntelligenceItem>,
+    val reason: String,
+    val safeResponse: Boolean,
+)
+
 // App-level observable state deliberately lives above individual navigation screens.
 // Removing a composable from the screen tree must not erase an authenticated session.
 private object BackendSession {
@@ -282,6 +311,11 @@ private object BackendSession {
     val marketItems = mutableStateOf<List<MarketInstrument>>(emptyList())
     val marketLoading = mutableStateOf(false)
     val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+    val marketIntelligence = mutableStateOf<List<MarketIntelligenceItem>>(emptyList())
+    val marketIntelligenceStatus = mutableStateOf("NOT CHECKED")
+    val marketIntelligenceMessage = mutableStateOf("Waiting for the first scheduled market scan.")
+    val marketIntelligenceAssessedAt = mutableStateOf("")
+    val marketIntelligenceEnvironment = mutableStateOf("UNKNOWN")
     // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
     val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
 }
@@ -861,6 +895,128 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
     }
 }
 
+private fun fetchMarketIntelligence(token: String): MarketIntelligenceFetchResult {
+    val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
+    if (!base.startsWith("https://") || token.length < 32) {
+        return MarketIntelligenceFetchResult(
+            "NOT CONFIGURED", "", "", "", "", emptyList(),
+            "A valid authenticated HTTPS backend session is required.", false
+        )
+    }
+    val connection = URL("$base/api/v1/markets/assessment").openConnection() as HttpURLConnection
+    try {
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 10000
+        connection.readTimeout = 15000
+        connection.setRequestProperty("Authorization", "Bearer $token")
+        connection.setRequestProperty("Accept", "application/json")
+        connection.useCaches = false
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        val raw = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        if (raw.isBlank()) {
+            return MarketIntelligenceFetchResult(
+                "UNAVAILABLE", "", "", "", "", emptyList(),
+                "Market intelligence endpoint returned an empty response (HTTP $code).", false
+            )
+        }
+        val root = JSONObject(raw)
+        if (root.optBoolean("orders_authorized", true)) {
+            return MarketIntelligenceFetchResult(
+                "UNSAFE RESPONSE", "", "", "", "", emptyList(),
+                "Market intelligence response did not explicitly disable order authorization.", false
+            )
+        }
+        val array = root.optJSONArray("items") ?: JSONArray()
+        val items = mutableListOf<MarketIntelligenceItem>()
+        for (index in 0 until array.length()) {
+            val row = array.optJSONObject(index)
+                ?: return MarketIntelligenceFetchResult(
+                    "UNSAFE RESPONSE", "", "", "", "", emptyList(),
+                    "Market intelligence response contained a malformed symbol row.", false
+                )
+            val assessment = row.optJSONObject("assessment")
+            val selection = row.optJSONObject("selection")
+            if (row.optBoolean("orders_authorized", true) ||
+                assessment == null || assessment.optBoolean("orders_authorized", true) ||
+                selection == null || selection.optBoolean("orders_authorized", true)) {
+                return MarketIntelligenceFetchResult(
+                    "UNSAFE RESPONSE", "", "", "", "", emptyList(),
+                    "A symbol assessment or strategy selection did not explicitly deny order authorization.", false
+                )
+            }
+            val conflicts = mutableListOf<String>()
+            val conflictArray = assessment.optJSONArray("conflicts") ?: JSONArray()
+            for (i in 0 until conflictArray.length()) {
+                conflictArray.optString(i).takeIf { it.isNotBlank() && it != "null" }?.let(conflicts::add)
+            }
+            val inProgress = mutableListOf<String>()
+            val inProgressArray = row.optJSONArray("in_progress_timeframes") ?: JSONArray()
+            for (i in 0 until inProgressArray.length()) {
+                inProgressArray.optString(i).takeIf { it.isNotBlank() && it != "null" }?.let(inProgress::add)
+            }
+            val dataIssues = mutableListOf<String>()
+            val timeframeArray = assessment.optJSONArray("timeframes") ?: JSONArray()
+            for (i in 0 until timeframeArray.length()) {
+                val timeframe = timeframeArray.optJSONObject(i) ?: continue
+                val name = timeframe.optString("timeframe", "unknown")
+                val timeframeStatus = timeframe.optString("status", "UNKNOWN")
+                if (timeframeStatus != "HEALTHY") dataIssues.add("$name: $timeframeStatus")
+            }
+            val errors = row.optJSONObject("timeframe_errors")
+            if (errors != null) {
+                val keys = errors.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    dataIssues.add("${key}: request ${errors.optString(key, "failed")}")
+                }
+            }
+            val selectedStrategy = selection.optString("selected_strategy", "")
+                .takeIf { it.isNotBlank() && it != "null" } ?: "None"
+            val score = selection.optDouble("fit_score", Double.NaN)
+            val fitScore = if (score.isFinite()) {
+                String.format(Locale.US, "%.1f / 100 · heuristic", score)
+            } else "Not available"
+            items.add(MarketIntelligenceItem(
+                symbol = row.optString("symbol", "UNKNOWN"),
+                direction = assessment.optString("direction", "UNKNOWN"),
+                marketRegime = assessment.optString("market_regime", "UNKNOWN"),
+                longTermBias = assessment.optString("long_term_bias", "UNKNOWN"),
+                mediumTermBias = assessment.optString("medium_term_bias", "UNKNOWN"),
+                shortTermBias = assessment.optString("short_term_bias", "UNKNOWN"),
+                decision = selection.optString("decision", "UNKNOWN"),
+                selectedStrategy = selectedStrategy,
+                proposedDirection = selection.optString("direction", "NONE"),
+                fitScore = fitScore,
+                eligibleForRiskReview = selection.optBoolean("eligible_for_risk_review", false),
+                noTradeReason = selection.optString("no_trade_reason", "").takeIf { it != "null" }.orEmpty(),
+                conflicts = conflicts,
+                inProgressTimeframes = inProgress,
+                dataQualityIssues = dataIssues,
+            ))
+        }
+        val status = root.optString("status", if (code in 200..299) "UNKNOWN" else "UNAVAILABLE")
+        val reason = root.optString("reason", if (code in 200..299) "Scheduled market scan status received." else "Market scan is not currently healthy.")
+        return MarketIntelligenceFetchResult(
+            status = status,
+            assessedAt = root.optString("assessed_at", ""),
+            marketType = root.optString("market_type", ""),
+            environment = root.optString("environment", ""),
+            venue = root.optString("venue", ""),
+            items = items,
+            reason = reason,
+            safeResponse = true,
+        )
+    } catch (e: Exception) {
+        return MarketIntelligenceFetchResult(
+            "UNAVAILABLE", "", "", "", "", emptyList(),
+            "Market intelligence request failed (${e.javaClass.simpleName}).", false
+        )
+    } finally {
+        connection.disconnect()
+    }
+}
+
 private fun fetchCandleHistory(token: String, symbol: String): Map<String, List<MarketCandle>> {
     val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
     if (!base.startsWith("https://") || token.length < 32 || normalizeSymbol(symbol).isBlank()) return emptyMap()
@@ -989,6 +1145,40 @@ private fun BackendMarketSessionEffect() {
 }
 
 @Composable
+private fun BackendMarketIntelligenceEffect() {
+    val sessionToken = BackendSession.activeToken.value
+    val isForeground = BackendSession.appInForeground.value
+
+    LaunchedEffect(sessionToken, isForeground) {
+        if (sessionToken.length >= 32 && isForeground) {
+            while (true) {
+                val response = withContext(Dispatchers.IO) {
+                    fetchMarketIntelligence(sessionToken)
+                }
+                BackendSession.marketIntelligenceStatus.value = response.status
+                BackendSession.marketIntelligenceMessage.value = response.reason
+                if (response.assessedAt.isNotBlank()) {
+                    BackendSession.marketIntelligenceAssessedAt.value = response.assessedAt
+                }
+                if (response.environment.isNotBlank()) {
+                    BackendSession.marketIntelligenceEnvironment.value = response.environment
+                }
+                if (!response.safeResponse && response.status == "UNSAFE RESPONSE") {
+                    BackendSession.marketIntelligence.value = emptyList()
+                } else if (response.items.isNotEmpty()) {
+                    BackendSession.marketIntelligence.value = response.items
+                } else if (response.status == "HEALTHY") {
+                    BackendSession.marketIntelligence.value = emptyList()
+                }
+                delay(60_000)
+            }
+        } else {
+            BackendSession.marketIntelligenceStatus.value = "PAUSED"
+        }
+    }
+}
+
+@Composable
 private fun BackendMarketWebSocketEffect() {
     val sessionToken = BackendSession.activeToken.value
     val isForeground = BackendSession.appInForeground.value
@@ -1049,6 +1239,7 @@ private fun BackendMarketWebSocketEffect() {
 @Composable
 private fun TraderApp() {
     BackendMarketSessionEffect()
+    BackendMarketIntelligenceEffect()
     BackendMarketWebSocketEffect()
     var screen by remember { mutableStateOf("Dashboard") }
     val screens = listOf("Dashboard", "AI Agents", "Markets", "Positions", "Risk Center")
@@ -1439,6 +1630,48 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
             MetricCard("Open positions", BackendSession.openPositions.value, "Positions API", Modifier.weight(1f))
             MetricCard("Market feed", BackendSession.feedStatus.value, BackendSession.marketMessage.value, Modifier.weight(1f))
         }
+        SectionTitle("SOLO MARKET WATCHER")
+        CardPanel {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("AUTONOMOUS MARKET SCAN", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Tag(BackendSession.marketIntelligenceStatus.value,
+                    if (BackendSession.marketIntelligenceStatus.value == "HEALTHY") Green else Color(0xFFFFC857))
+            }
+            Text(
+                if (BackendSession.marketIntelligenceAssessedAt.value.isBlank()) {
+                    BackendSession.marketIntelligenceMessage.value
+                } else {
+                    "Last assessment: ${BackendSession.marketIntelligenceAssessedAt.value}"
+                },
+                color = Muted, fontSize = 11.sp, lineHeight = 16.sp
+            )
+            val watcherItems = BackendSession.marketIntelligence.value
+            if (watcherItems.isEmpty()) {
+                Text("Waiting for the first validated scheduled scan. No opportunity is assumed.", color = Muted, fontSize = 12.sp)
+            } else {
+                watcherItems.take(3).forEach { item ->
+                    Divider(color = Grid)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(displaySymbol(item.symbol), color = White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Tag(item.decision, if (item.decision == "SELECTED") Green else Gold)
+                    }
+                    IndicatorRow("Market regime", item.marketRegime)
+                    IndicatorRow("Adaptive strategy", item.selectedStrategy)
+                    Text(
+                        when (item.decision) {
+                            "SELECTED" -> "Candidate only · independent Risk Manager review required"
+                            "ANALYSIS_ONLY" -> "Long-term context only · not eligible for trading"
+                            else -> "No suitable opportunity · Solo waits"
+                        },
+                        color = Muted, fontSize = 10.sp, lineHeight = 14.sp
+                    )
+                }
+            }
+            Text(
+                "Source: ${BackendSession.marketIntelligenceEnvironment.value} · Testnet research data. Strategy ranking is advisory; no order is authorized.",
+                color = Muted, fontSize = 10.sp, lineHeight = 14.sp
+            )
+        }
         CardPanel {
             Text("CHARTS & ANALYSIS", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
             Text("Candlesticks, indicators, performance and AI market commentary", color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
@@ -1464,6 +1697,9 @@ private fun AnalysisScreen() {
     val isForeground = BackendSession.appInForeground.value
     val loadedMarkets = BackendSession.marketItems.value
     val selectedMarket = loadedMarkets.firstOrNull { normalizeSymbol(it.symbol) == normalizeSymbol(symbol) }
+    val selectedIntelligence = BackendSession.marketIntelligence.value.firstOrNull {
+        normalizeSymbol(it.symbol) == normalizeSymbol(selectedMarket?.symbol ?: symbol)
+    }
     val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol ?: symbol)
     val candleHistoryByTimeframe = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
     var candleHistoryLoading by remember { mutableStateOf(false) }
@@ -1608,6 +1844,56 @@ private fun AnalysisScreen() {
                     else -> "Bearish alignment in ${bears} timeframe(s); other intervals may be neutral or unavailable"
                 }
                 Text(summary, color = Gold, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+            SectionTitle("SOLO MARKET WATCHER & ADAPTIVE STRATEGY")
+            CardPanel {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("BACKEND ASSESSMENT", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Tag(BackendSession.marketIntelligenceStatus.value,
+                        if (BackendSession.marketIntelligenceStatus.value == "HEALTHY") Green else Color(0xFFFFC857))
+                }
+                if (selectedIntelligence == null) {
+                    Text(
+                        BackendSession.marketIntelligenceMessage.value,
+                        color = Muted, fontSize = 12.sp, lineHeight = 17.sp
+                    )
+                    Text("No backend strategy assessment is available for $symbol. Local chart indicators are not a substitute for the scheduled Market Watcher.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(displaySymbol(selectedIntelligence.symbol), color = White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Tag(selectedIntelligence.decision, if (selectedIntelligence.decision == "SELECTED") Green else Gold)
+                    }
+                    IndicatorRow("Market regime", selectedIntelligence.marketRegime)
+                    IndicatorRow("Overall direction", selectedIntelligence.direction)
+                    IndicatorRow("Long / medium / short", "${selectedIntelligence.longTermBias} / ${selectedIntelligence.mediumTermBias} / ${selectedIntelligence.shortTermBias}")
+                    IndicatorRow("Selected strategy", selectedIntelligence.selectedStrategy)
+                    IndicatorRow("Candidate direction", selectedIntelligence.proposedDirection)
+                    IndicatorRow("Strategy fit score", selectedIntelligence.fitScore)
+                    IndicatorRow(
+                        "Next gate",
+                        if (selectedIntelligence.eligibleForRiskReview) "Independent Risk Manager review · NOT approved"
+                        else "No executable candidate passed all checks"
+                    )
+                    when (selectedIntelligence.decision) {
+                        "SELECTED" -> Text("Solo selected a strategy candidate. It must still pass the independent Risk Manager; this is not an order approval.", color = Gold, fontSize = 11.sp, lineHeight = 16.sp)
+                        "ANALYSIS_ONLY" -> Text("Long-term analysis only. This result cannot become a trade proposal.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                        else -> Text("No valid opportunity. Solo waits instead of forcing a trade. ${selectedIntelligence.noTradeReason}", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                    }
+                    if (selectedIntelligence.conflicts.isNotEmpty()) {
+                        Text("Timeframe conflicts: ${selectedIntelligence.conflicts.joinToString("; ")}", color = Color(0xFFFFC857), fontSize = 10.sp, lineHeight = 14.sp)
+                    }
+                    if (selectedIntelligence.inProgressTimeframes.isNotEmpty()) {
+                        Text("In-progress candles excluded: ${selectedIntelligence.inProgressTimeframes.joinToString(", ")}", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                    }
+                    if (selectedIntelligence.dataQualityIssues.isNotEmpty()) {
+                        Text("Data-quality limitations: ${selectedIntelligence.dataQualityIssues.take(5).joinToString("; ")}", color = Color(0xFFFFC857), fontSize = 10.sp, lineHeight = 14.sp)
+                    }
+                    Text(
+                        "Scan: ${BackendSession.marketIntelligenceAssessedAt.value} · ${BackendSession.marketIntelligenceEnvironment.value} · ${selectedIntelligence.marketRegime}",
+                        color = Muted, fontSize = 9.sp, lineHeight = 13.sp
+                    )
+                }
+                Text("Fit scores are heuristic, not win probabilities. The Market Watcher has no order authority; all proposals remain subject to portfolio-wide risk checks.", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             }
             SectionTitle("EVIDENCE & UNCERTAINTY")
             CardPanel {
