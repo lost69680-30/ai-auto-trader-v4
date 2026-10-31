@@ -7,6 +7,10 @@ on:
         description: "GitHub Actions run ID of a successful Solo staging PostgreSQL backup"
         required: true
         type: string
+        default: "41207086389"
+  push:
+    branches:
+      - fix/solo-restore-validation
 
 permissions:
   actions: read
@@ -41,7 +45,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: solo-staging-paper-ledger-backup-${{ inputs.backup_run_id }}
-          run-id: ${{ inputs.backup_run_id }}
+          run-id: ${{ inputs.backup_run_id || '41207086389' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: backup
 
