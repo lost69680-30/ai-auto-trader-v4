@@ -13,7 +13,7 @@ UTC = timezone.utc
 BASE = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
 
 
-def minute(offset, *, opened=100.0, high=102.0, low=99.0, closed=True):
+def minute(offset, *, opened=100.0, high=None, low=None, closed=True):
     start = BASE + timedelta(minutes=offset)
     return ArchivedCandle(
         venue="BINANCE_USDM_TESTNET",
