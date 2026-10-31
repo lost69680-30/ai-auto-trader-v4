@@ -4,11 +4,13 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
+import hashlib
 import logging
 import math
 from typing import Any, Iterable, Mapping
 
 from backend.adaptive_strategy import select_strategy
+from backend.strategy_assessment_engine import MultiStrategyAssessmentEngine, StrategyCandidate
 from backend.market_assessment import TIMEFRAME_ORDER, assess_market
 from backend.market_data_adapter import MarketCandle
 from backend.timeframe_aggregation import aggregate_complete_yearly_candles
@@ -61,6 +63,7 @@ def market_intelligence_scan(
     candle_limit: int = DEFAULT_CANDLE_LIMIT,
     max_snapshot_age_seconds: float = 120.0,
     max_fetch_workers: int = 12,
+    strategy_engine: MultiStrategyAssessmentEngine | None = None,
 ):
     """Create a durable-scheduler handler for market assessment and strategy ranking.
 
@@ -90,7 +93,9 @@ def market_intelligence_scan(
     if len(set(symbols)) != len(symbols):
         raise ValueError("market intelligence symbol policies must be unique")
 
-    def handle(payload: dict[str, Any], idempotency_key: str) -> None:
+    engine = strategy_engine or MultiStrategyAssessmentEngine()
+
+    def handle(payload: dict[str, Any], idempotency_key: str) -> dict[str, Any]:
         if payload.get("scope") != "market_intelligence":
             raise ValueError("market intelligence scan requires scope=market_intelligence")
         if not isinstance(idempotency_key, str) or not idempotency_key.strip():
@@ -171,10 +176,39 @@ def market_intelligence_scan(
                 quote_volume_24h=volume,
                 estimated_round_trip_cost_bps=cost_bps,
             )
+            evidence_refs = []
+            if snapshot_fresh and snapshot is not None:
+                evidence_refs.append(
+                    f"market-snapshot:{symbol}:{snapshot.observed_at.astimezone(timezone.utc).isoformat()}"
+                )
+            for interval, rows in candle_map.items():
+                if rows:
+                    evidence_refs.append(
+                        f"closed-candle:{symbol}:{interval}:{rows[-1].close_time.astimezone(timezone.utc).isoformat()}"
+                    )
+            candidate_id = hashlib.sha256(
+                f"{idempotency_key}|{symbol}".encode("utf-8")
+            ).hexdigest()[:40]
+            independent_assessments = engine.assess(
+                StrategyCandidate(
+                    opportunity_id=candidate_id,
+                    symbol=symbol,
+                    market_type=market_type,
+                    market_assessment=assessment,
+                    spread_bps=spread,
+                    quote_volume_24h=volume,
+                    estimated_round_trip_cost_bps=cost_bps,
+                    assessment_version=1,
+                    orders_authorized=False,
+                ),
+                evidence_refs,
+                now=now,
+            )
             reports.append({
                 "symbol": symbol,
                 "assessment": assessment,
                 "selection": selection,
+                "strategy_assessments": independent_assessments,
                 "liquidity_evidence": {
                     "snapshot_fresh": snapshot_fresh,
                     "spread_bps": spread,
@@ -201,9 +235,10 @@ def market_intelligence_scan(
         for report in reports:
             selection_payload = _json_safe(report["selection"])
             selection_payload["opportunity_rank"] = rank_by_symbol.get(report["symbol"])
+            selection_payload["strategy_assessments"] = _json_safe(report["strategy_assessments"])
             report["selection"] = selection_payload
 
-        store.publish_intelligence(_json_safe({
+        result_payload = _json_safe({
             "scan_id": idempotency_key,
             "assessed_at": now,
             "market_type": market_type,
@@ -211,10 +246,12 @@ def market_intelligence_scan(
             "venue": venue,
             "symbols": reports,
             "orders_authorized": False,
-        }), now=now)
+        })
+        store.publish_intelligence(result_payload, now=now)
         logger.info(
-            "market intelligence scan complete symbols=%d orders_authorized=False",
-            len(reports),
+            "market intelligence scan complete symbols=%d strategy_assessments=%d orders_authorized=False",
+            len(reports), sum(len(report["strategy_assessments"]) for report in reports),
         )
+        return result_payload
 
     return handle
