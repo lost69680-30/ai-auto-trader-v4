@@ -1497,6 +1497,55 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
 }
 
 @Composable
+private fun MarketReadoutCard(
+    symbol: String,
+    timeframe: String,
+    snapshot: TimeframeSnapshot?,
+    technical: TechnicalSnapshot?,
+) {
+    val bias = snapshot?.bias ?: "UNAVAILABLE"
+    val ready = technical?.directionalReady == true
+    val accent = when (bias) {
+        "BULLISH" -> Green
+        "BEARISH" -> Red
+        else -> Gold
+    }
+    val headline = when {
+        snapshot == null -> "Waiting for validated candle history"
+        snapshot.status.startsWith("Data quality blocked") -> "Market readout blocked"
+        !ready -> "More candle history required"
+        bias == "BULLISH" -> "Bullish conditions observed"
+        bias == "BEARISH" -> "Bearish conditions observed"
+        else -> "No directional agreement"
+    }
+    val explanation = when {
+        snapshot == null -> "No interval snapshot is available. No market direction is inferred."
+        snapshot.status.startsWith("Data quality blocked") -> "The selected interval failed data-quality checks. Treat this readout as unavailable."
+        !ready -> "The selected interval does not yet have enough validated candles for a core trend and momentum review."
+        bias == "BULLISH" -> "Validated candles show bullish indicator alignment on this interval. This is descriptive evidence, not a forecast or trade signal."
+        bias == "BEARISH" -> "Validated candles show bearish indicator alignment on this interval. This is descriptive evidence, not a forecast or trade signal."
+        else -> "Current indicators do not establish a clear bullish or bearish direction on this interval."
+    }
+    CardPanel {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("MARKET READOUT", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp)
+                Text(headline, color = White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("$symbol · $timeframe", color = Muted, fontSize = 10.sp)
+            }
+            Tag(bias, accent)
+        }
+        Text(explanation, color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatusTile("TREND", technical?.trend ?: "N/A", accent, Modifier.weight(1f))
+            StatusTile("MOMENTUM", technical?.momentum ?: "N/A", Gold, Modifier.weight(1f))
+            StatusTile("VOLATILITY", technical?.volatility ?: "N/A", Gold, Modifier.weight(1f))
+        }
+        Text("Evidence summary only · no calibrated probability · no order authorization", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+    }
+}
+
+@Composable
 private fun AnalysisScreen() {
     var symbol by remember { mutableStateOf("BTC/USDT") }
     var timeframe by remember { mutableStateOf("15m") }
@@ -1686,6 +1735,7 @@ private fun AnalysisScreen() {
                     color = Muted, fontSize = 11.sp, lineHeight = 16.sp
                 )
             }
+            MarketReadoutCard(symbol, timeframe, selectedTimeframe, technical)
             SectionTitle("AI MARKET ANALYSIS")
             CardPanel {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
