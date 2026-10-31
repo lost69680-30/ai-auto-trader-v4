@@ -1630,6 +1630,48 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
             MetricCard("Open positions", BackendSession.openPositions.value, "Positions API", Modifier.weight(1f))
             MetricCard("Market feed", BackendSession.feedStatus.value, BackendSession.marketMessage.value, Modifier.weight(1f))
         }
+        SectionTitle("SOLO MARKET WATCHER")
+        CardPanel {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("AUTONOMOUS MARKET SCAN", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Tag(BackendSession.marketIntelligenceStatus.value,
+                    if (BackendSession.marketIntelligenceStatus.value == "HEALTHY") Green else Color(0xFFFFC857))
+            }
+            Text(
+                if (BackendSession.marketIntelligenceAssessedAt.value.isBlank()) {
+                    BackendSession.marketIntelligenceMessage.value
+                } else {
+                    "Last assessment: ${BackendSession.marketIntelligenceAssessedAt.value}"
+                },
+                color = Muted, fontSize = 11.sp, lineHeight = 16.sp
+            )
+            val watcherItems = BackendSession.marketIntelligence.value
+            if (watcherItems.isEmpty()) {
+                Text("Waiting for the first validated scheduled scan. No opportunity is assumed.", color = Muted, fontSize = 12.sp)
+            } else {
+                watcherItems.take(3).forEach { item ->
+                    Divider(color = Grid)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(displaySymbol(item.symbol), color = White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Tag(item.decision, if (item.decision == "SELECTED") Green else Gold)
+                    }
+                    IndicatorRow("Market regime", item.marketRegime)
+                    IndicatorRow("Adaptive strategy", item.selectedStrategy)
+                    Text(
+                        when (item.decision) {
+                            "SELECTED" -> "Candidate only · independent Risk Manager review required"
+                            "ANALYSIS_ONLY" -> "Long-term context only · not eligible for trading"
+                            else -> "No suitable opportunity · Solo waits"
+                        },
+                        color = Muted, fontSize = 10.sp, lineHeight = 14.sp
+                    )
+                }
+            }
+            Text(
+                "Source: ${BackendSession.marketIntelligenceEnvironment.value} · Testnet research data. Strategy ranking is advisory; no order is authorized.",
+                color = Muted, fontSize = 10.sp, lineHeight = 14.sp
+            )
+        }
         CardPanel {
             Text("CHARTS & ANALYSIS", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
             Text("Candlesticks, indicators, performance and AI market commentary", color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
@@ -1655,6 +1697,9 @@ private fun AnalysisScreen() {
     val isForeground = BackendSession.appInForeground.value
     val loadedMarkets = BackendSession.marketItems.value
     val selectedMarket = loadedMarkets.firstOrNull { normalizeSymbol(it.symbol) == normalizeSymbol(symbol) }
+    val selectedIntelligence = BackendSession.marketIntelligence.value.firstOrNull {
+        normalizeSymbol(it.symbol) == normalizeSymbol(selectedMarket?.symbol ?: symbol)
+    }
     val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol ?: symbol)
     val candleHistoryByTimeframe = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
     var candleHistoryLoading by remember { mutableStateOf(false) }
@@ -1799,6 +1844,56 @@ private fun AnalysisScreen() {
                     else -> "Bearish alignment in ${bears} timeframe(s); other intervals may be neutral or unavailable"
                 }
                 Text(summary, color = Gold, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+            SectionTitle("SOLO MARKET WATCHER & ADAPTIVE STRATEGY")
+            CardPanel {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("BACKEND ASSESSMENT", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Tag(BackendSession.marketIntelligenceStatus.value,
+                        if (BackendSession.marketIntelligenceStatus.value == "HEALTHY") Green else Color(0xFFFFC857))
+                }
+                if (selectedIntelligence == null) {
+                    Text(
+                        BackendSession.marketIntelligenceMessage.value,
+                        color = Muted, fontSize = 12.sp, lineHeight = 17.sp
+                    )
+                    Text("No backend strategy assessment is available for $symbol. Local chart indicators are not a substitute for the scheduled Market Watcher.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(displaySymbol(selectedIntelligence.symbol), color = White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Tag(selectedIntelligence.decision, if (selectedIntelligence.decision == "SELECTED") Green else Gold)
+                    }
+                    IndicatorRow("Market regime", selectedIntelligence.marketRegime)
+                    IndicatorRow("Overall direction", selectedIntelligence.direction)
+                    IndicatorRow("Long / medium / short", "${selectedIntelligence.longTermBias} / ${selectedIntelligence.mediumTermBias} / ${selectedIntelligence.shortTermBias}")
+                    IndicatorRow("Selected strategy", selectedIntelligence.selectedStrategy)
+                    IndicatorRow("Candidate direction", selectedIntelligence.proposedDirection)
+                    IndicatorRow("Strategy fit score", selectedIntelligence.fitScore)
+                    IndicatorRow(
+                        "Next gate",
+                        if (selectedIntelligence.eligibleForRiskReview) "Independent Risk Manager review · NOT approved"
+                        else "No executable candidate passed all checks"
+                    )
+                    when (selectedIntelligence.decision) {
+                        "SELECTED" -> Text("Solo selected a strategy candidate. It must still pass the independent Risk Manager; this is not an order approval.", color = Gold, fontSize = 11.sp, lineHeight = 16.sp)
+                        "ANALYSIS_ONLY" -> Text("Long-term analysis only. This result cannot become a trade proposal.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                        else -> Text("No valid opportunity. Solo waits instead of forcing a trade. ${selectedIntelligence.noTradeReason}", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                    }
+                    if (selectedIntelligence.conflicts.isNotEmpty()) {
+                        Text("Timeframe conflicts: ${selectedIntelligence.conflicts.joinToString("; ")}", color = Color(0xFFFFC857), fontSize = 10.sp, lineHeight = 14.sp)
+                    }
+                    if (selectedIntelligence.inProgressTimeframes.isNotEmpty()) {
+                        Text("In-progress candles excluded: ${selectedIntelligence.inProgressTimeframes.joinToString(", ")}", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                    }
+                    if (selectedIntelligence.dataQualityIssues.isNotEmpty()) {
+                        Text("Data-quality limitations: ${selectedIntelligence.dataQualityIssues.take(5).joinToString("; ")}", color = Color(0xFFFFC857), fontSize = 10.sp, lineHeight = 14.sp)
+                    }
+                    Text(
+                        "Scan: ${BackendSession.marketIntelligenceAssessedAt.value} · ${BackendSession.marketIntelligenceEnvironment.value} · ${selectedIntelligence.marketRegime}",
+                        color = Muted, fontSize = 9.sp, lineHeight = 13.sp
+                    )
+                }
+                Text("Fit scores are heuristic, not win probabilities. The Market Watcher has no order authority; all proposals remain subject to portfolio-wide risk checks.", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             }
             SectionTitle("EVIDENCE & UNCERTAINTY")
             CardPanel {
