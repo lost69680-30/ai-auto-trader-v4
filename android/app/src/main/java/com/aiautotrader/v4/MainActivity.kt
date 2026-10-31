@@ -267,6 +267,7 @@ private data class MarketIntelligenceItem(
     val symbol: String,
     val direction: String,
     val marketRegime: String,
+    val marketPhase: String,
     val longTermBias: String,
     val mediumTermBias: String,
     val shortTermBias: String,
@@ -981,6 +982,7 @@ private fun fetchMarketIntelligence(token: String): MarketIntelligenceFetchResul
                 symbol = row.optString("symbol", "UNKNOWN"),
                 direction = assessment.optString("direction", "UNKNOWN"),
                 marketRegime = assessment.optString("market_regime", "UNKNOWN"),
+                marketPhase = assessment.optString("market_phase", "UNKNOWN"),
                 longTermBias = assessment.optString("long_term_bias", "UNKNOWN"),
                 mediumTermBias = assessment.optString("medium_term_bias", "UNKNOWN"),
                 shortTermBias = assessment.optString("short_term_bias", "UNKNOWN"),
@@ -1864,6 +1866,7 @@ private fun AnalysisScreen() {
                         Tag(selectedIntelligence.decision, if (selectedIntelligence.decision == "SELECTED") Green else Gold)
                     }
                     IndicatorRow("Market regime", selectedIntelligence.marketRegime)
+                    IndicatorRow("Market phase", selectedIntelligence.marketPhase)
                     IndicatorRow("Overall direction", selectedIntelligence.direction)
                     IndicatorRow("Long / medium / short", "${selectedIntelligence.longTermBias} / ${selectedIntelligence.mediumTermBias} / ${selectedIntelligence.shortTermBias}")
                     IndicatorRow("Selected strategy", selectedIntelligence.selectedStrategy)
