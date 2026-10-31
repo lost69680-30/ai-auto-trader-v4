@@ -334,6 +334,9 @@ private object BackendSession {
     val marketIntelligenceScanAttempts = mutableStateOf(0)
     // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
     val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
+    val paperLedger = mutableStateOf<PaperLedgerSnapshot?>(null)
+    val paperLedgerStatus = mutableStateOf("NOT LOADED")
+    val paperLedgerError = mutableStateOf("")
 }
 
 private fun updateMarketFromWebSocket(snapshot: MarketStreamSnapshot) {
@@ -1414,26 +1417,101 @@ private fun NetworkArrow(label: String) {
 }
 
 @Composable
+private fun PaperLedgerRefreshEffect() {
+    val token = BackendSession.activeToken.value
+    LaunchedEffect(token) {
+        if (token.isBlank()) {
+            BackendSession.paperLedgerStatus.value = "NOT CONNECTED"
+            BackendSession.paperLedgerError.value = "Connect the authenticated backend to load paper-ledger data."
+            return@LaunchedEffect
+        }
+        while (true) {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    fetchPaperLedgerSnapshot(BuildConfig.PAPER_API_BASE_URL, token)
+                }
+            }
+            result.onSuccess { snapshot ->
+                BackendSession.paperLedger.value = snapshot
+                BackendSession.paperLedgerStatus.value = "CURRENT"
+                BackendSession.paperLedgerError.value = ""
+            }.onFailure { error ->
+                BackendSession.paperLedgerStatus.value = "REFRESH FAILED"
+                BackendSession.paperLedgerError.value =
+                    error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(160)
+                        ?: "Ledger data could not be refreshed."
+            }
+            delay(30_000)
+        }
+    }
+}
+
+@Composable
 private fun PositionsScreen() {
+    PaperLedgerRefreshEffect()
+    val snapshot = BackendSession.paperLedger.value
+    val open = snapshot?.positions.orEmpty().filter { it.status == "OPEN" }
+    val pendingOrders = snapshot?.orders.orEmpty().filter {
+        it.status.uppercase(Locale.ROOT) in setOf("PENDING", "OPEN", "NEW", "PARTIALLY_FILLED")
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CardPanel {
-            StatusLine("●", "PAPER LEDGER NOT CONNECTED", Color(0xFFFFC857))
+            StatusLine("●", "PAPER LEDGER · ${BackendSession.paperLedgerStatus.value}",
+                if (BackendSession.paperLedgerStatus.value == "CURRENT") Green else Color(0xFFFFC857))
             Text("Positions & orders", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text("No positions or orders are displayed because verified ledger data is not available. Sample trades are intentionally not fabricated.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+            Text(
+                if (snapshot != null) "Read-only ledger snapshot fetched at ${snapshot.fetchedAt}. Live exchange orders remain disabled."
+                else BackendSession.paperLedgerError.value.ifBlank { "No verified paper-ledger response is available." },
+                color = Muted, fontSize = 12.sp, lineHeight = 18.sp
+            )
+            if (BackendSession.paperLedgerStatus.value == "REFRESH FAILED" && snapshot != null) {
+                Text("Showing the last verified snapshot; it may be stale. Do not rely on it for a new decision.",
+                    color = Color(0xFFFFC857), fontSize = 11.sp)
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricCard("Open positions", "—", "Awaiting ledger", Modifier.weight(1f))
-            MetricCard("Pending orders", "—", "Paper service offline", Modifier.weight(1f))
+            MetricCard("Open positions", snapshot?.let { open.size.toString() } ?: "—",
+                "Verified ledger", Modifier.weight(1f))
+            MetricCard("Pending orders", snapshot?.let { pendingOrders.size.toString() } ?: "—",
+                "Paper orders only", Modifier.weight(1f))
         }
-        SectionTitle("POSITION MONITOR")
-        CardPanel {
-            Text("No paper positions to display", fontWeight = FontWeight.SemiBold)
-            Text("When the backend is connected, this area will show symbol, side, entry, current mark, unrealized P&L, stop-loss, take-profit and protection state.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+        SectionTitle("OPEN POSITIONS")
+        if (open.isEmpty()) {
+            CardPanel { Text(if (snapshot == null) "Position data unavailable" else "No open paper positions",
+                fontWeight = FontWeight.SemiBold, color = Muted) }
+        } else open.forEach { position ->
+            CardPanel {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(displaySymbol(position.symbol), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Tag(position.side, if (position.side == "LONG") Green else Color(0xFFFFC857))
+                }
+                IndicatorRow("Quantity", position.quantity.toString())
+                IndicatorRow("Entry / mark", "${formatMarketPrice(position.entryPrice)} / ${formatMarketPrice(position.markPrice)}")
+                IndicatorRow("Unrealized P&L", String.format(Locale.US, "%.4f", position.unrealizedPnl))
+                IndicatorRow("Stop-loss / take-profit", "${formatMarketPrice(position.stopLoss)} / ${formatMarketPrice(position.takeProfit)}")
+                IndicatorRow("Mark timestamp", position.markObservedAt.ifBlank { "Unavailable" })
+            }
+        }
+        SectionTitle("PAPER ORDERS")
+        if (snapshot == null || snapshot.orders.isEmpty()) {
+            CardPanel { Text(if (snapshot == null) "Order data unavailable" else "No paper orders recorded",
+                color = Muted, fontSize = 12.sp) }
+        } else snapshot.orders.takeLast(30).reversed().forEach { order ->
+            CardPanel {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(displaySymbol(order.symbol), fontWeight = FontWeight.SemiBold)
+                    Tag(order.status, Color(0xFFFFC857))
+                }
+                IndicatorRow("Side / quantity", "${order.side} · ${order.quantity}")
+                IndicatorRow("Entry", formatMarketPrice(order.entryPrice))
+                IndicatorRow("Stop / target", "${formatMarketPrice(order.stopLoss)} / ${formatMarketPrice(order.takeProfit)}")
+                IndicatorRow("Recorded", order.recordedAt)
+            }
         }
         SectionTitle("ORDER SAFETY")
         CardPanel {
             SafetyRow("Live exchange orders", "DISABLED", Green)
-            SafetyRow("Paper fill reconciliation", "NOT CONNECTED", Color(0xFFFFC857))
+            SafetyRow("Data source", snapshot?.risk?.stateStorage ?: "NOT VERIFIED", Color(0xFFFFC857))
             SafetyRow("Unknown position state", "BLOCK NEW ORDERS", Red)
         }
     }
@@ -1441,29 +1519,64 @@ private fun PositionsScreen() {
 
 @Composable
 private fun RiskCenterScreen() {
+    PaperLedgerRefreshEffect()
+    val snapshot = BackendSession.paperLedger.value
+    val risk = snapshot?.risk
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CardPanel {
-            StatusLine("●", "FAIL-CLOSED MODE", Green)
+            StatusLine("●", if (risk?.emergencyStopActive == true) "EMERGENCY STOP ACTIVE" else "PAPER-ONLY · READ-ONLY",
+                if (risk?.emergencyStopActive == true) Red else Green)
             Text("Risk control center", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text("The UI cannot approve trades. If risk validation, market data or position reconciliation is unavailable, the intended behavior is to reject new paper intents.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+            Text(
+                if (snapshot != null) "Risk state from the authenticated paper ledger. Last successful read: ${snapshot.fetchedAt}."
+                else BackendSession.paperLedgerError.value.ifBlank { "Risk state is unavailable until the authenticated ledger responds." },
+                color = Muted, fontSize = 12.sp, lineHeight = 18.sp
+            )
+            if (BackendSession.paperLedgerStatus.value == "REFRESH FAILED" && snapshot != null) {
+                Text("Last known risk state only — current state is unverified. Treat it as unavailable.",
+                    color = Color(0xFFFFC857), fontSize = 11.sp)
+            }
+        }
+        SectionTitle("VERIFIED RISK SNAPSHOT")
+        CardPanel {
+            IndicatorRow("Open positions", risk?.openPositionCount?.toString() ?: "Unavailable")
+            IndicatorRow("Account equity", risk?.accountEquity?.let { String.format(Locale.US, "%.4f", it) } ?: "No snapshot")
+            IndicatorRow("Drawdown amount", risk?.drawdownAmount?.let { String.format(Locale.US, "%.4f", it) } ?: "No snapshot")
+            IndicatorRow("Drawdown %", risk?.drawdownPct?.let { String.format(Locale.US, "%.3f%%", it) } ?: "No snapshot")
+            IndicatorRow("Unrealized P&L", risk?.unrealizedPnl?.let { String.format(Locale.US, "%.4f", it) } ?: "No snapshot")
+            IndicatorRow("Position marks", when (risk?.marksFresh) { true -> "FRESH"; false -> "STALE"; null -> "UNKNOWN" })
+            IndicatorRow("Snapshot time", risk?.snapshotAt ?: "Unavailable")
+            IndicatorRow("Storage", risk?.stateStorage ?: "Unavailable")
         }
         SectionTitle("INDEPENDENT SAFEGUARDS")
         CardPanel {
-            SafetyRow("Risk gate", "BACKEND REQUIRED", Color(0xFFFFC857))
-            SafetyRow("Max risk / exposure limits", "NOT LOADED", Color(0xFFFFC857))
-            SafetyRow("Stale-data rejection", "REQUIRED", Green)
+            SafetyRow("Risk gate", "BACKEND ONLY · NOT UI AUTHORIZED", Color(0xFFFFC857))
+            SafetyRow("Risk limits", "NOT EXPOSED BY CURRENT API", Color(0xFFFFC857))
+            SafetyRow("Stale-data rejection", "REQUIRED · FAIL CLOSED", Green)
             SafetyRow("Unknown account state", "BLOCK NEW ORDERS", Red)
             SafetyRow("Agent direct exchange access", "PROHIBITED", Green)
             SafetyRow("Live execution", "DISABLED", Green)
         }
+        SectionTitle("AUDIT / RISK EVENTS")
+        val events = snapshot?.audit.orEmpty()
+        if (events.isEmpty()) {
+            CardPanel { Text(if (snapshot == null) "Audit history unavailable" else "No audit events returned",
+                color = Muted, fontSize = 12.sp) }
+        } else events.take(30).forEach { event ->
+            CardPanel {
+                Text(event.eventType, fontWeight = FontWeight.SemiBold, color = Gold, fontSize = 12.sp)
+                Text("${event.occurredAt} · ${event.proposalId.ifBlank { "No proposal ID" }}",
+                    color = Muted, fontSize = 10.sp)
+                if (event.summary.isNotBlank()) Text(event.summary, color = Muted, fontSize = 11.sp)
+            }
+        }
         SectionTitle("EMERGENCY STOP")
         CardPanel {
-            Text("Emergency stop requires an authenticated backend connection", fontWeight = FontWeight.SemiBold)
-            Text("Use the authenticated backend connection card on the dashboard to activate the persistent paper stop. This is not a live-exchange kill switch; live orders remain disabled.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
-            Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(disabledContainerColor = PanelAlt, disabledContentColor = Muted)) { Text("STOP CONTROL UNAVAILABLE") }
+            Text("The backend's current emergency-stop state is displayed above. Activation remains available from the authenticated dashboard connection card.",
+                color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+            Text("This is a paper-ledger control, not a live-exchange kill switch. Live exchange orders remain disabled.",
+                color = Muted, fontSize = 11.sp)
         }
-        SectionTitle("RISK EVENT LOG")
-        CardPanel { Text("No risk events received", color = Muted, fontSize = 12.sp) }
     }
 }
 
