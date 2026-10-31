@@ -276,6 +276,7 @@ private data class MarketIntelligenceItem(
     val selectedStrategy: String,
     val proposedDirection: String,
     val fitScore: String,
+    val performanceStatus: String,
     val eligibleForRiskReview: Boolean,
     val noTradeReason: String,
     val conflicts: List<String>,
@@ -992,6 +993,7 @@ private fun fetchMarketIntelligence(token: String): MarketIntelligenceFetchResul
                 selectedStrategy = selectedStrategy,
                 proposedDirection = selection.optString("direction", "NONE"),
                 fitScore = fitScore,
+                performanceStatus = selection.optString("performance_status", "NOT_CALIBRATED"),
                 eligibleForRiskReview = selection.optBoolean("eligible_for_risk_review", false),
                 noTradeReason = selection.optString("no_trade_reason", "").takeIf { it != "null" }.orEmpty(),
                 conflicts = conflicts,
@@ -1875,6 +1877,7 @@ private fun AnalysisScreen() {
                     IndicatorRow("Selected strategy", selectedIntelligence.selectedStrategy)
                     IndicatorRow("Candidate direction", selectedIntelligence.proposedDirection)
                     IndicatorRow("Strategy fit score", selectedIntelligence.fitScore)
+                    IndicatorRow("Performance evidence", selectedIntelligence.performanceStatus)
                     IndicatorRow(
                         "Next gate",
                         if (selectedIntelligence.eligibleForRiskReview) "Independent Risk Manager review · NOT approved"
