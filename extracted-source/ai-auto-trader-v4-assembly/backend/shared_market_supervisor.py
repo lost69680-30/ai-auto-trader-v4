@@ -10,8 +10,6 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from backend.shared_market_store import PostgresMarketFeedStore
-
 
 logger = logging.getLogger(__name__)
 
@@ -80,15 +78,16 @@ def main() -> None:
     startup_grace = max(30.0, float(os.environ.get("PAPER_SUPERVISOR_WORKER_STARTUP_GRACE_SECONDS", "180")))
     health_check_interval = max(2.0, float(os.environ.get("PAPER_SUPERVISOR_WORKER_HEALTH_CHECK_SECONDS", "5")))
     database_url = os.environ.get("PAPER_DATABASE_URL", "").strip()
-    market_store = (
-        PostgresMarketFeedStore(
+    market_store = None
+    if database_url:
+        from backend.shared_market_store import PostgresMarketFeedStore
+
+        market_store = PostgresMarketFeedStore(
             database_url,
             worker_id=os.environ.get("PAPER_MARKET_WORKER_ID", "solo-market-worker"),
             max_age_seconds=max_market_age,
             lease_seconds=max(90.0, float(os.environ.get("PAPER_MARKET_WORKER_LEASE_SECONDS", "90"))),
         )
-        if database_url else None
-    )
     if market_store is None:
         logger.warning("worker heartbeat monitor disabled because PAPER_DATABASE_URL is missing; worker will fail closed and process-exit supervision remains active")
     last_worker_health_check = 0.0
