@@ -288,3 +288,111 @@ def test_backfill_rejects_missing_exchange_minutes_before_advancing_archive_curs
             testnet=True, now=BASE + timedelta(minutes=5), page_size=10,
         )
     assert archive.inserted == []
+
+
+def test_older_history_backfill_extends_archive_without_creating_a_gap():
+    from types import SimpleNamespace
+
+    from backend.historical_candle_archive import backfill_older_symbol_history
+
+    class Archive:
+        def __init__(self):
+            self.earliest = BASE + timedelta(minutes=5)
+            self.inserted = []
+
+        def earliest_open_time(self, *, venue, market_type, symbol):
+            return self.earliest
+
+        def insert_closed_candles(self, candles, *, now):
+            rows = tuple(candles)
+            self.inserted.extend(rows)
+            if rows:
+                self.earliest = min(row.open_time for row in rows)
+            return len(rows)
+
+    class Source:
+        def __init__(self):
+            self.calls = []
+
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            self.calls.append((symbol, interval, limit, start_time_ms, end_time_ms))
+            rows = [minute(i) for i in range(5)]
+            return tuple(
+                SimpleNamespace(
+                    symbol=symbol, open_time=row.open_time, close_time=row.close_time,
+                    open=row.open, high=row.high, low=row.low, close=row.close,
+                    volume=row.volume, is_closed=True,
+                )
+                for row in rows
+                if start_time_ms <= int(row.open_time.timestamp() * 1000) <= end_time_ms
+            )[:limit]
+
+    archive = Archive()
+    source = Source()
+    count = backfill_older_symbol_history(
+        archive, source, symbol="BTCUSDT", market_type="FUTURES",
+        testnet=True, now=BASE + timedelta(days=1), lookback_days=1, page_size=3,
+    )
+
+    assert count == 3
+    assert len(source.calls) == 1
+    assert [row.open_time for row in archive.inserted] == [
+        BASE + timedelta(minutes=2), BASE + timedelta(minutes=3), BASE + timedelta(minutes=4)
+    ]
+    assert archive.earliest == BASE + timedelta(minutes=2)
+
+
+def test_older_history_backfill_rejects_gaps_before_inserting_any_rows():
+    from types import SimpleNamespace
+
+    from backend.historical_candle_archive import backfill_older_symbol_history
+
+    class Archive:
+        earliest = BASE + timedelta(minutes=5)
+        inserted = []
+
+        def earliest_open_time(self, **kwargs):
+            return self.earliest
+
+        def insert_closed_candles(self, candles, *, now):
+            self.inserted.extend(candles)
+            return len(tuple(candles))
+
+    class Source:
+        def fetch_klines(self, symbol, **kwargs):
+            return tuple(
+                SimpleNamespace(
+                    symbol=symbol, open_time=row.open_time, close_time=row.close_time,
+                    open=row.open, high=row.high, low=row.low, close=row.close,
+                    volume=row.volume, is_closed=True,
+                )
+                for row in (minute(2), minute(4))
+            )
+
+    archive = Archive()
+    with pytest.raises(ValueError, match="gap"):
+        backfill_older_symbol_history(
+            archive, Source(), symbol="BTCUSDT", market_type="FUTURES",
+            testnet=True, now=BASE + timedelta(days=1), lookback_days=1, page_size=3,
+        )
+    assert archive.inserted == []
+
+
+def test_older_history_backfill_is_testnet_only_and_stops_at_lookback_boundary():
+    from types import SimpleNamespace
+
+    from backend.historical_candle_archive import backfill_older_symbol_history
+
+    class Archive:
+        def earliest_open_time(self, **kwargs):
+            return BASE - timedelta(days=2)
+
+    with pytest.raises(ValueError, match="Testnet"):
+        backfill_older_symbol_history(
+            Archive(), SimpleNamespace(), symbol="BTCUSDT", market_type="FUTURES",
+            testnet=False, now=BASE, lookback_days=1,
+        )
+    assert backfill_older_symbol_history(
+        Archive(), SimpleNamespace(), symbol="BTCUSDT", market_type="FUTURES",
+        testnet=True, now=BASE, lookback_days=1,
+    ) == 0
