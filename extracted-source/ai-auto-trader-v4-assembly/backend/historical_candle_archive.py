@@ -180,6 +180,26 @@ class PostgresCandleArchive:
         return inserted
 
 
+
+    def earliest_open_time(self, *, venue: str, market_type: str, symbol: str) -> datetime | None:
+        """Return the oldest archived minute for one exact venue/market/symbol key."""
+        if venue not in {"BINANCE_USDM_TESTNET", "BINANCE_SPOT_TESTNET"}:
+            raise ValueError("unsupported archive venue")
+        if (market_type, venue) not in {
+            ("FUTURES", "BINANCE_USDM_TESTNET"), ("SPOT", "BINANCE_SPOT_TESTNET")
+        }:
+            raise ValueError("venue and market_type do not match")
+        if not isinstance(symbol, str) or not symbol or symbol != symbol.upper().strip():
+            raise ValueError("symbol must be non-empty, trimmed and uppercase-normalized")
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT min(open_time) FROM paper_ledger.market_candles
+                   WHERE venue = %s AND market_type = %s AND symbol = %s
+                     AND interval = '1m' AND orders_authorized = false""",
+                (venue, market_type, symbol),
+            ).fetchone()
+        return None if row is None else row[0]
+
     def latest_open_time(self, *, venue: str, market_type: str, symbol: str) -> datetime | None:
         """Return the newest archived minute for one exact venue/market/symbol key."""
         if venue not in {"BINANCE_USDM_TESTNET", "BINANCE_SPOT_TESTNET"}:
@@ -355,3 +375,74 @@ def archive_is_caught_up(
         if latest is None or _aware_utc(latest, "latest_open_time") < expected:
             return False
     return True
+
+
+def backfill_older_symbol_history(
+    archive: "PostgresCandleArchive",
+    source: object,
+    *,
+    symbol: str,
+    market_type: str,
+    testnet: bool,
+    now: datetime | None = None,
+    lookback_days: int = 30,
+    page_size: int = 500,
+    max_pages: int = 1,
+) -> int:
+    """Extend the archive backwards in bounded pages without crossing minute gaps."""
+    if testnet is not True:
+        raise ValueError("historical candle backfill accepts Testnet market data only")
+    if market_type not in {"FUTURES", "SPOT"}:
+        raise ValueError("market_type must be FUTURES or SPOT")
+    if not isinstance(symbol, str) or not symbol or symbol != symbol.upper().strip():
+        raise ValueError("symbol must be non-empty, trimmed and uppercase-normalized")
+    if isinstance(lookback_days, bool) or not isinstance(lookback_days, int) or not 1 <= lookback_days <= 365:
+        raise ValueError("lookback_days must be from 1 through 365")
+    if isinstance(page_size, bool) or not isinstance(page_size, int) or not 1 <= page_size <= 1000:
+        raise ValueError("page_size must be from 1 through 1000")
+    if isinstance(max_pages, bool) or not isinstance(max_pages, int) or not 1 <= max_pages <= 100:
+        raise ValueError("max_pages must be from 1 through 100")
+    current = _aware_utc(now or datetime.now(timezone.utc), "now")
+    venue = "BINANCE_USDM_TESTNET" if market_type == "FUTURES" else "BINANCE_SPOT_TESTNET"
+    current_minute_ms = (int(current.timestamp() * 1000) // 60_000) * 60_000
+    target_ms = current_minute_ms - lookback_days * 86_400_000
+    inserted = 0
+    for _ in range(max_pages):
+        earliest = archive.earliest_open_time(venue=venue, market_type=market_type, symbol=symbol)
+        if earliest is None:
+            return inserted
+        earliest_ms = int(_aware_utc(earliest, "earliest_open_time").timestamp() * 1000)
+        if earliest_ms <= target_ms:
+            return inserted
+        end_ms = earliest_ms - 1
+        start_ms = max(target_ms, earliest_ms - page_size * 60_000)
+        if start_ms > end_ms:
+            return inserted
+        page = tuple(source.fetch_klines(
+            symbol, interval="1m", limit=page_size, now=current,
+            start_time_ms=start_ms, end_time_ms=end_ms,
+        ))
+        if not page:
+            return inserted
+        if len(page) > page_size or any(getattr(row, "symbol", None) != symbol for row in page):
+            raise ValueError("older-history response has an invalid size or symbol")
+        for previous, current_row in zip(page, page[1:]):
+            previous_ms = int(_aware_utc(previous.open_time, "backfill open_time").timestamp() * 1000)
+            current_ms = int(_aware_utc(current_row.open_time, "backfill open_time").timestamp() * 1000)
+            if current_ms - previous_ms != 60_000:
+                raise ValueError("older-history response contains a missing one-minute candle gap")
+        last_ms = int(_aware_utc(page[-1].open_time, "backfill open_time").timestamp() * 1000)
+        if last_ms + 60_000 != earliest_ms:
+            raise ValueError("older-history page does not join the existing archive without a gap")
+        if any(getattr(row, "is_closed", False) is not True for row in page):
+            raise ValueError("older-history response contains an open candle")
+        archived = tuple(ArchivedCandle(
+            venue=venue, market_type=market_type, symbol=symbol,
+            open_time=row.open_time, close_time=row.close_time,
+            open=row.open, high=row.high, low=row.low, close=row.close,
+            volume=row.volume, is_closed=True, interval="1m",
+        ) for row in page)
+        inserted += archive.insert_closed_candles(archived, now=current)
+        if len(page) < page_size:
+            return inserted
+    return inserted
