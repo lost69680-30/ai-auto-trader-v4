@@ -30,7 +30,7 @@ import os
 from pathlib import Path
 import time
 
-name = "worker" if __name__ == "backend.shared_market_worker" else "api"
+name = "worker" if __spec__.name == "backend.shared_market_worker" else "api"
 events = Path(os.environ["TEST_EVENT_FILE"])
 fail_name = os.environ.get("TEST_FAIL_CHILD", "")
 lines = events.read_text(encoding="utf-8").splitlines() if events.exists() else []
