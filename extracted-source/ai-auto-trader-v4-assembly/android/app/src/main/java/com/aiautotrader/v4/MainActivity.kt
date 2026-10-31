@@ -263,6 +263,16 @@ private data class MarketFetchResult(
     val safeResponse: Boolean,
 )
 
+internal data class RestoredBackendSession(
+    val editableToken: String,
+    val activeToken: String,
+)
+
+internal fun restoredBackendSession(storedToken: String?): RestoredBackendSession {
+    val token = storedToken?.trim()?.takeIf { it.length >= 32 }.orEmpty()
+    return RestoredBackendSession(editableToken = token, activeToken = token)
+}
+
 // App-level observable state deliberately lives above individual navigation screens.
 // Removing a composable from the screen tree must not erase an authenticated session.
 private object BackendSession {
