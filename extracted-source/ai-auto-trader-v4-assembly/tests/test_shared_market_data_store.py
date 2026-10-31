@@ -43,7 +43,7 @@ def reset_tables():
         root / "supabase/migrations/20261029205318_create_paper_ledger_schema.sql",
         root / "supabase/migrations/20261030195452_create_shared_market_data.sql",
         root / "supabase/migrations/20261030195505_create_durable_scheduled_jobs.sql",
-        root / "supabase/migrations/20261031100000_create_market_intelligence_reports.sql",
+        root / "supabase/migrations/20261031155011_create_market_intelligence_reports.sql",
     )
     with psycopg.connect(DSN, autocommit=True) as conn:
         for migration in migrations:
