@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS paper_ledger.opportunity_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_opportunity_events_timeline
-    ON paper_ledger.opportunity_events (opportunity_id, occurred_at, event_id);
+    ON paper_ledger.opportunity_events (opportunity_id, opportunity_version);
 
 CREATE TABLE IF NOT EXISTS paper_ledger.opportunity_claims (
     opportunity_id text PRIMARY KEY REFERENCES paper_ledger.opportunities(opportunity_id) ON DELETE CASCADE,
