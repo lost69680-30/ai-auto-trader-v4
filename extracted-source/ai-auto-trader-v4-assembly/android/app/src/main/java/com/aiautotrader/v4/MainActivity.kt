@@ -1207,7 +1207,7 @@ private fun BackendMarketIntelligenceEffect() {
                 BackendSession.marketIntelligenceScanStartedAt.value = response.scanStartedAt
                 BackendSession.marketIntelligenceScanCompletedAt.value = response.scanCompletedAt
                 BackendSession.marketIntelligenceScanAttempts.value = response.scanAttempts
-                if (!response.safeResponse && response.status == "UNSAFE RESPONSE") {
+                if (!response.safeResponse && response.status != "UNAVAILABLE") {
                     BackendSession.marketIntelligence.value = emptyList()
                 } else if (response.items.isNotEmpty()) {
                     BackendSession.marketIntelligence.value = response.items
