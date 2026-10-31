@@ -213,7 +213,7 @@ git commit -m "feat: add independent strategy assessments"
 - `ContinuousOpportunitySearch(store, source, strategy_engine, config).scan(*, now, scan_id) -> SearchRunResult`.
 - `SearchRunResult`: scan ID, started/completed timestamps, coverage counts, per-symbol quality status, candidate IDs, skipped symbols/reasons and `orders_authorized=false`.
 
-- [ ] **Step 1: Add failing tests for scan coverage and quality gates**
+- [x] **Step 1: Add failing tests for scan coverage and quality gates**
 
 Cover:
 1. Only configured and enabled Testnet instruments are scanned.
@@ -225,7 +225,7 @@ Cover:
 7. A repeated scan ID/idempotency key does not create duplicate opportunities or assessments.
 8. All results remain research-only and have `orders_authorized=false`.
 
-- [ ] **Step 2: Verify the expected failures**
+- [x] **Step 2: Verify the expected failures**
 
 Run:
 
@@ -235,13 +235,13 @@ pytest -q tests/test_continuous_opportunity_search.py
 
 Expected: the new scan interface is absent and focused tests fail at import/collection.
 
-- [ ] **Step 3: Implement the search handler**
+- [x] **Step 3: Implement the search handler**
 
-Build a bounded scan over the configured allowlist using the worker's existing public Testnet source and the same market-data quality rules used by the shared feed and market assessment. Reuse the existing concurrent timeframe-fetch pattern rather than creating another polling loop. Record run coverage and quality outcomes even when a symbol is skipped. Pass immutable evidence references to Task 2 and persist candidate/assessment outputs through Task 1.
+Build a bounded scan over the configured allowlist using the worker's existing public Testnet source and the same market-data quality rules used by the shared feed and market assessment. Reuse the existing concurrent timeframe-fetch pattern rather than creating another polling loop. Record run coverage and quality outcomes even when a symbol is skipped. Pass immutable evidence references to Task 2 and persist the five independent strategy assessments inside the existing durable market-intelligence report. Do not create registry opportunities in this task: the exact setup identity must include an explicit strategy-approved trigger/price plan, which is established at the Task 4 coordinator boundary. This avoids creating duplicate or misleading waiting records from a scan-only heuristic.
 
 A scan must not synthesize entry/stop/target prices or create signals. It must not assume Spot or Forex is configured. Repeated scan delivery must be safe under at-least-once scheduled-job execution.
 
-- [ ] **Step 4: Verify the focused pass**
+- [x] **Step 4: Verify the focused pass**
 
 Run:
 
@@ -251,7 +251,7 @@ pytest -q tests/test_continuous_opportunity_search.py
 
 Expected: configured-universe, quality-gate, partial-failure, bounded-concurrency and idempotency tests pass.
 
-- [ ] **Step 5: Run affected integration checks**
+- [x] **Step 5: Run affected integration checks**
 
 Run:
 
@@ -261,7 +261,7 @@ pytest -q tests/test_market_intelligence_scan.py tests/test_shared_market_data_s
 
 Expected: the existing scheduled intelligence scan and shared snapshot store remain green with no competing market feed.
 
-- [ ] **Step 6: Commit the passing deliverable**
+- [x] **Step 6: Commit the passing deliverable**
 
 ```bash
 git add extracted-source/ai-auto-trader-v4-assembly/backend/continuous_opportunity_search.py extracted-source/ai-auto-trader-v4-assembly/tests/test_continuous_opportunity_search.py extracted-source/ai-auto-trader-v4-assembly/backend/market_intelligence_scan.py
