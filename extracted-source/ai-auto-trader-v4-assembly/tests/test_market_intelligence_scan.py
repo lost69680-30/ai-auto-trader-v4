@@ -121,6 +121,7 @@ def test_scheduled_scan_publishes_assessment_and_adaptive_strategy_without_order
     assert item["symbol"] == "BTCUSDT"
     assert item["assessment"]["orders_authorized"] is False
     assert item["selection"]["orders_authorized"] is False
+    assert item["selection"]["performance_status"] == "NOT_CALIBRATED"
     assert item["selection"]["decision"] in {"SELECTED", "ANALYSIS_ONLY", "NO_TRADE"}
 
 
