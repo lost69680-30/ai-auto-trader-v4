@@ -51,6 +51,11 @@ def _start(module: str, env: dict[str, str]) -> subprocess.Popen:
     return subprocess.Popen([sys.executable, "-m", module], env=env)
 
 
+def configured_child_shutdown_grace(environ: Mapping[str, str]) -> float:
+    """Allow the worker's 15-second scheduler shutdown to finish before SIGKILL."""
+    return max(15.0, float(environ.get("PAPER_SUPERVISOR_CHILD_SHUTDOWN_GRACE_SECONDS", "25")))
+
+
 def worker_heartbeat_requires_restart(
     status: Any, *, uptime_seconds: float, startup_grace_seconds: float = 180.0
 ) -> bool:
@@ -164,7 +169,7 @@ def main() -> None:
             if proc.poll() is None:
                 logger.info("stopping child process name=%s pid=%s", name, proc.pid)
                 proc.terminate()
-        deadline = time.monotonic() + 10.0
+        deadline = time.monotonic() + configured_child_shutdown_grace(os.environ)
         for state in children.values():
             proc = state["process"]
             if proc.poll() is None:
