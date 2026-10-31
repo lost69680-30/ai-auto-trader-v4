@@ -1,8 +1,7 @@
 """Linux process-level recovery tests for Solo's real supervisor subprocesses.
 
-These tests use disposable fake child modules. They exercise the actual supervisor
-and operating-system process lifecycle without connecting to PostgreSQL, exchanges,
-Render, Supabase, or any trading endpoint.
+Disposable fake child modules exercise the actual supervisor and OS process
+lifecycle without connecting to PostgreSQL, exchanges, Render, Supabase, or trading.
 """
 from __future__ import annotations
 
@@ -31,7 +30,7 @@ import os
 from pathlib import Path
 import time
 
-name = os.environ["TEST_CHILD_NAME"]
+name = "worker" if __name__ == "backend.shared_market_worker" else "api"
 events = Path(os.environ["TEST_EVENT_FILE"])
 fail_name = os.environ.get("TEST_FAIL_CHILD", "")
 lines = events.read_text(encoding="utf-8").splitlines() if events.exists() else []
@@ -50,11 +49,10 @@ while True:
 def _read_events(path: Path) -> list[tuple[str, int, int]]:
     if not path.exists():
         return []
-    result = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        name, pid, count = line.split()
-        result.append((name, int(pid), int(count)))
-    return result
+    return [
+        (name, int(pid), int(count))
+        for name, pid, count in (line.split() for line in path.read_text(encoding="utf-8").splitlines())
+    ]
 
 
 def _wait_for(predicate, process: subprocess.Popen, timeout: float = 15.0) -> None:
@@ -107,24 +105,20 @@ def _exercise_restart(failed_child: str) -> None:
         try:
             def recovered() -> bool:
                 rows = _read_events(events)
-                failed_name = "worker" if failed_child == "worker" else "api"
+                failed_rows = [row for row in rows if row[0] == failed_child]
                 stable_name = "api" if failed_child == "worker" else "worker"
-                failed_rows = [row for row in rows if row[0] == failed_name]
                 stable_rows = [row for row in rows if row[0] == stable_name]
                 return len(failed_rows) >= 2 and len(stable_rows) == 1
 
             _wait_for(recovered, supervisor)
             rows = _read_events(events)
-            failed_name = "worker" if failed_child == "worker" else "api"
+            assert len([row for row in rows if row[0] == failed_child]) >= 2
             stable_name = "api" if failed_child == "worker" else "worker"
-            assert len([row for row in rows if row[0] == failed_name]) >= 2
             assert len([row for row in rows if row[0] == stable_name]) == 1
 
             supervisor.send_signal(signal.SIGTERM)
             supervisor.wait(timeout=12)
             assert supervisor.returncode == 0
-            # Every child recorded by the harness, including the restarted child,
-            # must be gone after graceful supervisor shutdown.
             for _, pid, _ in rows:
                 deadline = time.monotonic() + 3
                 while _pid_is_alive(pid) and time.monotonic() < deadline:
