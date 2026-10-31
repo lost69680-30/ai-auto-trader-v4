@@ -53,19 +53,43 @@ jobs:
           cd backup
           sha256sum --check solo-paper-ledger.dump.sha256
           pg_restore --list solo-paper-ledger.dump >/dev/null
-          # The archive contains role-targeted RLS policies; create the role name
-          # in the disposable database without granting it login or extra access.
+          # Recreate the role name referenced by the archive's RLS policies.
+          # It has no login and receives no privileges in this disposable DB.
           psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c \
             "CREATE ROLE solo_backup_reader NOLOGIN NOINHERIT"
           pg_restore --exit-on-error --no-owner --no-acl \
             --dbname="$TEST_DATABASE_URL" solo-paper-ledger.dump
-          table_count="$(psql "$TEST_DATABASE_URL" -Atc \
-            "SELECT count(*) FROM information_schema.tables WHERE table_schema='paper_ledger' AND table_type='BASE TABLE'")"
-          candle_count="$(psql "$TEST_DATABASE_URL" -Atc \
+
+          expected_tables=(
+            paper_orders paper_fills paper_positions paper_funding_events
+            paper_audit_events paper_system_controls paper_order_cancellations
+            paper_position_extrema paper_equity_snapshots market_feed_snapshots
+            market_worker_heartbeats scheduled_job_definitions scheduled_jobs
+            market_candles
+          )
+          expected_csv="$(IFS=,; echo "${expected_tables[*]}")"
+          table_count="$(psql "$TEST_DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
+            "SELECT count(*) FROM information_schema.tables
+             WHERE table_schema='paper_ledger' AND table_type='BASE TABLE'")"
+          missing_count="$(psql "$TEST_DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
+            "SELECT count(*) FROM unnest(string_to_array('$expected_csv', ',')) AS expected(name)
+             WHERE to_regclass('paper_ledger.' || quote_ident(expected.name)) IS NULL")"
+          rls_count="$(psql "$TEST_DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
+            "SELECT count(*) FROM pg_class c
+             JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE n.nspname='paper_ledger' AND c.relkind='r' AND c.relrowsecurity")"
+          primary_key_count="$(psql "$TEST_DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
+            "SELECT count(*) FROM pg_constraint con
+             JOIN pg_class c ON c.oid=con.conrelid
+             JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE n.nspname='paper_ledger' AND con.contype='p'")"
+          candle_count="$(psql "$TEST_DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
             "SELECT count(*) FROM paper_ledger.market_candles")"
-          if [ "$table_count" -lt 1 ] || [ "$candle_count" -lt 1 ]; then
-            echo "::error::Restore completed but expected application tables or candle data are missing."
+          if [ "$table_count" -ne 14 ] || [ "$missing_count" -ne 0 ] ||
+             [ "$rls_count" -ne 14 ] || [ "$primary_key_count" -ne 14 ] ||
+             [ "$candle_count" -lt 1 ]; then
+            echo "::error::Restore validation failed: tables=$table_count missing=$missing_count rls=$rls_count primary_keys=$primary_key_count candles=$candle_count"
             exit 1
           fi
-          echo "PASS: checksum valid; restored $table_count paper_ledger tables and $candle_count candles into disposable PostgreSQL 17."
+          echo "PASS: checksum valid; all 14 expected tables restored; all 14 have RLS and primary keys; $candle_count candles restored into disposable PostgreSQL 17."
           echo "This drill did not connect to or modify staging or production databases."
