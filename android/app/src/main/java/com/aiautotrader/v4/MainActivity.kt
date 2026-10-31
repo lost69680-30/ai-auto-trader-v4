@@ -38,6 +38,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -49,8 +51,11 @@ internal const val BACKEND_MARKET_READ_TIMEOUT_MS = 75_000
 // UI-only theme preference. This changes presentation only; it cannot affect trading or risk controls.
 private var lightTheme by mutableStateOf(false)
 private val Background: Color get() = if (lightTheme) Color(0xFFF7F5F0) else Color(0xFF0B1018)
-private val Panel: Color get() = if (lightTheme) Color(0xFFFFFFFF) else Color(0xFF151D29)
-private val PanelAlt: Color get() = if (lightTheme) Color(0xFFEEEAE1) else Color(0xFF1B2635)
+private val Panel: Color get() = if (lightTheme) Color(0xEFFFFFFF) else Color(0xD91A2330)
+private val PanelAlt: Color get() = if (lightTheme) Color(0xFFF0EDE6) else Color(0xFF202B3A)
+private val GlassEdge: Color get() = if (lightTheme) Color(0xFFFFFFFF).copy(alpha = .88f) else Color(0xFFE8EEF8).copy(alpha = .13f)
+private val GlassHighlight: Color get() = if (lightTheme) Color(0xFFFFFFFF).copy(alpha = .78f) else Color(0xFF52657D).copy(alpha = .20f)
+private val GlassShade: Color get() = if (lightTheme) Color(0xFFD9D1C4).copy(alpha = .18f) else Color(0xFF05080D).copy(alpha = .30f)
 private val Gold = Color(0xFFD8B878)
 private val Green: Color get() = if (lightTheme) Color(0xFF087F5B) else Color(0xFF43D9A3)
 private val Red: Color get() = if (lightTheme) Color(0xFFC6283D) else Color(0xFFFF6B78)
@@ -1077,8 +1082,9 @@ private fun TraderApp() {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             screens.forEach { item ->
                 val selected = screen == item || (item == "Markets" && screen == "Charts & Analysis")
-                Box(Modifier.background(if (selected) Gold.copy(alpha = .16f) else Panel, RoundedCornerShape(12.dp))
-                    .border(1.dp, if (selected) Gold.copy(alpha = .8f) else Grid, RoundedCornerShape(12.dp))
+                Box(Modifier.shadow(if (selected) 2.dp else 4.dp, RoundedCornerShape(12.dp))
+                    .background(if (selected) Brush.linearGradient(listOf(Gold.copy(alpha = .24f), Gold.copy(alpha = .08f))) else Brush.linearGradient(listOf(Panel, PanelAlt)), RoundedCornerShape(12.dp))
+                    .border(1.dp, if (selected) Gold.copy(alpha = .75f) else GlassEdge, RoundedCornerShape(12.dp))
                     .clickable { screen = if (item == "Markets") "Charts & Analysis" else item }.padding(horizontal = 13.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
                     Text(item, color = if (selected) Gold else Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
@@ -1246,7 +1252,9 @@ private fun ReadOnlyBackendConnectionCard() {
         Text("READ-ONLY BACKEND CONNECTION", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         Text("API: ${if (BuildConfig.PAPER_API_BASE_URL.isBlank()) "not configured" else BuildConfig.PAPER_API_BASE_URL}", color = Muted, fontSize = 11.sp)
         OutlinedTextField(value = token, onValueChange = { token = it }, label = { Text("Bearer API token") },
-            singleLine = true, modifier = Modifier.fillMaxWidth(), visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+            singleLine = true, shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Gold, unfocusedBorderColor = Grid, focusedLabelColor = Gold, cursorColor = Gold),
+            modifier = Modifier.fillMaxWidth().shadow(2.dp, RoundedCornerShape(12.dp)), visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
         Button(enabled = !loading && token.length >= 32 && BuildConfig.PAPER_API_BASE_URL.startsWith("https://"),
             onClick = {
       val normalizedToken = token.trim()
@@ -1343,7 +1351,9 @@ private fun ReadOnlyBackendConnectionCard() {
                     }
                     loading = false
                 }
-            }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background)) {
+            }, modifier = Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(12.dp)), shape = RoundedCornerShape(12.dp),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp, pressedElevation = 1.dp, disabledElevation = 0.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background)) {
             Text(if (loading) "CHECKING…" else "CONNECT & LOAD STATUS")
         }
         Text(status, color = if (status.startsWith("CONNECTED")) Green else Color(0xFFFFC857), fontWeight = FontWeight.Bold, fontSize = 12.sp)
@@ -1392,7 +1402,9 @@ private fun ReadOnlyBackendConnectionCard() {
                         loading = false
                     }
                 },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().shadow(5.dp, RoundedCornerShape(12.dp)),
+                shape = RoundedCornerShape(12.dp),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 5.dp, pressedElevation = 1.dp, disabledElevation = 0.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White)
             ) { Text(if (loading) "SENDING STOP…" else if (emergencyStop == "ACTIVE") "EMERGENCY STOP ACTIVE" else "ACTIVATE EMERGENCY STOP") }
         }
@@ -1412,7 +1424,8 @@ private fun ReadOnlyBackendConnectionCard() {
                 BackendSession.marketItems.value = emptyList()
                 BackendSession.marketMessage.value = "Backend token cleared; no authenticated market request will be made."
             },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().shadow(2.dp, RoundedCornerShape(12.dp)), shape = RoundedCornerShape(12.dp),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 3.dp, pressedElevation = 1.dp, disabledElevation = 0.dp),
             colors = ButtonDefaults.buttonColors(containerColor = PanelAlt, contentColor = White)
         ) { Text("FORGET SAVED TOKEN") }
         Text("The bearer token is encrypted on this device with Android Keystore. Clearing it here does not change the backend emergency-stop state. Do not use an exchange key here.", color = Muted, fontSize = 10.sp)
@@ -1420,16 +1433,52 @@ private fun ReadOnlyBackendConnectionCard() {
 }
 
 @Composable
+private fun DashboardHeroCard() {
+    val connected = BackendSession.status.value.startsWith("CONNECTED")
+    val socket = BackendSession.websocketStatus.value
+    val feed = BackendSession.feedStatus.value
+    val statusColor = if (connected) Green else Color(0xFFFFC857)
+    CardPanel {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text("MARKET INTELLIGENCE", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                Text("Your market, in focus.", color = White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text("Live analysis workspace · paper environment", color = Muted, fontSize = 11.sp)
+            }
+            Tag(if (connected) "CONNECTED" else "OFFLINE", statusColor)
+        }
+        Spacer(Modifier.height(3.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatusTile("API", if (connected) "READY" else "OFFLINE", statusColor, Modifier.weight(1f))
+            StatusTile("STREAM", socket, if (socket == "CONNECTED") Green else Color(0xFFFFC857), Modifier.weight(1f))
+            StatusTile("FEED", feed, if (feed == "HEALTHY") Green else Color(0xFFFFC857), Modifier.weight(1f))
+        }
+        Text(
+            if (connected) BackendSession.marketMessage.value
+            else "Connect the authenticated backend to load validated market data. The app remains paper-only.",
+            color = Muted, fontSize = 12.sp, lineHeight = 17.sp
+        )
+    }
+}
+
+@Composable
+private fun StatusTile(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier.background(Brush.linearGradient(listOf(GlassHighlight, PanelAlt, GlassShade)), RoundedCornerShape(11.dp))
+            .border(1.dp, GlassEdge, RoundedCornerShape(11.dp))
+            .padding(horizontal = 9.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Text(label, color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .8.sp)
+        Text(value, color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
+}
+
+@Composable
 private fun DashboardScreen(openAnalysis: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         ReadOnlyBackendConnectionCard()
-        CardPanel {
-            val connected = BackendSession.status.value.startsWith("CONNECTED")
-            StatusLine("●", if (connected) "BACKEND CONNECTED · PAPER ONLY" else "BACKEND STATUS · ${BackendSession.status.value}", if (connected) Green else Color(0xFFFFC857))
-            Spacer(Modifier.height(8.dp))
-            Text("Paper mode only", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text(if (connected) "Authenticated backend session retained across navigation. Market feed: ${BackendSession.feedStatus.value}. ${BackendSession.marketMessage.value}" else "Live balances, positions and market data remain unavailable until the authenticated API is connected.", color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
-        }
+        DashboardHeroCard()
         SectionTitle("ACCOUNT OVERVIEW")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             MetricCard("Paper equity", "—", "Waiting for backend", Modifier.weight(1f))
@@ -1442,7 +1491,7 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
         CardPanel {
             Text("CHARTS & ANALYSIS", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
             Text("Candlesticks, indicators, performance and AI market commentary", color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
-            Button(onClick = openAnalysis, colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background), modifier = Modifier.fillMaxWidth()) { Text("Open Charts & Analysis") }
+            Button(onClick = openAnalysis, colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background), modifier = Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(12.dp)), shape = RoundedCornerShape(12.dp), elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp, pressedElevation = 1.dp)) { Text("Open Charts & Analysis") }
         }
         SectionTitle("SAFETY CONTROLS")
         CardPanel {
@@ -1451,6 +1500,55 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
             SafetyRow("Emergency stop", BackendSession.emergencyStop.value, if (BackendSession.emergencyStop.value == "ACTIVE") Red else Color(0xFFFFC857))
         }
         Text("Build milestone 2 · Charts and analysis UI. No exchange credentials are stored in this app. AI analysis is advisory; independent risk validation has final authority.", color = Muted, fontSize = 11.sp, lineHeight = 17.sp)
+    }
+}
+
+@Composable
+private fun MarketReadoutCard(
+    symbol: String,
+    timeframe: String,
+    snapshot: TimeframeSnapshot?,
+    technical: TechnicalSnapshot?,
+) {
+    val bias = snapshot?.bias ?: "UNAVAILABLE"
+    val ready = technical?.directionalReady == true
+    val accent = when (bias) {
+        "BULLISH" -> Green
+        "BEARISH" -> Red
+        else -> Gold
+    }
+    val headline = when {
+        snapshot == null -> "Waiting for validated candle history"
+        snapshot.status.startsWith("Data quality blocked") -> "Market readout blocked"
+        !ready -> "More candle history required"
+        bias == "BULLISH" -> "Bullish conditions observed"
+        bias == "BEARISH" -> "Bearish conditions observed"
+        else -> "No directional agreement"
+    }
+    val explanation = when {
+        snapshot == null -> "No interval snapshot is available. No market direction is inferred."
+        snapshot.status.startsWith("Data quality blocked") -> "The selected interval failed data-quality checks. Treat this readout as unavailable."
+        !ready -> "The selected interval does not yet have enough validated candles for a core trend and momentum review."
+        bias == "BULLISH" -> "Validated candles show bullish indicator alignment on this interval. This is descriptive evidence, not a forecast or trade signal."
+        bias == "BEARISH" -> "Validated candles show bearish indicator alignment on this interval. This is descriptive evidence, not a forecast or trade signal."
+        else -> "Current indicators do not establish a clear bullish or bearish direction on this interval."
+    }
+    CardPanel {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("MARKET READOUT", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp)
+                Text(headline, color = White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("$symbol · $timeframe", color = Muted, fontSize = 10.sp)
+            }
+            Tag(bias, accent)
+        }
+        Text(explanation, color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatusTile("TREND", technical?.trend ?: "N/A", accent, Modifier.weight(1f))
+            StatusTile("MOMENTUM", technical?.momentum ?: "N/A", Gold, Modifier.weight(1f))
+            StatusTile("VOLATILITY", technical?.volatility ?: "N/A", Gold, Modifier.weight(1f))
+        }
+        Text("Evidence summary only · no calibrated probability · no order authorization", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
     }
 }
 
@@ -1563,7 +1661,8 @@ private fun AnalysisScreen() {
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("Market", "Performance").forEach { t ->
-                Box(Modifier.weight(1f).background(if (selectedTab == t) Gold.copy(alpha = .15f) else Panel, RoundedCornerShape(10.dp))
+                Box(Modifier.weight(1f).shadow(if (selectedTab == t) 1.dp else 3.dp, RoundedCornerShape(10.dp))
+                    .background(if (selectedTab == t) Gold.copy(alpha = .15f) else PanelAlt, RoundedCornerShape(10.dp))
                     .border(1.dp, if (selectedTab == t) Gold else Grid, RoundedCornerShape(10.dp)).clickable { selectedTab = t }.padding(11.dp), contentAlignment = Alignment.Center) {
                     Text(t, color = if (selectedTab == t) Gold else Muted, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                 }
@@ -1644,6 +1743,7 @@ private fun AnalysisScreen() {
                     color = Muted, fontSize = 11.sp, lineHeight = 16.sp
                 )
             }
+            MarketReadoutCard(symbol, timeframe, selectedTimeframe, technical)
             SectionTitle("AI MARKET ANALYSIS")
             CardPanel {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -1774,8 +1874,21 @@ private fun EmptyChart(modifier: Modifier, kind: ChartKind) {
 
 @Composable
 private fun CardPanel(content: @Composable ColumnScope.() -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(16.dp)) {
-        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+    val shape = RoundedCornerShape(18.dp)
+    Card(
+        modifier = Modifier.shadow(if (lightTheme) 5.dp else 9.dp, shape)
+            .border(1.dp, GlassEdge, shape),
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = shape,
+        elevation = CardDefaults.cardElevation(defaultElevation = if (lightTheme) 2.dp else 4.dp)
+    ) {
+        Column(
+            Modifier.fillMaxWidth()
+                .background(Brush.linearGradient(listOf(GlassHighlight, Panel, GlassShade)), shape)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            content = content
+        )
     }
 }
 
@@ -1784,9 +1897,19 @@ private fun SectionTitle(text: String) { Text(text, color = Muted, fontSize = 11
 
 @Composable
 private fun MetricCard(title: String, value: String, note: String, modifier: Modifier = Modifier) {
-    Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(15.dp)) {
-        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(title, color = Muted, fontSize = 11.sp); Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold); Text(note, color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+    val shape = RoundedCornerShape(16.dp)
+    Card(
+        modifier = modifier.shadow(if (lightTheme) 4.dp else 7.dp, shape).border(1.dp, GlassEdge, shape),
+        colors = CardDefaults.cardColors(containerColor = Panel), shape = shape,
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+    ) {
+        Column(
+            Modifier.background(Brush.linearGradient(listOf(GlassHighlight, Panel, GlassShade)), shape).padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(title, color = Muted, fontSize = 11.sp)
+            Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(note, color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
         }
     }
 }
@@ -1803,8 +1926,14 @@ private fun StatusLine(symbol: String, text: String, color: Color) { Row(vertica
 
 @Composable
 private fun ChoiceChip(text: String, selected: Boolean, onClick: () -> Unit) {
-    Box(Modifier.background(if (selected) Gold.copy(alpha=.17f) else PanelAlt, RoundedCornerShape(9.dp)).border(1.dp, if (selected) Gold else Grid, RoundedCornerShape(9.dp)).clickable(onClick = onClick).padding(horizontal=11.dp, vertical=8.dp)) {
-        Text(text, color=if(selected) Gold else Muted, fontSize=11.sp, fontWeight=FontWeight.SemiBold)
+    val shape = RoundedCornerShape(10.dp)
+    Box(
+        Modifier.shadow(if (selected) 4.dp else 1.dp, shape)
+            .background(if (selected) Brush.linearGradient(listOf(Gold.copy(alpha = .24f), Gold.copy(alpha = .08f))) else Brush.linearGradient(listOf(PanelAlt, Panel)), shape)
+            .border(1.dp, if (selected) Gold.copy(alpha = .78f) else GlassEdge, shape)
+            .clickable(onClick = onClick).padding(horizontal = 11.dp, vertical = 8.dp)
+    ) {
+        Text(text, color = if (selected) Gold else Muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
