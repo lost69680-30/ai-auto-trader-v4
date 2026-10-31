@@ -496,6 +496,21 @@ class PostgresOpportunityStore:
                 orders_authorized=row["orders_authorized"],
             )
 
+    def list_evidence(self, opportunity_id: str) -> tuple[OpportunityEvidenceRecord, ...]:
+        _required_text(opportunity_id, "opportunity_id", 160)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT * FROM paper_ledger.opportunity_evidence
+                   WHERE opportunity_id = %s ORDER BY observed_at, evidence_id""",
+                (opportunity_id,),
+            ).fetchall()
+        return tuple(OpportunityEvidenceRecord(
+            evidence_id=row["evidence_id"], opportunity_id=row["opportunity_id"],
+            evidence_type=row["evidence_type"], reference_id=row["reference_id"],
+            observed_at=row["observed_at"], payload=row["payload"],
+            orders_authorized=row["orders_authorized"],
+        ) for row in rows)
+
     def save_watch_condition(
         self, record: WatchConditionRecord, *, idempotency_key: str,
         now: datetime | None = None,
