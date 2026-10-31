@@ -90,7 +90,7 @@ def test_adaptive_selector_chooses_one_eligible_strategy_with_cost_and_liquidity
     assert result.decision == "SELECTED"
     assert result.selected_strategy in {"SCALPING", "DAY_TRADING", "SWING_TRADING"}
     assert result.direction == "LONG"
-    assert result.execution_eligible is True
+    assert result.eligible_for_risk_review is True
     assert result.orders_authorized is False
     assert len([item for item in result.ranking if item.eligible]) >= 1
 
@@ -106,7 +106,7 @@ def test_adaptive_selector_waits_when_cost_or_liquidity_inputs_are_missing():
 
     assert result.decision == "NO_TRADE"
     assert result.selected_strategy is None
-    assert result.execution_eligible is False
+    assert result.eligible_for_risk_review is False
     assert result.orders_authorized is False
 
 
@@ -132,11 +132,11 @@ def test_adaptive_selector_never_short_sells_spot_assets():
 
     assert result.decision == "NO_TRADE"
     assert result.direction in {"NONE", "SHORT"}
-    assert result.execution_eligible is False
+    assert result.eligible_for_risk_review is False
     assert result.orders_authorized is False
 
 
-def test_long_term_analysis_is_never_marked_execution_eligible():
+def test_long_term_analysis_is_never_marked_eligible_for_risk_review():
     long_term = assess_market(
         "BTCUSDT",
         {
@@ -150,7 +150,7 @@ def test_long_term_analysis_is_never_marked_execution_eligible():
 
     assert result.decision in {"ANALYSIS_ONLY", "NO_TRADE"}
     if result.selected_strategy == "LONG_TERM_ANALYSIS":
-        assert result.execution_eligible is False
+        assert result.eligible_for_risk_review is False
     assert result.orders_authorized is False
 
 
