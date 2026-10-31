@@ -725,7 +725,7 @@ def main() -> None:
         raise SystemExit("PAPER_ANALYSIS_CANDLE_LIMIT must be between 50 and 500")
     # Binance supplies native weekly ("1w") and monthly ("1M") candles.
     # Yearly candles are derived only from 12 complete, closed monthly bars.
-    analysis_intervals = ("1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M")
+    analysis_intervals = ("1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M")
 
     def market_candles(symbol: str) -> dict:
         return build_market_candle_payload(
