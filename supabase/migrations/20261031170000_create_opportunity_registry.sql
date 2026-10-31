@@ -109,6 +109,7 @@ CREATE INDEX IF NOT EXISTS idx_opportunity_watch_expiry
 CREATE TABLE IF NOT EXISTS paper_ledger.opportunity_events (
     event_id text PRIMARY KEY CHECK (length(event_id) BETWEEN 1 AND 200),
     opportunity_id text NOT NULL REFERENCES paper_ledger.opportunities(opportunity_id) ON DELETE CASCADE,
+    opportunity_version integer NOT NULL CHECK (opportunity_version >= 0),
     from_state text,
     to_state text NOT NULL,
     reason text NOT NULL CHECK (length(reason) BETWEEN 1 AND 1000),
@@ -118,7 +119,8 @@ CREATE TABLE IF NOT EXISTS paper_ledger.opportunity_events (
         CHECK (jsonb_typeof(payload) = 'object')
         CHECK (COALESCE(payload->>'orders_authorized', 'false') = 'false'),
     occurred_at timestamptz NOT NULL,
-    orders_authorized boolean NOT NULL DEFAULT false CHECK (orders_authorized = false)
+    orders_authorized boolean NOT NULL DEFAULT false CHECK (orders_authorized = false),
+    UNIQUE (opportunity_id, opportunity_version)
 );
 
 CREATE INDEX IF NOT EXISTS idx_opportunity_events_timeline
