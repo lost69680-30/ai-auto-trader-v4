@@ -81,3 +81,32 @@ def test_scheduler_rejects_naive_schedule_time_and_invalid_intervals():
         scheduler.register_interval("bad_schedule", interval_seconds=60, first_run_at=datetime.now())
     with pytest.raises(ValueError, match="positive integer"):
         scheduler.register_interval("bad_schedule", interval_seconds=0, first_run_at=datetime.now(timezone.utc))
+
+
+def test_reregistering_schedule_preserves_persisted_next_run_time():
+    reset_tables()
+    now = datetime.now(timezone.utc)
+    scheduler = DurableJobScheduler(DSN)
+    scheduler.register_interval(
+        "daily_research", interval_seconds=60,
+        first_run_at=now + timedelta(minutes=10), payload={"scope": "paper"},
+    )
+    with psycopg.connect(DSN) as conn:
+        before = conn.execute(
+            "SELECT next_run_at FROM paper_ledger.scheduled_job_definitions WHERE job_name = %s",
+            ("daily_research",),
+        ).fetchone()[0]
+
+    # A process restart re-registers the same schedule. The supplied bootstrap
+    # timestamp must not overwrite the durable cursor and postpone due work.
+    scheduler.register_interval(
+        "daily_research", interval_seconds=60,
+        first_run_at=now + timedelta(days=1), payload={"scope": "paper"},
+    )
+    with psycopg.connect(DSN) as conn:
+        after = conn.execute(
+            "SELECT next_run_at FROM paper_ledger.scheduled_job_definitions WHERE job_name = %s",
+            ("daily_research",),
+        ).fetchone()[0]
+
+    assert after == before

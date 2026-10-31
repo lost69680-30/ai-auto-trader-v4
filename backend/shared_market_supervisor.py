@@ -32,6 +32,11 @@ def build_child_environments(environ: Mapping[str, str]) -> tuple[dict[str, str]
     worker_env["PAPER_MARKET_SUPERVISOR_ENABLED"] = "false"
 
     api_env = dict(environ)
+    for secret_name in (
+        "BINANCE_SPOT_TESTNET_API_KEY", "BINANCE_SPOT_TESTNET_API_SECRET",
+        "BINANCE_API_KEY", "BINANCE_API_SECRET",
+    ):
+        api_env.pop(secret_name, None)
     api_env["PAPER_MARKET_ROLE"] = "api"
     api_env["PAPER_MARKET_SUPERVISOR_ENABLED"] = "false"
     api_env["PAPER_RESEARCH_WORKER_ENABLED"] = "false"
