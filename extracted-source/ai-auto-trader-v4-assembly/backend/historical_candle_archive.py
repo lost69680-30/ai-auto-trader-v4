@@ -311,8 +311,14 @@ def backfill_symbol_history(
             break
         if any(getattr(row, "symbol", None) != symbol for row in page):
             raise ValueError("backfill response contains a different symbol")
-        if any(page[i].open_time >= page[i + 1].open_time for i in range(len(page) - 1)):
-            raise ValueError("backfill response timestamps are not strictly increasing")
+        first_open_ms = int(_aware_utc(page[0].open_time, "backfill open_time").timestamp() * 1000)
+        if first_open_ms != cursor_ms:
+            raise ValueError("backfill response starts after the requested minute; historical gap remains")
+        for previous, current_row in zip(page, page[1:]):
+            previous_ms = int(_aware_utc(previous.open_time, "backfill open_time").timestamp() * 1000)
+            current_ms = int(_aware_utc(current_row.open_time, "backfill open_time").timestamp() * 1000)
+            if current_ms - previous_ms != 60_000:
+                raise ValueError("backfill response contains a missing one-minute candle gap")
         closed = tuple(row for row in page if getattr(row, "is_closed", False) is True)
         archived = tuple(ArchivedCandle(
             venue=venue, market_type=market_type, symbol=symbol,
