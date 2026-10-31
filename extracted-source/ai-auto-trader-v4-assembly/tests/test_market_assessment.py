@@ -102,3 +102,29 @@ def test_authenticated_market_candle_api_includes_30m_monthly_and_derived_yearly
     api_source = (Path(__file__).parents[1] / "app/engines/read_only_api.py").read_text(encoding="utf-8")
     assert 'analysis_intervals = ("1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M")' in api_source
     assert "aggregate_complete_yearly_candles" in api_source
+
+def test_assessment_detects_bullish_engulfing_and_volume_confirmed_breakout():
+    rows = list(_fixed_series(3600, count=60, direction=0))
+    previous = rows[-2]
+    latest = rows[-1]
+    rows[-2] = _candle(
+        "BTCUSDT", previous.open_time, previous.close_time, 99.0,
+    )
+    rows[-2] = MarketCandle(
+        symbol="BTCUSDT", open_time=previous.open_time, close_time=previous.close_time,
+        open=101.0, high=102.0, low=98.0, close=99.0,
+        volume=100.0, quote_volume=9900.0, trades=10, is_closed=True,
+    )
+    rows[-1] = MarketCandle(
+        symbol="BTCUSDT", open_time=latest.open_time, close_time=latest.close_time,
+        open=98.0, high=104.0, low=97.0, close=103.0,
+        volume=300.0, quote_volume=30900.0, trades=30, is_closed=True,
+    )
+
+    result = assess_market("BTCUSDT", {"1h": rows}, now=NOW)
+    hourly = next(item for item in result.timeframes if item.timeframe == "1h")
+
+    assert hourly.status == "HEALTHY"
+    assert hourly.candlestick_pattern == "BULLISH_ENGULFING"
+    assert hourly.structure_event == "BREAKOUT_UP"
+    assert result.market_phase == "BREAKOUT_UP"
