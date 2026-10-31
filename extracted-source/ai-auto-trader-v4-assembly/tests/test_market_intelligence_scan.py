@@ -112,6 +112,8 @@ def test_scheduled_scan_publishes_assessment_and_adaptive_strategy_without_order
     assert {call[1] for call in source.calls} == set(SCAN_INTERVALS)
     assert store.payload["scan_id"] == "market-scan-1"
     assert store.payload["market_type"] == "FUTURES"
+    assert store.payload["environment"] == "TESTNET"
+    assert store.payload["venue"] == "BINANCE_USDM_TESTNET"
     assert store.payload["orders_authorized"] is False
     item = store.payload["symbols"][0]
     assert item["symbol"] == "BTCUSDT"
