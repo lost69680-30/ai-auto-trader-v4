@@ -24,6 +24,48 @@ def series(interval_seconds, *, count=60, direction=1):
     return tuple(rows)
 
 
+def calendar_series(timeframe, *, count, direction=1):
+    rows = []
+    if timeframe == "1M":
+        # Use only fully closed UTC calendar months.
+        year, month = 2026, 9
+        months = []
+        for _ in range(count):
+            months.append((year, month))
+            month -= 1
+            if month == 0:
+                year -= 1
+                month = 12
+        months.reverse()
+        for index, (year, month) in enumerate(months):
+            opened = datetime(year, month, 1, tzinfo=timezone.utc)
+            if month == 12:
+                next_open = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+            else:
+                next_open = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+            price = 100.0 + direction * index * 2.0
+            rows.append(MarketCandle(
+                symbol="BTCUSDT", open_time=opened,
+                close_time=next_open - timedelta(milliseconds=1),
+                open=price - 0.2, high=price + 1, low=price - 1,
+                close=price, volume=100.0, quote_volume=price * 100,
+                trades=10, is_closed=True,
+            ))
+    elif timeframe == "1Y":
+        for index, year in enumerate(range(2022, 2022 + count)):
+            opened = datetime(year, 1, 1, tzinfo=timezone.utc)
+            next_open = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+            price = 100.0 + direction * index * 10.0
+            rows.append(MarketCandle(
+                symbol="BTCUSDT", open_time=opened,
+                close_time=next_open - timedelta(milliseconds=1),
+                open=price - 0.2, high=price + 1, low=price - 1,
+                close=price, volume=100.0, quote_volume=price * 100,
+                trades=10, is_closed=True,
+            ))
+    return tuple(rows)
+
+
 def bullish_assessment():
     return assess_market(
         "BTCUSDT",
@@ -99,8 +141,8 @@ def test_long_term_analysis_is_never_marked_execution_eligible():
         "BTCUSDT",
         {
             "1w": series(7 * 86400),
-            "1M": series(30 * 86400),
-            "1Y": series(365 * 86400, count=4),
+            "1M": calendar_series("1M", count=24),
+            "1Y": calendar_series("1Y", count=4),
         },
         now=NOW,
     )
