@@ -232,9 +232,11 @@ def test_market_intelligence_is_durable_and_survives_worker_heartbeat_updates():
         )
         conn.execute(
             """INSERT INTO paper_ledger.scheduled_jobs
-               (idempotency_key, job_name, scheduled_for, status, attempts, started_at, payload)
-               VALUES ('scan-job-123', 'market_intelligence_scan', %s, 'RUNNING', 1, %s, '{}'::jsonb)""",
-            (now, now),
+               (idempotency_key, job_name, scheduled_for, status, attempts,
+                lease_owner, lease_expires_at, started_at, payload)
+               VALUES ('scan-job-123', 'market_intelligence_scan', %s, 'RUNNING', 1,
+                       'test-runner', %s, %s, '{}'::jsonb)""",
+            (now, now + timedelta(minutes=5), now),
         )
     first = store.market_intelligence(now=now)
     assert first["status"] == "HEALTHY"
