@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 import pytest
 
 from backend.analysis_job_dispatcher import AnalysisJobDispatcher
