@@ -50,6 +50,9 @@ class StrategyProposal:
     max_round_trip_cost_bps: float
     evidence: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        _validate_proposal(self)
+
 
 @dataclass(frozen=True, slots=True)
 class AdaptiveSelectionConfig:
