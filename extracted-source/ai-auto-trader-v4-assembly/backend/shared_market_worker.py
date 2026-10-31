@@ -95,6 +95,7 @@ def main() -> None:
                         "last_cycle_at": datetime.now(timezone.utc).isoformat(),
                         "healthy_symbols": list(report.healthy_symbols),
                         "unhealthy_symbols": list(report.unhealthy_symbols),
+                        "archived_new_candles": archived_count,
                         "orders_authorized": False,
                     },
                 )
