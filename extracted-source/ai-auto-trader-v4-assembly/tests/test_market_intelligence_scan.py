@@ -143,7 +143,7 @@ def test_stale_liquidity_snapshot_fails_closed_to_no_trade():
     item = store.payload["symbols"][0]
     assert item["liquidity_evidence"]["snapshot_fresh"] is False
     assert item["selection"]["decision"] in {"ANALYSIS_ONLY", "NO_TRADE"}
-    assert item["selection"]["execution_eligible"] is False
+    assert item["selection"]["eligible_for_risk_review"] is False
 
 
 def test_scan_rejects_wrong_job_scope_and_invalid_configuration():
