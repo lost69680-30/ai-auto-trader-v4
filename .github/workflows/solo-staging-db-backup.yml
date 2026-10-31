@@ -31,7 +31,9 @@ jobs:
             echo "::error::Add the dedicated read-only PostgreSQL connection as the SOLO_BACKUP_DATABASE_URL GitHub Actions secret."
             exit 1
           fi
-          pg_dump --format=custom --no-owner --no-acl --schema=paper_ledger \
+          # The dedicated backup role is intentionally not BYPASSRLS.
+          # Explicitly apply its SELECT-only RLS policies to include authorized rows.
+          pg_dump --format=custom --enable-row-security --inserts --no-owner --no-acl --schema=paper_ledger \
             --file=solo-paper-ledger.dump "$DATABASE_URL"
           test -s solo-paper-ledger.dump
           pg_restore --list solo-paper-ledger.dump >/dev/null
