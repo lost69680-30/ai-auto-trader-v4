@@ -317,3 +317,31 @@ def test_kline_parser_rejects_close_time_before_the_interval_boundary():
         BinanceUsdMFuturesAdapter(transport=transport).fetch_klines(
             "BTCUSDT", interval="1m", limit=10, now=NOW
         )
+
+
+def test_kline_backfill_passes_bounded_start_and_end_times_to_exchange():
+    start = int(NOW.timestamp() * 1000) - 120_000
+    payloads = {"/fapi/v1/klines": []}
+    transport, calls = make_transport(payloads)
+
+    candles = BinanceUsdMFuturesAdapter(testnet=True, transport=transport).fetch_klines(
+        "BTCUSDT", interval="1m", limit=1000, now=NOW,
+        start_time_ms=start, end_time_ms=start + 600_000,
+    )
+
+    assert candles == ()
+    assert calls[0][0] == "/fapi/v1/klines"
+    assert calls[0][1] == {
+        "symbol": "BTCUSDT", "interval": "1m", "limit": 1000,
+        "startTime": start, "endTime": start + 600_000,
+    }
+
+
+def test_kline_backfill_rejects_invalid_time_bounds():
+    adapter = BinanceUsdMFuturesAdapter(transport=lambda path, params, timeout: [])
+    with pytest.raises(ValueError, match="start_time_ms"):
+        adapter.fetch_klines("BTCUSDT", start_time_ms=-1, now=NOW)
+    with pytest.raises(ValueError, match="end_time_ms"):
+        adapter.fetch_klines("BTCUSDT", end_time_ms=True, now=NOW)
+    with pytest.raises(ValueError, match="end_time_ms"):
+        adapter.fetch_klines("BTCUSDT", start_time_ms=20, end_time_ms=10, now=NOW)
