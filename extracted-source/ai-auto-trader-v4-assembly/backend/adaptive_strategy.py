@@ -87,6 +87,7 @@ class StrategySelection:
     no_trade_reason: str | None
     ranking: tuple[StrategyRank, ...]
     orders_authorized: bool = False
+    performance_status: str = "NOT_CALIBRATED"
 
 
 def _timeframe_index(assessment: MarketAssessment) -> dict[str, TimeframeAssessment]:
