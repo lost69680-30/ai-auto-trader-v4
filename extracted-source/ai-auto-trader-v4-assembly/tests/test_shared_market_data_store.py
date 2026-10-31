@@ -197,3 +197,37 @@ def test_postgres_store_reports_missing_or_expired_worker_as_stale():
     assert store.acquire_lease(now=now - timedelta(minutes=5)) is True
     assert store.status()["status"] == "STALE"
     store.release(now=now)
+
+def test_market_intelligence_is_durable_and_survives_worker_heartbeat_updates():
+    reset_tables()
+    now = datetime.now(timezone.utc)
+    store = PostgresMarketFeedStore(DSN, worker_id="test-intelligence-worker", owner_id="owner-intelligence")
+    assert store.acquire_lease(now=now) is True
+    store.heartbeat("RUNNING", now=now, details={"analysis_status": "RUNNING"})
+    payload = {
+        "scan_id": "scan-123",
+        "assessed_at": now.isoformat(),
+        "market_type": "FUTURES",
+        "symbols": [{
+            "symbol": "BTCUSDT",
+            "selection": {"decision": "NO_TRADE"},
+            "orders_authorized": False,
+        }],
+        "orders_authorized": False,
+    }
+    store.publish_intelligence(payload, now=now)
+    first = store.market_intelligence(now=now)
+    assert first["status"] == "HEALTHY"
+    assert first["scan_id"] == "scan-123"
+    assert first["items"][0]["symbol"] == "BTCUSDT"
+    assert first["orders_authorized"] is False
+
+    store.heartbeat("RUNNING", now=now + timedelta(seconds=1), details={
+        "analysis_status": "RUNNING", "last_cycle_at": (now + timedelta(seconds=1)).isoformat(),
+        "orders_authorized": False,
+    })
+    after_heartbeat = store.market_intelligence(now=now + timedelta(seconds=1))
+    assert after_heartbeat["status"] == "HEALTHY"
+    assert after_heartbeat["scan_id"] == "scan-123"
+    assert after_heartbeat["orders_authorized"] is False
+    store.release(now=now + timedelta(seconds=2))
