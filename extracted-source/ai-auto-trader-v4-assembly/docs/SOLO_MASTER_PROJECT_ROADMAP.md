@@ -35,6 +35,7 @@ Never infer live connectivity, profitability, production readiness, or phone ins
 - PostgreSQL-backed shared market snapshots and closed-candle archive.
 - Worker ownership leases, heartbeats, stale-worker detection and recovery.
 - Durable, idempotent scheduled-job registration, claiming, retry/failure and completion.
+- Run scheduled scans on an independent job-runner thread so long scans do not block market-feed polling or worker heartbeats.
 - API reads validated shared snapshots rather than maintaining a competing market feed.
 - Independent API/worker restart and recovery tests.
 - Graceful shutdown, readiness/health reporting, logs and operational alerts.
