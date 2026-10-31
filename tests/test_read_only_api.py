@@ -724,3 +724,50 @@ def test_public_readyz_fails_closed_when_worker_is_stale_or_missing(tmp_path):
     assert body["status"] == "not_ready"
     assert body["worker_status"] == "STOPPED"
     assert body["orders_authorized"] is False
+
+def test_market_assessment_endpoint_exposes_only_authenticated_advisory_results(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    report = {
+        "status": "HEALTHY",
+        "assessed_at": "2026-10-31T12:00:00+00:00",
+        "market_type": "FUTURES",
+        "scan_id": "scan-123",
+        "items": [{
+            "symbol": "BTCUSDT",
+            "assessment": {"direction": "MIXED"},
+            "selection": {"decision": "NO_TRADE"},
+            "orders_authorized": False,
+        }],
+        "orders_authorized": False,
+    }
+    app = create_app(
+        database_path=db, token=TOKEN,
+        market_intelligence=lambda: report,
+    )
+    status, _, body = request(app, path="/api/v1/markets/assessment")
+    assert status.startswith("401")
+    status, _, body = request(app, path="/api/v1/markets/assessment", auth="Bearer " + TOKEN)
+    assert status.startswith("200")
+    assert body["items"][0]["symbol"] == "BTCUSDT"
+    assert body["items"][0]["orders_authorized"] is False
+    assert body["orders_authorized"] is False
+
+
+def test_market_assessment_endpoint_rejects_unsafe_provider_payload(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(
+        database_path=db, token=TOKEN,
+        market_intelligence=lambda: {
+            "status": "HEALTHY",
+            "items": [{"symbol": "BTCUSDT", "orders_authorized": True}],
+            "orders_authorized": False,
+        },
+    )
+    status, _, body = request(app, path="/api/v1/markets/assessment", auth="Bearer " + TOKEN)
+    assert status.startswith("503")
+    assert body["items"] == []
+    assert body["orders_authorized"] is False
