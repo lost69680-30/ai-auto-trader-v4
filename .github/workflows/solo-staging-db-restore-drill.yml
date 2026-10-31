@@ -1,0 +1,71 @@
+name: Solo staging PostgreSQL restore drill
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_run_id:
+        description: "GitHub Actions run ID of a successful Solo staging PostgreSQL backup"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  restore-into-disposable-postgres:
+    name: Restore backup into temporary PostgreSQL 17
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: restore_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d restore_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+
+      - name: Download selected backup artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: solo-staging-paper-ledger-backup-${{ inputs.backup_run_id }}
+          run-id: ${{ inputs.backup_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: backup
+
+      - name: Verify archive and restore into disposable database
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/restore_test
+        run: |
+          set -euo pipefail
+          cd backup
+          sha256sum --check solo-paper-ledger.dump.sha256
+          pg_restore --list solo-paper-ledger.dump >/dev/null
+          # The archive contains role-targeted RLS policies; create the role name
+          # in the disposable database without granting it login or extra access.
+          psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c \
+            "CREATE ROLE solo_backup_reader NOLOGIN NOINHERIT"
+          pg_restore --exit-on-error --no-owner --no-acl \
+            --dbname="$TEST_DATABASE_URL" solo-paper-ledger.dump
+          table_count="$(psql "$TEST_DATABASE_URL" -Atc \
+            "SELECT count(*) FROM information_schema.tables WHERE table_schema='paper_ledger' AND table_type='BASE TABLE'")"
+          candle_count="$(psql "$TEST_DATABASE_URL" -Atc \
+            "SELECT count(*) FROM paper_ledger.market_candles")"
+          if [ "$table_count" -lt 1 ] || [ "$candle_count" -lt 1 ]; then
+            echo "::error::Restore completed but expected application tables or candle data are missing."
+            exit 1
+          fi
+          echo "PASS: checksum valid; restored $table_count paper_ledger tables and $candle_count candles into disposable PostgreSQL 17."
+          echo "This drill did not connect to or modify staging or production databases."
