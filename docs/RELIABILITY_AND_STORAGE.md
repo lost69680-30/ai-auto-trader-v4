@@ -85,3 +85,32 @@ Render metrics now returned sparse CPU samples and memory samples of approximate
 ## Updated Part 1 status
 
 The post-deploy check closes the specific post-wake heartbeat and scheduler-backlog verification for this staging restart. The remaining blockers are: (1) continuous compute without Free-plan idle suspension, (2) a live fault-injection test of API and worker child recovery, (3) an unauthenticated application liveness/readiness endpoint wired into Render's health-check setting and useful HTTP metrics, and (4) a retained off-site database export followed by a successful restore drill. No production service, database, or configuration was changed.
+
+
+## No-cost health checks and backup/restore preparation — 2026-10-31
+
+### Health endpoints
+
+The staging API now exposes two unauthenticated, deliberately minimal probes:
+- `GET /healthz`: process liveness only. Returns a small PAPER_ONLY response and `orders_authorized=false`; it reveals no account, position, credential, or worker details.
+- `GET /readyz`: readiness requires the shared market worker heartbeat to be `RUNNING`, the validated market feed to be `HEALTHY`, and the reported order-authorization flag to be exactly false. It returns HTTP 503 if those conditions are not met or the health lookup fails.
+
+The probes are covered by tests in both source mirrors. The Step 3 market validation workflow passed on commit `2285343b983b8aea1ab34a1257c4517aabd97dc1`: **98 passed, 11 skipped**; the 11 skipped tests require a PostgreSQL integration database not provisioned in that CI job. The source-mirror comparison and static read-only safety checks also passed.
+
+Render service settings currently report an empty Health Check Path. The Render connector available for this work can inspect the setting but cannot change it. Set the staging service Health Check Path to `/healthz` in Render Dashboard → staging service → Settings if desired. Do not use `/readyz` as the platform deploy health check: worker startup may take longer than API startup; use it for a separate readiness monitor.
+
+### Backup and restore workflow
+
+Two manual GitHub Actions workflows have been added on the staging branch:
+- `.github/workflows/solo-staging-db-backup.yml` exports only the application-owned `paper_ledger` schema using a PostgreSQL custom-format archive, verifies the archive, calculates a SHA-256 checksum, and stores a GitHub Actions artifact for 7 days.
+- `.github/workflows/solo-staging-db-restore-drill.yml` downloads a selected backup artifact and restores it into a disposable PostgreSQL 16 service container in GitHub Actions. It never connects to staging or production for the restore step.
+
+These workflows are prepared but **not yet runnable end-to-end**: GitHub needs a repository Actions secret named `SOLO_BACKUP_DATABASE_URL` containing a dedicated, least-privilege read-only PostgreSQL connection string for the staging database. Do not put the existing owner-level application DSN into GitHub Actions. Create a dedicated reader role with CONNECT on the database, USAGE on `paper_ledger`, SELECT on all current tables and sequences, and matching default SELECT privileges for future objects; then store its connection string only in that GitHub secret. Never paste the DSN or password into chat, source files, workflow logs, or artifacts.
+
+After the secret is configured: run the backup workflow manually from this staging branch; confirm its artifact exists; then run the restore-drill workflow manually and enter the backup workflow's run ID. A successful restore drill proves that the application schema archive can be restored into clean PostgreSQL 16. It does not prove recovery of Supabase platform roles, other schemas, secrets, or the full Supabase project. Download each successful artifact to independent user-controlled storage before its 7-day GitHub retention expires.
+
+The workflows are intentionally manual. GitHub scheduled workflows execute from the repository's default branch; adding a scheduled backup there would modify the production branch and could trigger production deployment. No production change was made to enable scheduling.
+
+### No-cost boundary
+
+No Render plan, Supabase plan, database, or paid add-on was upgraded or created. No keep-alive polling was added to defeat Render Free suspension. Free hosting may still suspend; health probes and scheduled recovery checks do not create an always-on guarantee.
