@@ -79,12 +79,18 @@ def main() -> None:
     max_market_age = max(5.0, float(os.environ.get("PAPER_MAX_MARKET_AGE_SECONDS", "90")))
     startup_grace = max(30.0, float(os.environ.get("PAPER_SUPERVISOR_WORKER_STARTUP_GRACE_SECONDS", "180")))
     health_check_interval = max(2.0, float(os.environ.get("PAPER_SUPERVISOR_WORKER_HEALTH_CHECK_SECONDS", "5")))
-    market_store = PostgresMarketFeedStore(
-        os.environ.get("PAPER_DATABASE_URL", "").strip(),
-        worker_id=os.environ.get("PAPER_MARKET_WORKER_ID", "solo-market-worker"),
-        max_age_seconds=max_market_age,
-        lease_seconds=max(90.0, float(os.environ.get("PAPER_MARKET_WORKER_LEASE_SECONDS", "90"))),
+    database_url = os.environ.get("PAPER_DATABASE_URL", "").strip()
+    market_store = (
+        PostgresMarketFeedStore(
+            database_url,
+            worker_id=os.environ.get("PAPER_MARKET_WORKER_ID", "solo-market-worker"),
+            max_age_seconds=max_market_age,
+            lease_seconds=max(90.0, float(os.environ.get("PAPER_MARKET_WORKER_LEASE_SECONDS", "90"))),
+        )
+        if database_url else None
     )
+    if market_store is None:
+        logger.warning("worker heartbeat monitor disabled because PAPER_DATABASE_URL is missing; worker will fail closed and process-exit supervision remains active")
     last_worker_health_check = 0.0
     modules = {
         "worker": ("backend.shared_market_worker", worker_env),
@@ -118,7 +124,7 @@ def main() -> None:
                 proc = state["process"]
                 exit_code = proc.poll()
                 if exit_code is None:
-                    if name == "worker" and now - last_worker_health_check >= health_check_interval:
+                    if name == "worker" and market_store is not None and now - last_worker_health_check >= health_check_interval:
                         last_worker_health_check = now
                         try:
                             worker_status = market_store.status()
