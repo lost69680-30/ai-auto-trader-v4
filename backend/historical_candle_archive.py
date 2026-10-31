@@ -325,3 +325,27 @@ def backfill_symbol_history(
         if len(page) < page_size or len(closed) < len(page) or cursor_ms >= end_ms:
             break
     return inserted
+
+
+def archive_is_caught_up(
+    archive: "PostgresCandleArchive",
+    *,
+    symbols: Iterable[str],
+    market_type: str,
+    now: datetime | None = None,
+) -> bool:
+    """Return true only when every allowlisted symbol has its latest closed minute."""
+    if market_type not in {"FUTURES", "SPOT"}:
+        raise ValueError("market_type must be FUTURES or SPOT")
+    current = _aware_utc(now or datetime.now(timezone.utc), "now")
+    venue = "BINANCE_USDM_TESTNET" if market_type == "FUTURES" else "BINANCE_SPOT_TESTNET"
+    expected_ms = (int(current.timestamp() * 1000) // 60_000) * 60_000 - 60_000
+    expected = datetime.fromtimestamp(expected_ms / 1000, timezone.utc)
+    checked_symbols = tuple(symbols)
+    if not checked_symbols:
+        return False
+    for symbol in checked_symbols:
+        latest = archive.latest_open_time(venue=venue, market_type=market_type, symbol=symbol)
+        if latest is None or _aware_utc(latest, "latest_open_time") < expected:
+            return False
+    return True
