@@ -1,0 +1,49 @@
+name: Solo staging PostgreSQL backup
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solo-staging-db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup-paper-ledger:
+    name: Export and validate paper_ledger schema
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+
+      - name: Export the application schema
+        env:
+          DATABASE_URL: ${{ secrets.SOLO_BACKUP_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          set +x
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "::error::Add the dedicated read-only PostgreSQL connection as the SOLO_BACKUP_DATABASE_URL GitHub Actions secret."
+            exit 1
+          fi
+          pg_dump --format=custom --no-owner --no-acl --schema=paper_ledger \
+            --file=solo-paper-ledger.dump "$DATABASE_URL"
+          test -s solo-paper-ledger.dump
+          pg_restore --list solo-paper-ledger.dump >/dev/null
+          sha256sum solo-paper-ledger.dump > solo-paper-ledger.dump.sha256
+          echo "Backup archive created and structurally validated. Database credentials were not printed."
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: solo-staging-paper-ledger-backup-${{ github.run_id }}
+          path: |
+            solo-paper-ledger.dump
+            solo-paper-ledger.dump.sha256
+          if-no-files-found: error
+          retention-days: 7
