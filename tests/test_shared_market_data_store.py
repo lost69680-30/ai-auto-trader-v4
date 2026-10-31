@@ -48,7 +48,7 @@ def reset_tables():
     with psycopg.connect(DSN, autocommit=True) as conn:
         for migration in migrations:
             conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
-        conn.execute("TRUNCATE paper_ledger.market_intelligence_reports, paper_ledger.market_feed_snapshots, paper_ledger.market_worker_heartbeats")
+        conn.execute("TRUNCATE paper_ledger.market_intelligence_reports, paper_ledger.market_feed_snapshots, paper_ledger.market_worker_heartbeats, paper_ledger.scheduled_jobs, paper_ledger.scheduled_job_definitions")
 
 
 def healthy_poll(now):
@@ -223,8 +223,23 @@ def test_market_intelligence_is_durable_and_survives_worker_heartbeat_updates():
         "orders_authorized": False,
     }
     store.publish_intelligence(payload, now=now)
+    with store._connect() as conn:
+        conn.execute(
+            """INSERT INTO paper_ledger.scheduled_job_definitions
+               (job_name, interval_seconds, next_run_at, enabled, payload)
+               VALUES ('market_intelligence_scan', 900, %s, true, '{}'::jsonb)""",
+            (now,),
+        )
+        conn.execute(
+            """INSERT INTO paper_ledger.scheduled_jobs
+               (idempotency_key, job_name, scheduled_for, status, attempts, started_at, payload)
+               VALUES ('scan-job-123', 'market_intelligence_scan', %s, 'RUNNING', 1, %s, '{}'::jsonb)""",
+            (now, now),
+        )
     first = store.market_intelligence(now=now)
     assert first["status"] == "HEALTHY"
+    assert first["scan_job_status"] == "RUNNING"
+    assert first["scan_attempts"] == 1
     assert first["scan_id"] == "scan-123"
     assert first["items"][0]["symbol"] == "BTCUSDT"
     assert first["orders_authorized"] is False
