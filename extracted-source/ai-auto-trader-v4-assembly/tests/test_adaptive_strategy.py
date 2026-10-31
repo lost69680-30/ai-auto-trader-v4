@@ -92,6 +92,7 @@ def test_adaptive_selector_chooses_one_eligible_strategy_with_cost_and_liquidity
     assert result.direction == "LONG"
     assert result.eligible_for_risk_review is True
     assert result.orders_authorized is False
+    assert result.performance_status == "NOT_CALIBRATED"
     assert len([item for item in result.ranking if item.eligible]) >= 1
 
 
