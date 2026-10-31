@@ -239,12 +239,10 @@ class PostgresMarketFeedStore:
             raise ValueError("market intelligence assessed_at is invalid") from exc
         if assessed_dt.tzinfo is None or assessed_dt.utcoffset() is None:
             raise ValueError("market intelligence assessed_at must be timezone-aware")
-        current = now or datetime.now(timezone.utc)
-        current_iso = _iso(current)
-        if (current.astimezone(timezone.utc) - assessed_dt.astimezone(timezone.utc)).total_seconds() > max(
-            1800.0, self.max_age_seconds * 20.0
-        ):
-            raise ValueError("market intelligence payload is already stale")
+        current = datetime.fromisoformat(_iso(now or datetime.now(timezone.utc)))
+        report_age = (current - assessed_dt.astimezone(timezone.utc)).total_seconds()
+        if report_age < -1.0 or report_age > max(1800.0, self.max_age_seconds * 20.0):
+            raise ValueError("market intelligence payload is future-dated or stale")
         symbols = payload.get("symbols")
         if not isinstance(symbols, list):
             raise ValueError("market intelligence symbols must be a list")
@@ -266,8 +264,7 @@ class PostgresMarketFeedStore:
     def market_intelligence(self, *, now: datetime | None = None) -> dict[str, Any]:
         """Return only a fresh advisory scan from the current worker lease."""
         hb, _rows = self._read()
-        current = now or datetime.now(timezone.utc)
-        current = current.astimezone(timezone.utc)
+        current = datetime.fromisoformat(_iso(now or datetime.now(timezone.utc)))
         if hb is None:
             return {"status": "STARTING", "reason": "market worker has not published a heartbeat",
                     "items": [], "orders_authorized": False}
