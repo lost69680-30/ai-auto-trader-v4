@@ -32,7 +32,7 @@ jobs:
             exit 1
           fi
           # Respect table RLS policies: the backup role is intentionally not BYPASSRLS.
-          pg_dump --format=custom --enable-row-security --no-owner --no-acl --schema=paper_ledger \
+          pg_dump --format=custom --enable-row-security --inserts --no-owner --no-acl --schema=paper_ledger \
             --file=solo-paper-ledger.dump "$DATABASE_URL"
           test -s solo-paper-ledger.dump
           pg_restore --list solo-paper-ledger.dump >/dev/null
