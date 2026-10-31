@@ -9,6 +9,8 @@ import time
 from datetime import datetime, timezone
 
 from app.engines.paper_service_app import PaperServiceApplication
+from backend.analysis_job_dispatcher import AnalysisJobDispatcher, market_feed_health_audit
+from backend.durable_scheduler import DurableJobScheduler
 from backend.shared_market_store import PostgresMarketFeedStore
 
 
@@ -31,6 +33,21 @@ def main() -> None:
 
     app = None
     stop = threading.Event()
+    scheduler = DurableJobScheduler(
+        dsn, lease_seconds=max(30.0, float(os.environ.get("PAPER_SCHEDULED_JOB_LEASE_SECONDS", "60")))
+    )
+    schedule_interval = max(60, int(os.environ.get("PAPER_MARKET_HEALTH_AUDIT_INTERVAL_SECONDS", "300")))
+    scheduler.register_interval(
+        "market_feed_health_audit",
+        interval_seconds=schedule_interval,
+        first_run_at=datetime.now(timezone.utc) + __import__("datetime").timedelta(seconds=schedule_interval),
+        payload={"scope": "market_feed"},
+    )
+    dispatcher = AnalysisJobDispatcher(
+        scheduler,
+        owner=os.environ.get("PAPER_ANALYSIS_DISPATCHER_ID", f"{worker_id}-analysis"),
+        handlers={"market_feed_health_audit": market_feed_health_audit(store)},
+    )
 
     def request_stop(signum, frame) -> None:
         logger.info("shutdown requested; stopping paper-only market worker")
@@ -72,6 +89,11 @@ def main() -> None:
                     "shared market cycle status=%s healthy=%s unhealthy=%s open_positions=%d orders_authorized=False",
                     report.analysis_status, report.healthy_symbols, report.unhealthy_symbols, report.open_positions,
                 )
+                try:
+                    scheduler.enqueue_due()
+                    dispatcher.run_once()
+                except Exception:
+                    logger.exception("durable read-only analysis scheduler cycle failed")
                 delay = app.worker.next_delay_seconds
             except Exception as exc:
                 logger.exception("shared market worker cycle failed; feed remains fail-closed")
