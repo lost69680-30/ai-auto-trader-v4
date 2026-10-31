@@ -34,9 +34,9 @@ This timing is consistent with Render Free web-service idle spin-down, not proof
 
 The current Render service has no configured HTTP health-check path. Render's default TCP port check is not an application-level readiness check. The Render metrics query returned memory observations but no CPU or HTTP request series for the inspected window; monitoring evidence is incomplete.
 
-The worker and API are separate child processes under a supervisor that restarts either child independently. CI contains tests for each child failing and restarting without restarting the other. Those tests passed on the deployed commit, but no live fault-injection test was performed against the staging service.
+The worker and API are separate child processes under a supervisor that restarts either child independently. Automated tests cover each child failing and restarting without restarting the other. The supervisor source and test file on the staging branch have the same Git blob SHAs as the branch used for the 2026-10-31 successful CI runs. No live fault-injection test was performed against the staging service.
 
-The durable scheduler uses PostgreSQL-backed recurring schedule definitions, idempotency keys, bounded catch-up, leases, retry handling, and owner checks. CI includes PostgreSQL scheduler tests, but the live staging backlog must be rechecked after the service wakes; the last observed three pending jobs were not verified as drained after spin-down.
+The durable scheduler uses PostgreSQL-backed recurring schedule definitions, idempotency keys, bounded catch-up, leases, retry handling, and owner checks. On 2026-10-31, a successful CI run on the parallel `design/solo-hybrid-glass-ui` branch applied the same scheduler migration to a disposable PostgreSQL 16 service and ran the backend suite: 456 passed, 0 skipped. The scheduler, supervisor, dispatcher, scheduler-test, and migration files had identical Git blob SHAs on that branch and the deployed staging branch. A second durable-ledger run also passed its 6 PostgreSQL ledger integration tests. This verifies the automated DB-backed test path for the same source, but is not a live outage/restart test. The live staging backlog must still be rechecked after the service wakes; the last observed three pending jobs were not verified as drained after spin-down.
 
 ## Backups and restore
 
@@ -56,7 +56,7 @@ Verified:
 3. API reads shared PostgreSQL market snapshots from the independent worker.
 4. Market snapshots and archived candles were being persisted.
 5. The scheduler's durable tables, recurring schedule, and idempotent job records exist.
-6. CI passed on the staging commit, including offline safety checks and scheduler/supervisor test coverage.
+6. CI passed on the staging commit for backend/Android contract tests (440 passed, 11 skipped), read-only market-data/safety tests, and offline backtest safety tests. Separate successful CI runs against identical scheduler/supervisor source and test files on the parallel design branch ran PostgreSQL-backed integration tests (including the scheduler migration) and passed.
 7. The Render host shutdown was graceful, and the worker lease expiry was visible in PostgreSQL.
 
 Not yet verified / remains an operational blocker:
