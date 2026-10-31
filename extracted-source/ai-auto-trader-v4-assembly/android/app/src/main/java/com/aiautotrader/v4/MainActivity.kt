@@ -261,6 +261,10 @@ private data class MarketFetchResult(
     val items: List<MarketInstrument>,
     val reason: String,
     val safeResponse: Boolean,
+    val scanJobStatus: String = "UNKNOWN",
+    val scanStartedAt: String = "",
+    val scanCompletedAt: String = "",
+    val scanAttempts: Int = 0,
 )
 
 private data class MarketIntelligenceItem(
@@ -321,6 +325,10 @@ private object BackendSession {
     val marketIntelligenceEnvironment = mutableStateOf("UNKNOWN")
     val marketIntelligenceMarketType = mutableStateOf("UNKNOWN")
     val marketIntelligenceVenue = mutableStateOf("UNKNOWN")
+    val marketIntelligenceScanStatus = mutableStateOf("UNKNOWN")
+    val marketIntelligenceScanStartedAt = mutableStateOf("")
+    val marketIntelligenceScanCompletedAt = mutableStateOf("")
+    val marketIntelligenceScanAttempts = mutableStateOf(0)
     // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
     val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
 }
@@ -1014,6 +1022,10 @@ private fun fetchMarketIntelligence(token: String): MarketIntelligenceFetchResul
             items = items,
             reason = reason,
             safeResponse = true,
+            scanJobStatus = root.optString("scan_job_status", "UNKNOWN"),
+            scanStartedAt = root.optString("scan_started_at", ""),
+            scanCompletedAt = root.optString("scan_completed_at", ""),
+            scanAttempts = root.optInt("scan_attempts", 0),
         )
     } catch (e: Exception) {
         return MarketIntelligenceFetchResult(
@@ -1177,6 +1189,10 @@ private fun BackendMarketIntelligenceEffect() {
                 if (response.venue.isNotBlank()) {
                     BackendSession.marketIntelligenceVenue.value = response.venue
                 }
+                BackendSession.marketIntelligenceScanStatus.value = response.scanJobStatus
+                BackendSession.marketIntelligenceScanStartedAt.value = response.scanStartedAt
+                BackendSession.marketIntelligenceScanCompletedAt.value = response.scanCompletedAt
+                BackendSession.marketIntelligenceScanAttempts.value = response.scanAttempts
                 if (!response.safeResponse && response.status == "UNSAFE RESPONSE") {
                     BackendSession.marketIntelligence.value = emptyList()
                 } else if (response.items.isNotEmpty()) {
@@ -1658,6 +1674,10 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
                     "Last assessment: ${BackendSession.marketIntelligenceAssessedAt.value}"
                 },
                 color = Muted, fontSize = 11.sp, lineHeight = 16.sp
+            )
+            IndicatorRow(
+                "Scheduled scan",
+                "${BackendSession.marketIntelligenceScanStatus.value} · attempts ${BackendSession.marketIntelligenceScanAttempts.value}"
             )
             val watcherItems = BackendSession.marketIntelligence.value
             if (watcherItems.isEmpty()) {
