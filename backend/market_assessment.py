@@ -275,6 +275,14 @@ def _measure(
             structure_event = "FAILED_BREAKOUT_UP"
         elif last.low < prior_support and last.close >= prior_support:
             structure_event = "FAILED_BREAKOUT_DOWN"
+        elif (trend_score >= 50.0 + minimum_directional_score
+              and structure == "LOWER_HIGHS_LOWER_LOWS"
+              and pattern in {"BULLISH_ENGULFING", "BULLISH_PIN_BAR"}):
+            structure_event = "REVERSAL_ATTEMPT"
+        elif (trend_score <= 50.0 - minimum_directional_score
+              and structure == "HIGHER_HIGHS_HIGHER_LOWS"
+              and pattern in {"BEARISH_ENGULFING", "BEARISH_PIN_BAR"}):
+            structure_event = "REVERSAL_ATTEMPT"
         elif trend_score >= 50.0 + minimum_directional_score and structure == "HIGHER_HIGHS_HIGHER_LOWS":
             structure_event = "TREND_CONTINUATION"
         elif trend_score <= 50.0 - minimum_directional_score and structure == "LOWER_HIGHS_LOWER_LOWS":
@@ -424,6 +432,8 @@ def assess_market(
         market_phase = "FAILED_BREAKOUT_DOWN"
     elif conflicts and "long-term and medium-term directional evidence conflicts" in conflicts:
         market_phase = "TIMEFRAME_CONFLICT"
+    elif "REVERSAL_ATTEMPT" in medium_events:
+        market_phase = "REVERSAL_ATTEMPT"
     elif "PULLBACK" in medium_events:
         market_phase = "PULLBACK"
     elif "TREND_CONTINUATION" in medium_events:
