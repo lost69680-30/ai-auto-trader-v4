@@ -209,6 +209,8 @@ def test_market_intelligence_is_durable_and_survives_worker_heartbeat_updates():
         "scan_id": "scan-123",
         "assessed_at": now.isoformat(),
         "market_type": "FUTURES",
+        "environment": "TESTNET",
+        "venue": "BINANCE_USDM_TESTNET",
         "symbols": [{
             "symbol": "BTCUSDT",
             "selection": {"decision": "NO_TRADE"},
