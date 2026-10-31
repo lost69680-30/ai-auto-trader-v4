@@ -208,6 +208,22 @@ class OpportunityCoordinator:
             raise ValueError("price plan prices must be positive")
         if plan.estimated_round_trip_cost_pct < 0 or plan.invalidation_price is None:
             raise ValueError("price plan requires non-negative costs and an invalidation price")
+        if direction == "LONG":
+            geometry_valid = (
+                plan.stop_price < plan.entry_price < plan.target_price
+                and plan.trigger_price > plan.entry_price
+                and plan.invalidation_price < plan.entry_price
+                and plan.trigger_rule in {"AT_OR_ABOVE", "CANDLE_CLOSE_ABOVE"}
+            )
+        else:
+            geometry_valid = (
+                plan.target_price < plan.entry_price < plan.stop_price
+                and plan.trigger_price < plan.entry_price
+                and plan.invalidation_price > plan.entry_price
+                and plan.trigger_rule in {"AT_OR_BELOW", "CANDLE_CLOSE_BELOW"}
+            )
+        if not geometry_valid:
+            raise ValueError("price plan entry, stop, target, trigger or invalidation geometry is invalid")
         # Reuse WatchRequest's direction-specific trigger/invalidation validation.
         fingerprint = _fingerprint(
             symbol=symbol, market_type=market_type, venue=venue,
@@ -346,6 +362,36 @@ class OpportunityCoordinator:
         rows = tuple(records)
         if not rows:
             return ()
+        try:
+            observed_at = _utc(tick.observed_at, "market tick observed_at")
+        except (AttributeError, ValueError):
+            return tuple(OpportunityEvaluation(
+                row.opportunity_id, "WAIT_RECHECK", row.state,
+                "market tick timestamp is missing or invalid", None, False,
+            ) for row in rows)
+        if any(row.symbol != tick.symbol for row in rows):
+            return tuple(OpportunityEvaluation(
+                row.opportunity_id, "WAIT_RECHECK", row.state,
+                "market tick symbol does not match the opportunity", None, False,
+            ) for row in rows)
+        if (
+            isinstance(tick.price, bool) or not isinstance(tick.price, (int, float))
+            or not math.isfinite(tick.price) or tick.price <= 0
+        ):
+            return tuple(OpportunityEvaluation(
+                row.opportunity_id, "WAIT_RECHECK", row.state,
+                "market tick price is invalid", None, False,
+            ) for row in rows)
+        if tick.candle_close is not None and (
+            isinstance(tick.candle_close, bool)
+            or not isinstance(tick.candle_close, (int, float))
+            or not math.isfinite(tick.candle_close)
+            or tick.candle_close <= 0
+        ):
+            return tuple(OpportunityEvaluation(
+                row.opportunity_id, "WAIT_RECHECK", row.state,
+                "market tick candle close is invalid", tick.price, False,
+            ) for row in rows)
         watcher = SignalWatcher(self.watcher_config)
         by_watch: dict[str, OpportunityRecord] = {}
         blocked: list[OpportunityEvaluation] = []
@@ -360,7 +406,7 @@ class OpportunityCoordinator:
                         to_state="BLOCKED", reason="active opportunity is missing its durable watch or signal identity",
                         event_id=self._event_id(record, "BLOCKED", tick.observed_at),
                         actor="opportunity_coordinator",
-                        evidence_version=tick.observed_at.astimezone(timezone.utc).isoformat(),
+                        evidence_version=observed_at.isoformat(),
                         now=now,
                     )
                     blocked.append(OpportunityEvaluation(
@@ -468,26 +514,52 @@ class OpportunityCoordinator:
             owner=self.owner, now=stamp, limit=limit, lease_seconds=self.lease_seconds,
         )
         grouped: dict[str, list[OpportunityRecord]] = {}
-        for record in claimed:
-            grouped.setdefault(record.symbol, []).append(record)
-
         results: list[OpportunityEvaluation] = []
-        for symbol, records in grouped.items():
-            try:
-                tick = market_update_provider(symbol, stamp)
-                if not isinstance(tick, MarketTick) or tick.symbol != symbol:
-                    raise ValueError("market update provider returned a mismatched symbol")
-                results.extend(self._evaluate_records(records, tick, now=stamp))
-            except Exception as exc:
-                for record in records:
+        for record in claimed:
+            if record.expires_at is not None and record.expires_at <= stamp:
+                try:
+                    transitioned = self.store.transition(
+                        record.opportunity_id,
+                        expected_version=record.version,
+                        to_state="EXPIRED",
+                        reason="opportunity expired before a fresh reassessment",
+                        event_id=self._event_id(record, "EXPIRED", stamp),
+                        actor="opportunity_coordinator",
+                        evidence_version=None,
+                        now=stamp,
+                    )
                     results.append(OpportunityEvaluation(
-                        record.opportunity_id, "WAIT_RECHECK", record.state,
-                        f"fresh market update unavailable ({type(exc).__name__})",
+                        record.opportunity_id, "EXPIRED", transitioned.opportunity.state,
+                        "opportunity expired before a fresh reassessment", None, False,
+                    ))
+                except (ValueError, RuntimeError):
+                    latest = self.store.get_opportunity(record.opportunity_id)
+                    results.append(OpportunityEvaluation(
+                        record.opportunity_id, "STATE_CONFLICT",
+                        latest.state if latest else "UNKNOWN",
+                        "opportunity changed concurrently while expiry was being recorded",
                         None, False,
                     ))
-            finally:
-                for record in records:
-                    self.store.release_claim(record.opportunity_id, owner=self.owner, now=stamp)
+            else:
+                grouped.setdefault(record.symbol, []).append(record)
+
+        try:
+            for symbol, records in grouped.items():
+                try:
+                    tick = market_update_provider(symbol, stamp)
+                    if not isinstance(tick, MarketTick) or tick.symbol != symbol:
+                        raise ValueError("market update provider returned a mismatched symbol")
+                    results.extend(self._evaluate_records(records, tick, now=stamp))
+                except Exception as exc:
+                    for record in records:
+                        results.append(OpportunityEvaluation(
+                            record.opportunity_id, "WAIT_RECHECK", record.state,
+                            f"fresh market update unavailable ({type(exc).__name__})",
+                            None, False,
+                        ))
+        finally:
+            for record in claimed:
+                self.store.release_claim(record.opportunity_id, owner=self.owner, now=stamp)
         return CoordinatorRunResult(
             results=tuple(results),
             evaluated_count=len(results),
