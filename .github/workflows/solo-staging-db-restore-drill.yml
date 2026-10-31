@@ -14,12 +14,12 @@ permissions:
 
 jobs:
   restore-into-disposable-postgres:
-    name: Restore backup into temporary PostgreSQL 16
+    name: Restore backup into temporary PostgreSQL 17
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_DB: restore_test
           POSTGRES_USER: postgres
@@ -67,5 +67,5 @@ jobs:
             echo "::error::Restore completed but expected application tables or candle data are missing."
             exit 1
           fi
-          echo "PASS: checksum valid; restored $table_count paper_ledger tables and $candle_count candles into disposable PostgreSQL 16."
+          echo "PASS: checksum valid; restored $table_count paper_ledger tables and $candle_count candles into disposable PostgreSQL 17."
           echo "This drill did not connect to or modify staging or production databases."
