@@ -11,11 +11,28 @@ from datetime import datetime, timedelta, timezone
 from app.engines.paper_service_app import PaperServiceApplication
 from backend.analysis_job_dispatcher import AnalysisJobDispatcher, market_feed_health_audit
 from backend.durable_scheduler import DurableJobScheduler
+from backend.market_intelligence_scan import market_intelligence_scan
 from backend.historical_candle_archive import PostgresCandleArchive, archive_is_caught_up, archive_market_poll, backfill_older_symbol_history, backfill_symbol_history
 from backend.shared_market_store import PostgresMarketFeedStore
 
 
 logger = logging.getLogger(__name__)
+
+
+def run_scheduled_jobs(stop: threading.Event, scheduler: DurableJobScheduler,
+                       dispatcher: AnalysisJobDispatcher, *, poll_interval: float = 1.0) -> None:
+    """Run durable analysis jobs off the market-feed polling thread."""
+    if not isinstance(stop, threading.Event):
+        raise ValueError("stop must be a threading.Event")
+    if not isinstance(poll_interval, (int, float)) or poll_interval <= 0:
+        raise ValueError("poll_interval must be positive")
+    while not stop.is_set():
+        try:
+            scheduler.enqueue_due()
+            dispatcher.run_once()
+        except Exception:
+            logger.exception("durable read-only analysis scheduler thread failed")
+        stop.wait(float(poll_interval))
 
 
 def main() -> None:
@@ -33,6 +50,7 @@ def main() -> None:
         raise SystemExit("another market worker owns the active PostgreSQL lease; refusing duplicate polling")
 
     app = None
+    job_runner = None
     stop = threading.Event()
 
     def request_stop(signum, frame) -> None:
@@ -43,7 +61,7 @@ def main() -> None:
         # All setup after lease acquisition is covered by finally so a startup failure
         # cannot leave the PostgreSQL worker lease held until its timeout.
         scheduler = DurableJobScheduler(
-            dsn, lease_seconds=max(30.0, float(os.environ.get("PAPER_SCHEDULED_JOB_LEASE_SECONDS", "60")))
+            dsn, lease_seconds=max(300.0, float(os.environ.get("PAPER_SCHEDULED_JOB_LEASE_SECONDS", "300")))
         )
         schedule_interval = max(60, int(os.environ.get("PAPER_MARKET_HEALTH_AUDIT_INTERVAL_SECONDS", "300")))
         scheduler.register_interval(
@@ -52,11 +70,19 @@ def main() -> None:
             first_run_at=datetime.now(timezone.utc) + timedelta(seconds=schedule_interval),
             payload={"scope": "market_feed"},
         )
-        dispatcher = AnalysisJobDispatcher(
-            scheduler,
-            owner=os.environ.get("PAPER_ANALYSIS_DISPATCHER_ID", f"{worker_id[:110]}-analysis"),
-            handlers={"market_feed_health_audit": market_feed_health_audit(store)},
-        )
+        intelligence_enabled = str(
+            os.environ.get("PAPER_MARKET_INTELLIGENCE_ENABLED", "true")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if intelligence_enabled:
+            intelligence_interval = max(
+                300, int(os.environ.get("PAPER_MARKET_INTELLIGENCE_INTERVAL_SECONDS", "900"))
+            )
+            scheduler.register_interval(
+                "market_intelligence_scan",
+                interval_seconds=intelligence_interval,
+                first_run_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+                payload={"scope": "market_intelligence"},
+            )
         signal.signal(signal.SIGINT, request_stop)
         signal.signal(signal.SIGTERM, request_stop)
         # Acquire the durable lease before creating the paper runtime: create() performs
@@ -68,9 +94,36 @@ def main() -> None:
         if app.config.candle_interval != "1m":
             raise SystemExit("shared historical archive requires PAPER_CANDLE_INTERVAL=1m")
         archive = PostgresCandleArchive(dsn)
+        intelligence_handlers = {"market_feed_health_audit": market_feed_health_audit(store)}
+        if intelligence_enabled:
+            intelligence_candle_limit = int(
+                os.environ.get("PAPER_MARKET_INTELLIGENCE_CANDLE_LIMIT", "200")
+            )
+            intelligence_fetch_workers = int(
+                os.environ.get("PAPER_MARKET_INTELLIGENCE_FETCH_WORKERS", "12")
+            )
+            intelligence_handlers["market_intelligence_scan"] = market_intelligence_scan(
+                store, app.worker.source, app.config.symbols,
+                market_type="FUTURES", candle_limit=intelligence_candle_limit,
+                max_fetch_workers=intelligence_fetch_workers,
+            )
+        dispatcher = AnalysisJobDispatcher(
+            scheduler,
+            owner=os.environ.get("PAPER_ANALYSIS_DISPATCHER_ID", f"{worker_id[:110]}-analysis"),
+            handlers=intelligence_handlers,
+        )
         archive_lookback_days = int(os.environ.get("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS", "30"))
         if not 1 <= archive_lookback_days <= 365:
             raise SystemExit("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS must be between 1 and 365")
+
+        job_runner = threading.Thread(
+            target=run_scheduled_jobs,
+            args=(stop, scheduler, dispatcher),
+            name=f"{worker_id[:80]}-scheduled-jobs",
+            daemon=True,
+        )
+        job_runner.start()
+
         while not stop.is_set():
             try:
                 backfill_clock = datetime.now(timezone.utc)
@@ -139,11 +192,8 @@ def main() -> None:
                     "shared market cycle status=%s healthy=%s unhealthy=%s open_positions=%d archived_new_candles=%d archive_caught_up=%s orders_authorized=False",
                     report.analysis_status, report.healthy_symbols, report.unhealthy_symbols, report.open_positions, archived_count, archive_caught_up,
                 )
-                try:
-                    scheduler.enqueue_due()
-                    dispatcher.run_once()
-                except Exception:
-                    logger.exception("durable read-only analysis scheduler cycle failed")
+                if job_runner is not None and not job_runner.is_alive():
+                    raise RuntimeError("durable scheduled-job runner stopped unexpectedly")
                 delay = app.worker.next_delay_seconds
             except Exception as exc:
                 logger.exception("shared market worker cycle failed; feed remains fail-closed")
@@ -160,6 +210,12 @@ def main() -> None:
                 delay = 15.0
             stop.wait(delay)
     finally:
+        stop.set()
+        if job_runner is not None:
+            shutdown_grace = max(5.0, float(os.environ.get("PAPER_SCHEDULED_JOB_SHUTDOWN_GRACE_SECONDS", "15")))
+            job_runner.join(timeout=shutdown_grace)
+            if job_runner.is_alive():
+                logger.warning("scheduled-job runner did not stop within shutdown grace; its durable job lease will expire for safe retry")
         try:
             store.release()
         finally:

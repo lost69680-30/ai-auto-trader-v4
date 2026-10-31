@@ -43,11 +43,12 @@ def reset_tables():
         root / "supabase/migrations/20261029205318_create_paper_ledger_schema.sql",
         root / "supabase/migrations/20261030195452_create_shared_market_data.sql",
         root / "supabase/migrations/20261030195505_create_durable_scheduled_jobs.sql",
+        root / "supabase/migrations/20261031155011_create_market_intelligence_reports.sql",
     )
     with psycopg.connect(DSN, autocommit=True) as conn:
         for migration in migrations:
             conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
-        conn.execute("TRUNCATE paper_ledger.market_feed_snapshots, paper_ledger.market_worker_heartbeats")
+        conn.execute("TRUNCATE paper_ledger.market_intelligence_reports, paper_ledger.market_feed_snapshots, paper_ledger.market_worker_heartbeats, paper_ledger.scheduled_jobs, paper_ledger.scheduled_job_definitions")
 
 
 def healthy_poll(now):
@@ -196,4 +197,91 @@ def test_postgres_store_reports_missing_or_expired_worker_as_stale():
     now = datetime.now(timezone.utc)
     assert store.acquire_lease(now=now - timedelta(minutes=5)) is True
     assert store.status()["status"] == "STALE"
+    store.release(now=now)
+
+def test_market_intelligence_is_durable_and_survives_worker_heartbeat_updates():
+    reset_tables()
+    now = datetime.now(timezone.utc)
+    store = PostgresMarketFeedStore(DSN, worker_id="test-intelligence-worker", owner_id="owner-intelligence")
+    assert store.acquire_lease(now=now) is True
+    store.heartbeat("RUNNING", now=now, details={"analysis_status": "RUNNING"})
+    payload = {
+        "scan_id": "scan-123",
+        "assessed_at": now.isoformat(),
+        "market_type": "FUTURES",
+        "environment": "TESTNET",
+        "venue": "BINANCE_USDM_TESTNET",
+        "symbols": [{
+            "symbol": "BTCUSDT",
+            "assessment": {"direction": "MIXED", "orders_authorized": False},
+            "selection": {"decision": "NO_TRADE", "orders_authorized": False},
+            "liquidity_evidence": {},
+            "in_progress_timeframes": [],
+            "timeframe_errors": {},
+            "orders_authorized": False,
+        }],
+        "orders_authorized": False,
+    }
+    store.publish_intelligence(payload, now=now)
+    with store._connect() as conn:
+        conn.execute(
+            """INSERT INTO paper_ledger.scheduled_job_definitions
+               (job_name, interval_seconds, next_run_at, enabled, payload)
+               VALUES ('market_intelligence_scan', 900, %s, true, '{}'::jsonb)""",
+            (now,),
+        )
+        conn.execute(
+            """INSERT INTO paper_ledger.scheduled_jobs
+               (idempotency_key, job_name, scheduled_for, status, attempts,
+                lease_owner, lease_expires_at, started_at, payload)
+               VALUES ('scan-job-123', 'market_intelligence_scan', %s, 'RUNNING', 1,
+                       'test-runner', %s, %s, '{}'::jsonb)""",
+            (now, now + timedelta(minutes=5), now),
+        )
+    first = store.market_intelligence(now=now)
+    assert first["status"] == "HEALTHY"
+    assert first["scan_job_status"] == "RUNNING"
+    assert first["scan_attempts"] == 1
+    assert first["scan_id"] == "scan-123"
+    assert first["items"][0]["symbol"] == "BTCUSDT"
+    assert first["orders_authorized"] is False
+
+    store.heartbeat("RUNNING", now=now + timedelta(seconds=1), details={
+        "analysis_status": "RUNNING", "last_cycle_at": (now + timedelta(seconds=1)).isoformat(),
+        "orders_authorized": False,
+    })
+    after_heartbeat = store.market_intelligence(now=now + timedelta(seconds=1))
+    assert after_heartbeat["status"] == "HEALTHY"
+    assert after_heartbeat["scan_id"] == "scan-123"
+    assert after_heartbeat["orders_authorized"] is False
+    store.release(now=now + timedelta(seconds=2))
+
+def test_market_intelligence_publication_rejects_unsafe_and_future_payloads():
+    reset_tables()
+    now = datetime.now(timezone.utc)
+    store = PostgresMarketFeedStore(DSN, worker_id="test-intelligence-safety", owner_id="owner-safety")
+    assert store.acquire_lease(now=now) is True
+    base = {
+        "scan_id": "safe-scan",
+        "assessed_at": now.isoformat(),
+        "market_type": "FUTURES",
+        "environment": "TESTNET",
+        "venue": "BINANCE_USDM_TESTNET",
+        "symbols": [{
+            "symbol": "BTCUSDT",
+            "assessment": {"orders_authorized": False},
+            "selection": {"orders_authorized": False},
+            "liquidity_evidence": {},
+            "in_progress_timeframes": [],
+            "timeframe_errors": {},
+            "orders_authorized": False,
+        }],
+        "orders_authorized": False,
+    }
+    unsafe = {**base, "orders_authorized": True}
+    with pytest.raises(ValueError, match="deny order authorization"):
+        store.publish_intelligence(unsafe, now=now)
+    future = {**base, "assessed_at": (now + timedelta(minutes=5)).isoformat()}
+    with pytest.raises(ValueError, match="future-dated"):
+        store.publish_intelligence(future, now=now)
     store.release(now=now)

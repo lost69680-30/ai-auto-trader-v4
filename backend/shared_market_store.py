@@ -226,6 +226,189 @@ class PostgresMarketFeedStore:
             if row is None:
                 raise RuntimeError("market worker lease lost")
 
+    def publish_intelligence(self, payload: dict[str, Any], *, now: datetime | None = None) -> None:
+        """Persist one idempotent scan without bloating the worker heartbeat record."""
+        if not isinstance(payload, dict) or payload.get("orders_authorized") is not False:
+            raise ValueError("market intelligence payload must explicitly deny order authorization")
+        scan_id = payload.get("scan_id")
+        if not isinstance(scan_id, str) or not scan_id.strip() or scan_id != scan_id.strip() or len(scan_id) > 200:
+            raise ValueError("market intelligence scan_id must be a trimmed string of 1 to 200 characters")
+        assessed_text = payload.get("assessed_at")
+        if not isinstance(assessed_text, str):
+            raise ValueError("market intelligence assessed_at is required")
+        try:
+            assessed_at = datetime.fromisoformat(assessed_text.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("market intelligence assessed_at is invalid") from exc
+        if assessed_at.tzinfo is None or assessed_at.utcoffset() is None:
+            raise ValueError("market intelligence assessed_at must be timezone-aware")
+        assessed_at = assessed_at.astimezone(timezone.utc)
+        current = datetime.fromisoformat(_iso(now or datetime.now(timezone.utc)))
+        age = (current - assessed_at).total_seconds()
+        if age < -1.0 or age > max(1800.0, self.max_age_seconds * 20.0):
+            raise ValueError("market intelligence payload is future-dated or stale")
+
+        market_type = payload.get("market_type")
+        if market_type not in {"SPOT", "FUTURES"}:
+            raise ValueError("market intelligence market_type must be SPOT or FUTURES")
+        environment = payload.get("environment")
+        venue = payload.get("venue")
+        expected_venue = "BINANCE_USDM_TESTNET" if market_type == "FUTURES" else (
+            "BINANCE_SPOT_TESTNET" if market_type == "SPOT" else None
+        )
+        if environment != "TESTNET" or venue != expected_venue:
+            raise ValueError("market intelligence source must be an explicitly labeled Testnet venue")
+
+        symbols = payload.get("symbols")
+        if not isinstance(symbols, list) or not symbols:
+            raise ValueError("market intelligence symbols must be a non-empty list")
+        seen_symbols: set[str] = set()
+        validated: list[tuple[str, str, str, str, str]] = []
+        for item in symbols:
+            if not isinstance(item, dict) or item.get("orders_authorized") is not False:
+                raise ValueError("every market intelligence symbol must deny order authorization")
+            symbol = item.get("symbol")
+            assessment = item.get("assessment")
+            selection = item.get("selection")
+            liquidity = item.get("liquidity_evidence")
+            in_progress = item.get("in_progress_timeframes")
+            errors = item.get("timeframe_errors")
+            if (not isinstance(symbol, str) or not symbol or symbol != symbol.strip().upper()
+                    or len(symbol) > 30 or symbol in seen_symbols):
+                raise ValueError("market intelligence symbols must be unique uppercase identifiers")
+            if (not isinstance(assessment, dict) or assessment.get("orders_authorized") is not False
+                    or not isinstance(selection, dict) or selection.get("orders_authorized") is not False):
+                raise ValueError("assessment and selection must explicitly deny order authorization")
+            if not isinstance(liquidity, dict) or not isinstance(in_progress, list) or not isinstance(errors, dict):
+                raise ValueError("market intelligence evidence payload is malformed")
+            seen_symbols.add(symbol)
+            validated.append((
+                symbol,
+                json.dumps(assessment, separators=(",", ":"), allow_nan=False),
+                json.dumps(selection, separators=(",", ":"), allow_nan=False),
+                json.dumps(liquidity, separators=(",", ":"), allow_nan=False),
+                json.dumps({"in_progress_timeframes": in_progress, "timeframe_errors": errors},
+                           separators=(",", ":"), allow_nan=False),
+            ))
+
+        with self._connect() as conn:
+            lease = conn.execute(
+                """SELECT owner_id, lease_expires_at FROM paper_ledger.market_worker_heartbeats
+                   WHERE worker_id = %s""",
+                (self.worker_id,),
+            ).fetchone()
+            if lease is None or lease[0] != self.owner_id or lease[1] <= current:
+                raise RuntimeError("market worker lease lost before intelligence publication")
+            for symbol, assessment_json, selection_json, liquidity_json, extra_json in validated:
+                extra = json.loads(extra_json)
+                conn.execute(
+                    """INSERT INTO paper_ledger.market_intelligence_reports
+                       (scan_id, symbol, assessed_at, market_type, environment, venue,
+                        assessment, selection, liquidity_evidence, in_progress_timeframes,
+                        timeframe_errors, orders_authorized)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb,
+                               %s::jsonb, %s::jsonb, %s::jsonb, false)
+                       ON CONFLICT (scan_id, symbol) DO NOTHING""",
+                    (scan_id, symbol, assessed_at, market_type, environment, venue,
+                     assessment_json, selection_json, liquidity_json,
+                     json.dumps(extra["in_progress_timeframes"]),
+                     json.dumps(extra["timeframe_errors"])),
+                )
+            conn.execute(
+                """DELETE FROM paper_ledger.market_intelligence_reports
+                   WHERE assessed_at < %s::timestamptz - interval '7 days'""",
+                (current,),
+            )
+
+    def market_intelligence(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """Return the latest durable advisory scan only while the worker lease is fresh."""
+        hb, _rows = self._read()
+        current = datetime.fromisoformat(_iso(now or datetime.now(timezone.utc)))
+        if hb is None:
+            return {"status": "STARTING", "reason": "market worker has not published a heartbeat",
+                    "items": [], "orders_authorized": False}
+        heartbeat_age = (current - hb["heartbeat_at"].astimezone(timezone.utc)).total_seconds()
+        if (heartbeat_age < -1.0 or heartbeat_age > self.max_age_seconds
+                or hb["lease_expires_at"] <= current or hb["status"] in {"STOPPED", "ERROR"}):
+            return {"status": "STALE", "reason": "market worker heartbeat is stale or stopped",
+                    "items": [], "orders_authorized": False}
+
+        with self._connect() as conn:
+            latest = conn.execute(
+                """SELECT scan_id, assessed_at, market_type, environment, venue
+                   FROM paper_ledger.market_intelligence_reports
+                   ORDER BY assessed_at DESC, scan_id DESC LIMIT 1"""
+            ).fetchone()
+            scan_job = conn.execute(
+                """SELECT status, scheduled_for, started_at, completed_at, attempts
+                   FROM paper_ledger.scheduled_jobs
+                   WHERE job_name = 'market_intelligence_scan'
+                   ORDER BY CASE WHEN status = 'RUNNING' THEN 0
+                                 WHEN status = 'PENDING' THEN 1 ELSE 2 END,
+                            scheduled_for DESC, created_at DESC LIMIT 1"""
+            ).fetchone()
+            scan_meta = {
+                "scan_job_status": scan_job[0] if scan_job else "NOT_SCHEDULED",
+                "scan_scheduled_for": scan_job[1].astimezone(timezone.utc).isoformat() if scan_job and scan_job[1] else None,
+                "scan_started_at": scan_job[2].astimezone(timezone.utc).isoformat() if scan_job and scan_job[2] else None,
+                "scan_completed_at": scan_job[3].astimezone(timezone.utc).isoformat() if scan_job and scan_job[3] else None,
+                "scan_attempts": int(scan_job[4]) if scan_job else 0,
+            }
+            if latest is None:
+                return {
+                    "status": "STARTING", "reason": "waiting for the first scheduled market scan",
+                    "items": [], "orders_authorized": False, **scan_meta,
+                }
+            scan_id, assessed_at, market_type, environment, venue = latest
+            rows = conn.execute(
+                """SELECT symbol, assessment, selection, liquidity_evidence,
+                          in_progress_timeframes, timeframe_errors, orders_authorized
+                   FROM paper_ledger.market_intelligence_reports
+                   WHERE scan_id = %s ORDER BY symbol""",
+                (scan_id,),
+            ).fetchall()
+
+        if not isinstance(assessed_at, datetime) or assessed_at.tzinfo is None:
+            return {"status": "INVALID", "reason": "market intelligence timestamp is invalid",
+                    "items": [], "orders_authorized": False, **scan_meta}
+        scan_age = (current - assessed_at.astimezone(timezone.utc)).total_seconds()
+        max_scan_age = max(1800.0, self.max_age_seconds * 20.0)
+        if scan_age < -1.0 or scan_age > max_scan_age:
+            return {"status": "STALE", "reason": "market intelligence scan is stale",
+                    "items": [], "orders_authorized": False, **scan_meta}
+
+        items = []
+        for row in rows:
+            symbol, assessment, selection, liquidity, in_progress, errors, authorized = row
+            if (authorized is not False or not isinstance(assessment, dict)
+                    or assessment.get("orders_authorized") is not False
+                    or not isinstance(selection, dict) or selection.get("orders_authorized") is not False):
+                return {"status": "INVALID", "reason": "market intelligence failed safety validation",
+                        "items": [], "orders_authorized": False, **scan_meta}
+            items.append({
+                "symbol": symbol,
+                "assessment": assessment,
+                "selection": selection,
+                "liquidity_evidence": liquidity,
+                "in_progress_timeframes": in_progress,
+                "timeframe_errors": errors,
+                "orders_authorized": False,
+            })
+        if not items:
+            return {"status": "STARTING", "reason": "the latest market scan contains no symbol reports",
+                    "items": [], "orders_authorized": False, **scan_meta}
+        return {
+            "status": "HEALTHY" if hb["status"] == "RUNNING" else "DEGRADED",
+            "assessed_at": assessed_at.astimezone(timezone.utc).isoformat(),
+            "market_type": market_type,
+            "environment": environment,
+            "venue": venue,
+            "scan_id": scan_id,
+            "items": items,
+            "orders_authorized": False,
+            **scan_meta,
+        }
+
     def release(self, *, now: datetime | None = None) -> None:
         stamp = _iso(now or datetime.now(timezone.utc))
         with self._connect() as conn:
