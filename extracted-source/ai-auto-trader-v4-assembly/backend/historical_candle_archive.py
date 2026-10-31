@@ -206,3 +206,40 @@ class PostgresCandleArchive:
             low=float(row[7]), close=float(row[8]), volume=float(row[9]),
             is_closed=True, interval="1m",
         ) for row in rows)
+
+
+def archive_market_poll(
+    archive: "PostgresCandleArchive",
+    poll: object,
+    *,
+    interval: str,
+    testnet: bool,
+    now: datetime | None = None,
+) -> int:
+    """Persist healthy closed 1m candles from a Testnet poll, idempotently."""
+    if testnet is not True:
+        raise ValueError("historical candle archive accepts Testnet market data only")
+    if interval != "1m":
+        raise ValueError("canonical historical archive requires the worker interval to be 1m")
+    if getattr(poll, "orders_authorized", None) is not False:
+        raise ValueError("market poll cannot authorize orders")
+    rows: list[ArchivedCandle] = []
+    for frame in getattr(poll, "frames", ()):
+        if getattr(frame, "orders_authorized", None) is not False:
+            raise ValueError("market frame cannot authorize orders")
+        status = getattr(getattr(frame, "status", None), "value", getattr(frame, "status", None))
+        if status != "HEALTHY":
+            continue
+        market_type = getattr(frame, "market_type", None)
+        if market_type not in {"FUTURES", "SPOT"}:
+            raise ValueError("healthy market frame has an unknown market type")
+        venue = "BINANCE_USDM_TESTNET" if market_type == "FUTURES" else "BINANCE_SPOT_TESTNET"
+        for candle in getattr(frame, "closed_candles", ()):
+            rows.append(ArchivedCandle(
+                venue=venue, market_type=market_type, symbol=frame.symbol,
+                open_time=candle.open_time, close_time=candle.close_time,
+                open=candle.open, high=candle.high, low=candle.low,
+                close=candle.close, volume=candle.volume,
+                is_closed=candle.is_closed, interval="1m",
+            ))
+    return archive.insert_closed_candles(rows, now=now)
