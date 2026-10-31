@@ -107,9 +107,6 @@ def test_assessment_detects_bullish_engulfing_and_volume_confirmed_breakout():
     rows = list(_fixed_series(3600, count=60, direction=0))
     previous = rows[-2]
     latest = rows[-1]
-    rows[-2] = _candle(
-        "BTCUSDT", previous.open_time, previous.close_time, 99.0,
-    )
     rows[-2] = MarketCandle(
         symbol="BTCUSDT", open_time=previous.open_time, close_time=previous.close_time,
         open=101.0, high=102.0, low=98.0, close=99.0,
