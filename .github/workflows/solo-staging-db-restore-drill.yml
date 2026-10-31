@@ -85,8 +85,8 @@ jobs:
              WHERE n.nspname='paper_ledger' AND con.contype='p'")"
           candle_count="$(psql "$TEST_DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
             "SELECT count(*) FROM paper_ledger.market_candles")"
-          if [ "$table_count" -ne 14 ] || [ "$missing_count" -ne 0 ] ||
-             [ "$rls_count" -ne 14 ] || [ "$primary_key_count" -ne 14 ] ||
+          if [ "$table_count" -ne 14 ] || [ "$missing_count" -ne 0 ] || \
+             [ "$rls_count" -ne 14 ] || [ "$primary_key_count" -ne 14 ] || \
              [ "$candle_count" -lt 1 ]; then
             echo "::error::Restore validation failed: tables=$table_count missing=$missing_count rls=$rls_count primary_keys=$primary_key_count candles=$candle_count"
             exit 1
