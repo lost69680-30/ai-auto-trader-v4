@@ -169,3 +169,67 @@ def test_archive_poll_refuses_non_testnet_or_non_minute_source():
         archive_market_poll(Archive(), poll, interval="1m", testnet=False, now=BASE + timedelta(minutes=2))
     with pytest.raises(ValueError, match="1m"):
         archive_market_poll(Archive(), poll, interval="5m", testnet=True, now=BASE + timedelta(minutes=2))
+
+
+def test_backfill_paginates_from_last_archived_minute_and_recovers_gap():
+    from types import SimpleNamespace
+
+    from backend.historical_candle_archive import backfill_symbol_history
+
+    class Archive:
+        def __init__(self):
+            self.latest = BASE - timedelta(minutes=1)
+            self.inserted = []
+
+        def latest_open_time(self, *, venue, market_type, symbol):
+            return self.latest
+
+        def insert_closed_candles(self, candles, *, now):
+            rows = tuple(candles)
+            self.inserted.extend(rows)
+            if rows:
+                self.latest = max(row.open_time for row in rows)
+            return len(rows)
+
+    class Source:
+        def __init__(self):
+            self.calls = []
+
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            self.calls.append((symbol, interval, limit, start_time_ms, end_time_ms))
+            all_rows = [minute(i) for i in range(5)]
+            return tuple(
+                SimpleNamespace(
+                    symbol=symbol, open_time=row.open_time, close_time=row.close_time,
+                    open=row.open, high=row.high, low=row.low, close=row.close,
+                    volume=row.volume, is_closed=True,
+                )
+                for row in all_rows
+                if int(row.open_time.timestamp() * 1000) >= start_time_ms
+                and int(row.open_time.timestamp() * 1000) <= end_time_ms
+            )[:limit]
+
+    archive = Archive()
+    source = Source()
+    count = backfill_symbol_history(
+        archive, source, symbol="BTCUSDT", market_type="FUTURES",
+        testnet=True, now=BASE + timedelta(minutes=6), page_size=2,
+    )
+
+    assert count == 5
+    assert len(source.calls) == 3
+    assert [row.open_time for row in archive.inserted] == [BASE + timedelta(minutes=i) for i in range(5)]
+
+
+def test_backfill_refuses_production_or_unsupported_market_type():
+    from types import SimpleNamespace
+
+    from backend.historical_candle_archive import backfill_symbol_history
+
+    class Archive:
+        def latest_open_time(self, **kwargs):
+            return None
+
+    with pytest.raises(ValueError, match="Testnet"):
+        backfill_symbol_history(Archive(), SimpleNamespace(), symbol="BTCUSDT",
+                                market_type="FUTURES", testnet=False, now=BASE)
