@@ -669,3 +669,58 @@ def test_archived_market_history_endpoint_fails_closed_when_provider_is_unavaila
     assert status.startswith("503")
     assert body["orders_authorized"] is False
     assert body["candles"] == []
+
+
+
+def test_public_healthz_reports_process_liveness_without_authentication(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+
+    status, headers, body = request(app, path="/healthz")
+
+    assert status.startswith("200")
+    assert body == {
+        "status": "ok", "service": "solo-api", "mode": "PAPER_ONLY",
+        "orders_authorized": False,
+    }
+    assert headers["Cache-Control"] == "no-store"
+
+
+def test_public_readyz_requires_fresh_healthy_shared_worker(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(
+        database_path=db, token=TOKEN,
+        market_status=lambda: {
+            "status": "HEALTHY", "worker_status": "RUNNING", "orders_authorized": False,
+        },
+    )
+
+    status, _, body = request(app, path="/readyz")
+
+    assert status.startswith("200")
+    assert body["status"] == "ready"
+    assert body["worker_status"] == "RUNNING"
+    assert body["orders_authorized"] is False
+
+
+def test_public_readyz_fails_closed_when_worker_is_stale_or_missing(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(
+        database_path=db, token=TOKEN,
+        market_status=lambda: {
+            "status": "STALE", "worker_status": "STOPPED", "orders_authorized": False,
+        },
+    )
+
+    status, _, body = request(app, path="/readyz")
+
+    assert status.startswith("503")
+    assert body["status"] == "not_ready"
+    assert body["worker_status"] == "STOPPED"
+    assert body["orders_authorized"] is False
