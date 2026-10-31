@@ -940,6 +940,20 @@ private fun fetchMarketIntelligence(token: String): MarketIntelligenceFetchResul
                 "Market intelligence response did not explicitly disable order authorization.", false
             )
         }
+        val responseMarketType = root.optString("market_type", "")
+        val responseEnvironment = root.optString("environment", "")
+        val responseVenue = root.optString("venue", "")
+        val expectedVenue = when (responseMarketType) {
+            "FUTURES" -> "BINANCE_USDM_TESTNET"
+            "SPOT" -> "BINANCE_SPOT_TESTNET"
+            else -> ""
+        }
+        if (responseEnvironment != "TESTNET" || responseVenue != expectedVenue || expectedVenue.isBlank()) {
+            return MarketIntelligenceFetchResult(
+                "SOURCE NOT VERIFIED", "", "", "", "", emptyList(),
+                "Only explicitly identified Testnet market data is accepted.", false
+            )
+        }
         val array = root.optJSONArray("items") ?: JSONArray()
         val items = mutableListOf<MarketIntelligenceItem>()
         for (index in 0 until array.length()) {
