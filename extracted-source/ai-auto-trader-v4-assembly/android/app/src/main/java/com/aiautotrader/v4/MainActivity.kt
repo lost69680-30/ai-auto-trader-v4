@@ -319,6 +319,8 @@ private object BackendSession {
     val marketIntelligenceMessage = mutableStateOf("Waiting for the first scheduled market scan.")
     val marketIntelligenceAssessedAt = mutableStateOf("")
     val marketIntelligenceEnvironment = mutableStateOf("UNKNOWN")
+    val marketIntelligenceMarketType = mutableStateOf("UNKNOWN")
+    val marketIntelligenceVenue = mutableStateOf("UNKNOWN")
     // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
     val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
 }
@@ -1169,6 +1171,12 @@ private fun BackendMarketIntelligenceEffect() {
                 if (response.environment.isNotBlank()) {
                     BackendSession.marketIntelligenceEnvironment.value = response.environment
                 }
+                if (response.marketType.isNotBlank()) {
+                    BackendSession.marketIntelligenceMarketType.value = response.marketType
+                }
+                if (response.venue.isNotBlank()) {
+                    BackendSession.marketIntelligenceVenue.value = response.venue
+                }
                 if (!response.safeResponse && response.status == "UNSAFE RESPONSE") {
                     BackendSession.marketIntelligence.value = emptyList()
                 } else if (response.items.isNotEmpty()) {
@@ -1676,7 +1684,7 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
                 }
             }
             Text(
-                "Source: ${BackendSession.marketIntelligenceEnvironment.value} · Testnet research data. Strategy ranking is advisory; no order is authorized.",
+                "Source: ${BackendSession.marketIntelligenceEnvironment.value} · ${BackendSession.marketIntelligenceMarketType.value} · ${BackendSession.marketIntelligenceVenue.value}. Testnet research data only; no order is authorized.",
                 color = Muted, fontSize = 10.sp, lineHeight = 14.sp
             )
         }
@@ -1900,7 +1908,7 @@ private fun AnalysisScreen() {
                         Text("Data-quality limitations: ${selectedIntelligence.dataQualityIssues.take(5).joinToString("; ")}", color = Color(0xFFFFC857), fontSize = 10.sp, lineHeight = 14.sp)
                     }
                     Text(
-                        "Scan: ${BackendSession.marketIntelligenceAssessedAt.value} · ${BackendSession.marketIntelligenceEnvironment.value} · ${selectedIntelligence.marketRegime}",
+                        "Scan: ${BackendSession.marketIntelligenceAssessedAt.value} · ${BackendSession.marketIntelligenceEnvironment.value} · ${BackendSession.marketIntelligenceMarketType.value} · ${BackendSession.marketIntelligenceVenue.value}",
                         color = Muted, fontSize = 9.sp, lineHeight = 13.sp
                     )
                 }
