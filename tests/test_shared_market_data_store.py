@@ -213,7 +213,11 @@ def test_market_intelligence_is_durable_and_survives_worker_heartbeat_updates():
         "venue": "BINANCE_USDM_TESTNET",
         "symbols": [{
             "symbol": "BTCUSDT",
-            "selection": {"decision": "NO_TRADE"},
+            "assessment": {"direction": "MIXED", "orders_authorized": False},
+            "selection": {"decision": "NO_TRADE", "orders_authorized": False},
+            "liquidity_evidence": {},
+            "in_progress_timeframes": [],
+            "timeframe_errors": {},
             "orders_authorized": False,
         }],
         "orders_authorized": False,
