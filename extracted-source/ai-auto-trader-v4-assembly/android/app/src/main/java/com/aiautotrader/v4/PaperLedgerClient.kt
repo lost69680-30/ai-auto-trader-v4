@@ -32,6 +32,19 @@ internal data class PaperOrderView(
     val recordedAt: String,
 )
 
+internal data class PaperFillView(
+    val fillId: Long,
+    val proposalId: String,
+    val symbol: String,
+    val side: String,
+    val quantity: Double,
+    val marketPrice: Double,
+    val fillPrice: Double,
+    val fee: Double,
+    val slippageBps: Double,
+    val filledAt: String,
+)
+
 internal data class PaperRiskView(
     val emergencyStopActive: Boolean,
     val openPositionCount: Int,
@@ -54,6 +67,7 @@ internal data class PaperAuditView(
 internal data class PaperLedgerSnapshot(
     val positions: List<PaperPositionView>,
     val orders: List<PaperOrderView>,
+    val fills: List<PaperFillView>,
     val risk: PaperRiskView,
     val audit: List<PaperAuditView>,
     val performanceClosedCount: Int,
@@ -106,6 +120,28 @@ internal fun parsePaperOrders(json: JSONObject): List<PaperOrderView> {
         PaperOrderView(row.optString("proposal_id"), symbol, side, quantity, entry, stop, target,
             row.optString("status"), row.optString("recorded_at"))
     }
+}
+
+internal fun parsePaperFills(json: JSONObject): List<PaperFillView> {
+    require(!json.optBoolean("orders_authorized", true)) { "Unsafe fills response" }
+    val rows = json.optJSONArray("items") ?: throw IllegalArgumentException("Fills response has no items array")
+    return (0 until rows.length()).map { index ->
+        val row = rows.optJSONObject(index) ?: throw IllegalArgumentException("Invalid fill row")
+        val quantity = row.optDouble("quantity", Double.NaN)
+        val market = row.optDouble("market_price", Double.NaN)
+        val price = row.optDouble("fill_price", Double.NaN)
+        val fee = row.optDouble("fee", Double.NaN)
+        val slippage = row.optDouble("slippage_bps", Double.NaN)
+        val symbol = row.optString("symbol").trim()
+        val side = row.optString("side").uppercase()
+        val fillId = row.optLong("fill_id", -1L)
+        if (symbol.isBlank() || side !in setOf("LONG", "SHORT", "BUY", "SELL") ||
+            fillId < 0L || listOf(quantity, market, price, fee, slippage).any { !it.isFinite() } ||
+            quantity <= 0.0 || market <= 0.0 || price <= 0.0 || fee < 0.0
+        ) throw IllegalArgumentException("Invalid fill row; refusing a partial ledger view")
+        PaperFillView(fillId, row.optString("proposal_id"), symbol, side, quantity, market,
+            price, fee, slippage, row.optString("filled_at"))
+    }.takeLast(100).reversed()
 }
 
 internal fun parsePaperRisk(json: JSONObject): PaperRiskView {
@@ -169,12 +205,13 @@ internal fun fetchPaperLedgerSnapshot(baseUrl: String, token: String): PaperLedg
 
     val positions = parsePaperPositions(get("/api/v1/positions"))
     val orders = parsePaperOrders(get("/api/v1/orders"))
+    val fills = parsePaperFills(get("/api/v1/fills"))
     val risk = parsePaperRisk(get("/api/v1/risk"))
     val audit = parsePaperAudit(get("/api/v1/audit"))
     val closed = positions.filter { it.status == "CLOSED" }
     val realized = closed.sumOf { it.totalPnl }
     return PaperLedgerSnapshot(
-        positions, orders, risk, audit, closed.size, realized,
+        positions, orders, fills, risk, audit, closed.size, realized,
         java.time.Instant.now().toString()
     )
 }
