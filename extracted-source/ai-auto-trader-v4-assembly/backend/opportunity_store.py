@@ -315,10 +315,10 @@ class PostgresOpportunityStore:
                 event_id = "created-" + hashlib.sha256(key.encode("utf-8")).hexdigest()
                 conn.execute(
                     """INSERT INTO paper_ledger.opportunity_events
-                       (event_id, opportunity_id, from_state, to_state, reason,
+                       (event_id, opportunity_id, opportunity_version, from_state, to_state, reason,
                         actor, evidence_version, payload, occurred_at, orders_authorized)
-                       VALUES (%s, %s, NULL, %s, %s, %s, NULL, '{}'::jsonb, %s, false)""",
-                    (event_id, record.opportunity_id, record.state,
+                       VALUES (%s, %s, %s, NULL, %s, %s, %s, NULL, '{}'::jsonb, %s, false)""",
+                    (event_id, record.opportunity_id, record.version, record.state,
                      "Opportunity discovered", "opportunity_store", stamp),
                 )
                 return self._opportunity(inserted)
@@ -589,11 +589,11 @@ class PostgresOpportunityStore:
                 raise RuntimeError("stale opportunity version conflict")
             event_row = conn.execute(
                 """INSERT INTO paper_ledger.opportunity_events
-                   (event_id, opportunity_id, from_state, to_state, reason, actor,
+                   (event_id, opportunity_id, opportunity_version, from_state, to_state, reason, actor,
                     evidence_version, payload, occurred_at, orders_authorized)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, '{}'::jsonb, %s, false)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '{}'::jsonb, %s, false)
                    RETURNING *""",
-                (event_id, opportunity_id, from_state, to_state, reason, actor,
+                (event_id, opportunity_id, updated["version"], from_state, to_state, reason, actor,
                  evidence_version, stamp),
             ).fetchone()
             return TransitionResult(self._opportunity(updated), self._event(event_row))
