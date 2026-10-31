@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from app.engines.paper_service_app import PaperServiceApplication
 from backend.analysis_job_dispatcher import AnalysisJobDispatcher, market_feed_health_audit
 from backend.durable_scheduler import DurableJobScheduler
-from backend.historical_candle_archive import PostgresCandleArchive, archive_market_poll
+from backend.historical_candle_archive import PostgresCandleArchive, archive_market_poll, backfill_symbol_history
 from backend.shared_market_store import PostgresMarketFeedStore
 
 
@@ -70,12 +70,19 @@ def main() -> None:
         archive = PostgresCandleArchive(dsn)
         while not stop.is_set():
             try:
+                backfilled_count = 0
+                for symbol in app.config.symbols_list:
+                    backfilled_count += backfill_symbol_history(
+                        archive, app.worker.source, symbol=symbol, market_type="FUTURES",
+                        testnet=testnet, now=datetime.now(timezone.utc), page_size=1000, max_pages=3,
+                    )
                 poll = app.worker.poll_once()
                 store.publish(poll)
                 archived_count = archive_market_poll(
                     archive, poll, interval=app.config.candle_interval,
                     testnet=testnet, now=datetime.now(timezone.utc),
                 )
+                archived_count += backfilled_count
                 report = app.process_poll(poll, now=time.time())
                 cycle_status = str(report.analysis_status)
                 analysis_error = cycle_status.partition(":")[2] if cycle_status.startswith("ANALYSIS_FAILED:") else None
