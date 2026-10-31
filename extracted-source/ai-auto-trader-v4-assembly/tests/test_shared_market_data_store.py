@@ -43,11 +43,12 @@ def reset_tables():
         root / "supabase/migrations/20261029205318_create_paper_ledger_schema.sql",
         root / "supabase/migrations/20261030195452_create_shared_market_data.sql",
         root / "supabase/migrations/20261030195505_create_durable_scheduled_jobs.sql",
+        root / "supabase/migrations/20261031100000_create_market_intelligence_reports.sql",
     )
     with psycopg.connect(DSN, autocommit=True) as conn:
         for migration in migrations:
             conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
-        conn.execute("TRUNCATE paper_ledger.market_feed_snapshots, paper_ledger.market_worker_heartbeats")
+        conn.execute("TRUNCATE paper_ledger.market_intelligence_reports, paper_ledger.market_feed_snapshots, paper_ledger.market_worker_heartbeats")
 
 
 def healthy_poll(now):
@@ -231,3 +232,33 @@ def test_market_intelligence_is_durable_and_survives_worker_heartbeat_updates():
     assert after_heartbeat["scan_id"] == "scan-123"
     assert after_heartbeat["orders_authorized"] is False
     store.release(now=now + timedelta(seconds=2))
+
+def test_market_intelligence_publication_rejects_unsafe_and_future_payloads():
+    reset_tables()
+    now = datetime.now(timezone.utc)
+    store = PostgresMarketFeedStore(DSN, worker_id="test-intelligence-safety", owner_id="owner-safety")
+    assert store.acquire_lease(now=now) is True
+    base = {
+        "scan_id": "safe-scan",
+        "assessed_at": now.isoformat(),
+        "market_type": "FUTURES",
+        "environment": "TESTNET",
+        "venue": "BINANCE_USDM_TESTNET",
+        "symbols": [{
+            "symbol": "BTCUSDT",
+            "assessment": {"orders_authorized": False},
+            "selection": {"orders_authorized": False},
+            "liquidity_evidence": {},
+            "in_progress_timeframes": [],
+            "timeframe_errors": {},
+            "orders_authorized": False,
+        }],
+        "orders_authorized": False,
+    }
+    unsafe = {**base, "orders_authorized": True}
+    with pytest.raises(ValueError, match="deny order authorization"):
+        store.publish_intelligence(unsafe, now=now)
+    future = {**base, "assessed_at": (now + timedelta(minutes=5)).isoformat()}
+    with pytest.raises(ValueError, match="future-dated"):
+        store.publish_intelligence(future, now=now)
+    store.release(now=now)
