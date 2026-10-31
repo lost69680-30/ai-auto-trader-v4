@@ -55,6 +55,8 @@ def market_intelligence_scan(
     symbol_policies: Iterable[Any],
     *,
     market_type: str,
+    environment: str = "TESTNET",
+    venue: str = "BINANCE_USDM_TESTNET",
     candle_limit: int = DEFAULT_CANDLE_LIMIT,
     max_snapshot_age_seconds: float = 120.0,
 ):
@@ -69,6 +71,11 @@ def market_intelligence_scan(
         raise ValueError("market intelligence requires 1 to 20 configured symbol policies")
     if market_type not in {"SPOT", "FUTURES"}:
         raise ValueError("market_type must be SPOT or FUTURES")
+    if environment != "TESTNET":
+        raise ValueError("this shared worker scan is restricted to Testnet market data")
+    expected_venue = "BINANCE_USDM_TESTNET" if market_type == "FUTURES" else "BINANCE_SPOT_TESTNET"
+    if venue != expected_venue:
+        raise ValueError("venue and market_type do not match the Testnet adapter")
     if isinstance(candle_limit, bool) or not isinstance(candle_limit, int) or not 30 <= candle_limit <= 500:
         raise ValueError("candle_limit must be between 30 and 500")
     if not math.isfinite(max_snapshot_age_seconds) or max_snapshot_age_seconds <= 0:
@@ -161,6 +168,8 @@ def market_intelligence_scan(
             "scan_id": idempotency_key,
             "assessed_at": now,
             "market_type": market_type,
+            "environment": environment,
+            "venue": venue,
             "symbols": reports,
             "orders_authorized": False,
         }), now=now)
