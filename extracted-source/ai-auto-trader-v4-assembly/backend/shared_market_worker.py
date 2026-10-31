@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from app.engines.paper_service_app import PaperServiceApplication
 from backend.analysis_job_dispatcher import AnalysisJobDispatcher, market_feed_health_audit
 from backend.durable_scheduler import DurableJobScheduler
-from backend.historical_candle_archive import PostgresCandleArchive, archive_is_caught_up, archive_market_poll, backfill_symbol_history
+from backend.historical_candle_archive import PostgresCandleArchive, archive_is_caught_up, archive_market_poll, backfill_older_symbol_history, backfill_symbol_history
 from backend.shared_market_store import PostgresMarketFeedStore
 
 
@@ -68,6 +68,9 @@ def main() -> None:
         if app.config.candle_interval != "1m":
             raise SystemExit("shared historical archive requires PAPER_CANDLE_INTERVAL=1m")
         archive = PostgresCandleArchive(dsn)
+        archive_lookback_days = int(os.environ.get("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS", "30"))
+        if not 1 <= archive_lookback_days <= 365:
+            raise SystemExit("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS must be between 1 and 365")
         while not stop.is_set():
             try:
                 backfill_clock = datetime.now(timezone.utc)
@@ -84,7 +87,23 @@ def main() -> None:
                 poll = app.worker.poll_once()
                 store.publish(poll)
                 archived_count = backfilled_count
+                older_history_count = 0
+                older_history_errors = []
                 if archive_caught_up:
+                    for symbol in app.config.symbols_list:
+                        try:
+                            older_history_count += backfill_older_symbol_history(
+                                archive, app.worker.source, symbol=symbol, market_type="FUTURES",
+                                testnet=testnet, now=backfill_clock,
+                                lookback_days=archive_lookback_days, page_size=500, max_pages=1,
+                            )
+                        except Exception as history_exc:
+                            older_history_errors.append(symbol)
+                            logger.warning(
+                                "older historical backfill failed symbol=%s error=%s",
+                                symbol, type(history_exc).__name__,
+                            )
+                    archived_count += older_history_count
                     archived_count += archive_market_poll(
                         archive, poll, interval=app.config.candle_interval,
                         testnet=testnet, now=datetime.now(timezone.utc),
@@ -110,6 +129,9 @@ def main() -> None:
                         "unhealthy_symbols": list(report.unhealthy_symbols),
                         "archived_new_candles": archived_count,
                         "historical_archive_caught_up": archive_caught_up,
+                        "historical_archive_lookback_days": archive_lookback_days,
+                        "historical_archive_older_candles": older_history_count,
+                        "historical_archive_backfill_errors": older_history_errors,
                         "orders_authorized": False,
                     },
                 )
