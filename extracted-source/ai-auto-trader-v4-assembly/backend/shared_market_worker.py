@@ -34,6 +34,7 @@ def main() -> None:
         raise SystemExit("another market worker owns the active PostgreSQL lease; refusing duplicate polling")
 
     app = None
+    job_runner = None
     stop = threading.Event()
 
     def request_stop(signum, frame) -> None:
@@ -44,7 +45,7 @@ def main() -> None:
         # All setup after lease acquisition is covered by finally so a startup failure
         # cannot leave the PostgreSQL worker lease held until its timeout.
         scheduler = DurableJobScheduler(
-            dsn, lease_seconds=max(30.0, float(os.environ.get("PAPER_SCHEDULED_JOB_LEASE_SECONDS", "60")))
+            dsn, lease_seconds=max(300.0, float(os.environ.get("PAPER_SCHEDULED_JOB_LEASE_SECONDS", "300")))
         )
         schedule_interval = max(60, int(os.environ.get("PAPER_MARKET_HEALTH_AUDIT_INTERVAL_SECONDS", "300")))
         scheduler.register_interval(
@@ -94,6 +95,23 @@ def main() -> None:
         archive_lookback_days = int(os.environ.get("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS", "30"))
         if not 1 <= archive_lookback_days <= 365:
             raise SystemExit("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS must be between 1 and 365")
+
+        def run_scheduled_jobs() -> None:
+            while not stop.is_set():
+                try:
+                    scheduler.enqueue_due()
+                    dispatcher.run_once()
+                except Exception:
+                    logger.exception("durable read-only analysis scheduler thread failed")
+                stop.wait(1.0)
+
+        job_runner = threading.Thread(
+            target=run_scheduled_jobs,
+            name=f"{worker_id[:80]}-scheduled-jobs",
+            daemon=True,
+        )
+        job_runner.start()
+
         while not stop.is_set():
             try:
                 backfill_clock = datetime.now(timezone.utc)
@@ -162,11 +180,8 @@ def main() -> None:
                     "shared market cycle status=%s healthy=%s unhealthy=%s open_positions=%d archived_new_candles=%d archive_caught_up=%s orders_authorized=False",
                     report.analysis_status, report.healthy_symbols, report.unhealthy_symbols, report.open_positions, archived_count, archive_caught_up,
                 )
-                try:
-                    scheduler.enqueue_due()
-                    dispatcher.run_once()
-                except Exception:
-                    logger.exception("durable read-only analysis scheduler cycle failed")
+                if job_runner is not None and not job_runner.is_alive():
+                    raise RuntimeError("durable scheduled-job runner stopped unexpectedly")
                 delay = app.worker.next_delay_seconds
             except Exception as exc:
                 logger.exception("shared market worker cycle failed; feed remains fail-closed")
@@ -183,6 +198,12 @@ def main() -> None:
                 delay = 15.0
             stop.wait(delay)
     finally:
+        stop.set()
+        if job_runner is not None:
+            shutdown_grace = max(5.0, float(os.environ.get("PAPER_SCHEDULED_JOB_SHUTDOWN_GRACE_SECONDS", "15")))
+            job_runner.join(timeout=shutdown_grace)
+            if job_runner.is_alive():
+                logger.warning("scheduled-job runner did not stop within shutdown grace; its durable job lease will expire for safe retry")
         try:
             store.release()
         finally:
