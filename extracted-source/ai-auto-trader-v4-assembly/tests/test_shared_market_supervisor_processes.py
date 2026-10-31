@@ -36,7 +36,7 @@ fail_name = os.environ.get("TEST_FAIL_CHILD", "")
 lines = events.read_text(encoding="utf-8").splitlines() if events.exists() else []
 count = sum(line.split()[0] == name for line in lines) + 1
 with events.open("a", encoding="utf-8") as stream:
-    stream.write(f"{name} {os.getpid()} {count}\\n")
+    stream.write(f"{name} {os.getpid()} {count}\n")
 if name == fail_name and count == 1:
     raise SystemExit(23)
 while True:
