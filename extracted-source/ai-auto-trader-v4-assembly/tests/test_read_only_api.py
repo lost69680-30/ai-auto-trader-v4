@@ -583,3 +583,89 @@ def test_candle_api_contract_reports_all_native_intervals_and_isolates_failure()
     assert len(payload["candles_by_interval"]["1y"]) == 1
     assert payload["orders_authorized"] is False
     assert payload["mode"] == "PAPER_ONLY"
+
+
+def test_archived_market_history_endpoint_is_authenticated_and_read_only(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    seen = {}
+
+    def history(symbol, start, end, limit):
+        seen.update(symbol=symbol, start=start, end=end, limit=limit)
+        return {
+            "symbol": symbol,
+            "venue": "BINANCE_USDM_TESTNET",
+            "market_type": "FUTURES",
+            "interval": "1m",
+            "candles": [{
+                "open_time": "2026-10-31T03:40:00+00:00",
+                "close_time": "2026-10-31T03:40:59.999000+00:00",
+                "open": 100.0, "high": 102.0, "low": 99.0,
+                "close": 101.0, "volume": 12.0, "is_closed": True,
+            }],
+            "orders_authorized": False,
+        }
+
+    app = create_app(database_path=db, token=TOKEN, market_history=history)
+    path = ("/api/v1/markets/history?symbol=BTCUSDT"
+            "&start=2026-10-31T03%3A00%3A00%2B00%3A00"
+            "&end=2026-10-31T04%3A00%3A00%2B00%3A00&limit=250")
+    status, _, body = request(app, path=path, auth="Bearer " + TOKEN)
+
+    assert status.startswith("200")
+    assert seen["symbol"] == "BTCUSDT"
+    assert seen["start"].tzinfo is not None
+    assert seen["end"].tzinfo is not None
+    assert seen["limit"] == 250
+    assert body["venue"] == "BINANCE_USDM_TESTNET"
+    assert body["candles"][0]["is_closed"] is True
+    assert body["orders_authorized"] is False
+
+
+def test_archived_market_history_endpoint_rejects_invalid_query_without_calling_provider(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    calls = []
+
+    def history(*args):
+        calls.append(args)
+        return {}
+
+    app = create_app(database_path=db, token=TOKEN, market_history=history)
+    invalid_paths = [
+        "/api/v1/markets/history?symbol=BTCUSDT&start=not-a-date&end=2026-10-31T04%3A00%3A00Z",
+        "/api/v1/markets/history?symbol=BTCUSDT&start=2026-10-31T04%3A00%3A00Z&end=2026-10-31T03%3A00%3A00Z",
+        "/api/v1/markets/history?symbol=BTCUSDT&start=2026-10-31T03%3A00%3A00Z&end=2026-10-31T04%3A00%3A00Z&limit=0",
+    ]
+    for path in invalid_paths:
+        status, _, body = request(app, path=path, auth="Bearer " + TOKEN)
+        assert status.startswith("400")
+        assert body["orders_authorized"] is False
+    assert calls == []
+
+
+def test_archived_market_history_endpoint_fails_closed_when_provider_is_unavailable_or_unsafe(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+    path = ("/api/v1/markets/history?symbol=BTCUSDT"
+            "&start=2026-10-31T03%3A00%3A00Z&end=2026-10-31T04%3A00%3A00Z")
+    status, _, body = request(app, path=path, auth="Bearer " + TOKEN)
+    assert status.startswith("503")
+    assert body["orders_authorized"] is False
+
+    unsafe = create_app(
+        database_path=db, token=TOKEN,
+        market_history=lambda *args: {
+            "symbol": "BTCUSDT", "venue": "BINANCE_USDM_TESTNET",
+            "market_type": "FUTURES", "interval": "1m",
+            "candles": [], "orders_authorized": True,
+        },
+    )
+    status, _, body = request(unsafe, path=path, auth="Bearer " + TOKEN)
+    assert status.startswith("503")
+    assert body["orders_authorized"] is False
+    assert body["candles"] == []
