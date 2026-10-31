@@ -71,3 +71,25 @@ def test_dispatcher_fails_closed_if_job_claim_has_order_authority():
     assert dispatcher.run_once() is False
     assert scheduler.completed == []
     assert len(scheduler.failed) == 1
+
+
+def test_dispatcher_retries_handler_failure_without_completing_job():
+    scheduler = FakeScheduler([{
+        "idempotency_key": "market_feed_health_audit:2",
+        "job_name": "market_feed_health_audit",
+        "payload": {"scope": "market_feed"},
+        "orders_authorized": False,
+    }])
+
+    def failing_handler(payload, key):
+        raise RuntimeError("temporary audit failure")
+
+    dispatcher = AnalysisJobDispatcher(
+        scheduler, owner="test-worker",
+        handlers={"market_feed_health_audit": failing_handler},
+    )
+
+    assert dispatcher.run_once() is False
+    assert scheduler.completed == []
+    assert scheduler.failed[0][0:2] == ("market_feed_health_audit:2", "test-worker")
+    assert "temporary audit failure" in scheduler.failed[0][2]
