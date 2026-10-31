@@ -6,7 +6,7 @@ import os
 import signal
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.engines.paper_service_app import PaperServiceApplication
 from backend.analysis_job_dispatcher import AnalysisJobDispatcher, market_feed_health_audit
@@ -40,7 +40,7 @@ def main() -> None:
     scheduler.register_interval(
         "market_feed_health_audit",
         interval_seconds=schedule_interval,
-        first_run_at=datetime.now(timezone.utc) + __import__("datetime").timedelta(seconds=schedule_interval),
+        first_run_at=datetime.now(timezone.utc) + timedelta(seconds=schedule_interval),
         payload={"scope": "market_feed"},
     )
     dispatcher = AnalysisJobDispatcher(
