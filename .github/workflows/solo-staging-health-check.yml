@@ -2,6 +2,11 @@ name: Solo staging health and worker recovery check
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - fix/futures-context-mainline
+    paths:
+      - ".github/workflows/solo-staging-health-check.yml"
 
 permissions:
   contents: read
