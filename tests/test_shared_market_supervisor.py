@@ -101,6 +101,7 @@ def test_supervisor_restarts_failed_api_without_restarting_worker(monkeypatch):
     from backend import shared_market_supervisor as supervisor
 
     monkeypatch.setenv("PORT", "10000")
+    monkeypatch.setenv("PAPER_DATABASE_URL", "postgresql://test")
     clock = {"now": 0.0, "sleeps": 0}
     handlers = []
     started = []
