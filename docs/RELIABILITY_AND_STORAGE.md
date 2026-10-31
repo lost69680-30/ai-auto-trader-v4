@@ -140,3 +140,17 @@ The earlier statement above that the backup and restore workflows were not yet r
 The first successful drill had a weak acceptance test: it required only at least one table and one candle row. The restore itself succeeded, but those assertions alone would not detect missing non-candle tables or missing row-level-security/primary-key protections.
 
 A staging-only follow-up change now validates the exact 14-table application schema, verifies that every expected table exists, verifies RLS and a primary key on each table, and requires non-empty candle data. This strengthened workflow is under review on branch `fix/solo-restore-validation`; it has not been merged or run yet. The original successful restore evidence above remains valid, but the stronger validation is not yet proven by a new run.
+
+
+
+## Evidence reconciliation — 2026-10-31
+
+The earlier sections above contain historical status statements that are superseded by inspected GitHub Actions evidence:
+
+- Backup run `41207086389` succeeded. Its job log shows the exact `pg_dump` command used `--enable-row-security --inserts` with the dedicated non-BYPASSRLS backup role, then verified the archive with `pg_restore --list` and uploaded it. The archive artifact is 7,662,239 bytes; the SHA-256 of the artifact ZIP is recorded in the workflow run, while the dump's own checksum is included in the artifact.
+- Restore run `41208295736` succeeded against that artifact in disposable PostgreSQL 17. Its job logs report 14 application tables and 433,667 candle rows, with checksum validation. The restore target was the disposable service container; staging and production were not modified.
+- These results supersede the older statement that no verified backup or restore drill existed. They prove a schema-level backup and isolated restore, not a complete Supabase project recovery or independently retained disaster-recovery copy.
+- The staging branch's backup workflow file was stale relative to the successful backup run: it omitted `--enable-row-security --inserts`. The follow-up branch now aligns the workflow with the command proven by the successful run. Future exports must keep `--enable-row-security`; without it the non-BYPASSRLS role may not export rows protected by RLS.
+- The original restore workflow only checked for at least one table and one candle row. The follow-up branch strengthens this to validate the 14 expected tables, RLS and primary keys, but this stricter version still needs a new workflow run.
+
+The branch `fix/solo-restore-validation` contains these corrections for review. No merge or deployment is implied by these documentation updates.
