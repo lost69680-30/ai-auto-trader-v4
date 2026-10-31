@@ -36,3 +36,21 @@ class MarketObservationFreshnessTest {
         assertNull(parseFreshMarketObservation("2026-10-30T11:59:30Z", now, Double.NaN))
     }
 }
+
+    @Test
+    fun labelsOnlyFreshConnectedStreamAsLive() {
+        val timestamp = "2026-10-30T11:59:30Z"
+        assertEquals(MarketDisplayFreshness.LIVE,
+            classifyMarketDisplayFreshness(timestamp, "CONNECTED", now))
+        assertEquals(MarketDisplayFreshness.RECENT_DISCONNECTED,
+            classifyMarketDisplayFreshness(timestamp, "RECONNECTING", now))
+    }
+
+    @Test
+    fun distinguishesStaleAndUnavailableSnapshots() {
+        assertEquals(MarketDisplayFreshness.STALE,
+            classifyMarketDisplayFreshness("2026-10-30T11:58:29Z", "CONNECTED", now))
+        assertEquals(MarketDisplayFreshness.UNAVAILABLE,
+            classifyMarketDisplayFreshness(null, "CONNECTED", now))
+    }
+}
