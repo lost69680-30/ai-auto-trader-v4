@@ -70,7 +70,7 @@ All new paths below are proposed; preserve the assembly's existing package and t
   - `release_claim(opportunity_id, *, owner, now) -> bool`
 - Consume the existing PostgreSQL DSN and SSL helper pattern from `backend/shared_market_store.py`; no new database provider or connection secret.
 
-- [ ] **Step 1: Add focused failing repository and migration tests**
+- [x] **Step 1: Add focused failing repository and migration tests**
 
 Test schema constraints and repository behavior using the existing `PAPER_TEST_DATABASE_URL` convention:
 1. A new opportunity and its initial event persist and are readable after a new store instance is created.
@@ -82,7 +82,7 @@ Test schema constraints and repository behavior using the existing `PAPER_TEST_D
 7. Database failure, missing migration, malformed JSON, or `orders_authorized=true` fails closed.
 8. Existing ledger, market feed, candle archive, scheduled-job and intelligence-report tables remain intact after migration.
 
-- [ ] **Step 2: Verify the expected failures**
+- [x] **Step 2: Verify the expected failures**
 
 Run from `extracted-source/ai-auto-trader-v4-assembly`:
 
@@ -92,7 +92,7 @@ pytest -q tests/test_opportunity_store.py
 
 Expected: the focused tests fail because the migration, records and repository do not yet exist.
 
-- [ ] **Step 3: Implement additive PostgreSQL schema and repository**
+- [x] **Step 3: Implement additive PostgreSQL schema and repository**
 
 Create separate relational records for opportunities, strategy assessments, evidence references, watch conditions, append-only opportunity events and opportunity claims. Use foreign keys and indexes for active-state lookup, symbol/timeframe lookup, expiry processing, event history and idempotency lookup. Keep compact evidence references to existing snapshot/candle/archive identifiers; do not copy full candle histories into each opportunity.
 
@@ -102,7 +102,7 @@ Implement transitions in a database transaction using row locking or a compare-a
 
 The state transition validator must encode the design's allowed lifecycle and terminal states. It must reject direct transitions to `PAPER_OPEN` from search, assessment, waiting or trigger code. The later risk-approved integration must use a distinct recorded-intent state/event if the paper ledger only accepts an intent; it may transition to `PAPER_OPEN` only if the existing paper ledger confirms the simulated position is actually open. Final state mapping is gated by product decision 6 below.
 
-- [ ] **Step 4: Verify the focused pass**
+- [x] **Step 4: Verify the focused pass**
 
 Run:
 
@@ -112,7 +112,7 @@ pytest -q tests/test_opportunity_store.py
 
 Expected: all repository and migration tests pass against a migrated test PostgreSQL database; tests requiring an unavailable database are explicitly skipped with the existing documented reason, not reported as passed.
 
-- [ ] **Step 5: Run affected integration checks**
+- [x] **Step 5: Run affected integration checks**
 
 Run:
 
@@ -122,7 +122,7 @@ pytest -q tests/test_shared_market_data_store.py tests/test_analysis_job_dispatc
 
 Expected: existing shared market-data and scheduled-job behavior remains green; the new migration does not remove or weaken existing tables, leases or safety constraints.
 
-- [ ] **Step 6: Commit the passing deliverable**
+- [x] **Step 6: Commit the passing deliverable**
 
 ```bash
 git add supabase/migrations/20261031170000_create_opportunity_registry.sql extracted-source/ai-auto-trader-v4-assembly/backend/opportunity_store.py extracted-source/ai-auto-trader-v4-assembly/tests/test_opportunity_store.py extracted-source/ai-auto-trader-v4-assembly/tests/test_shared_market_data_store.py
