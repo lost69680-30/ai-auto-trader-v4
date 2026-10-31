@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from app.engines.paper_service_app import PaperServiceApplication
 from backend.analysis_job_dispatcher import AnalysisJobDispatcher, market_feed_health_audit
 from backend.durable_scheduler import DurableJobScheduler
+from backend.historical_candle_archive import PostgresCandleArchive, archive_market_poll
 from backend.shared_market_store import PostgresMarketFeedStore
 
 
@@ -61,10 +62,20 @@ def main() -> None:
         # Acquire the durable lease before creating the paper runtime: create() performs
         # restart recovery and must never run in a duplicate worker process.
         app = PaperServiceApplication.from_env()
+        testnet = str(os.environ.get("PAPER_MARKET_TESTNET", "true")).strip().lower() in {"1", "true", "yes"}
+        if not testnet:
+            raise SystemExit("shared historical archive is Testnet-only; refusing production market data")
+        if app.config.candle_interval != "1m":
+            raise SystemExit("shared historical archive requires PAPER_CANDLE_INTERVAL=1m")
+        archive = PostgresCandleArchive(dsn)
         while not stop.is_set():
             try:
                 poll = app.worker.poll_once()
                 store.publish(poll)
+                archived_count = archive_market_poll(
+                    archive, poll, interval=app.config.candle_interval,
+                    testnet=testnet, now=datetime.now(timezone.utc),
+                )
                 report = app.process_poll(poll, now=time.time())
                 cycle_status = str(report.analysis_status)
                 analysis_error = cycle_status.partition(":")[2] if cycle_status.startswith("ANALYSIS_FAILED:") else None
@@ -88,8 +99,8 @@ def main() -> None:
                     },
                 )
                 logger.info(
-                    "shared market cycle status=%s healthy=%s unhealthy=%s open_positions=%d orders_authorized=False",
-                    report.analysis_status, report.healthy_symbols, report.unhealthy_symbols, report.open_positions,
+                    "shared market cycle status=%s healthy=%s unhealthy=%s open_positions=%d archived_new_candles=%d orders_authorized=False",
+                    report.analysis_status, report.healthy_symbols, report.unhealthy_symbols, report.open_positions, archived_count,
                 )
                 try:
                     scheduler.enqueue_due()
