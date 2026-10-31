@@ -284,3 +284,53 @@ def test_reassess_due_uses_worker_leases_and_releases_claim_after_trigger():
     assert run.results[0].state == "TRIGGERED"
     assert store.get_opportunity(created.opportunity_id).state == "TRIGGERED"
     assert store.release_claim(created.opportunity_id, owner="test-opportunity-coordinator") is False
+
+
+def test_invalid_price_plan_geometry_is_rejected_before_opportunity_creation():
+    reset_registry()
+    now = datetime.now(timezone.utc)
+    store = PostgresOpportunityStore(DSN)
+    engine = coordinator(store)
+
+    with pytest.raises(ValueError, match="geometry"):
+        register(engine, store, trigger=99.0, now=now)
+
+    assert store.list_opportunities(limit=20).items == ()
+
+
+def test_expired_opportunity_is_closed_even_when_market_update_provider_is_unavailable():
+    reset_registry()
+    now = datetime.now(timezone.utc)
+    store = PostgresOpportunityStore(DSN)
+    engine = coordinator(store)
+    created = register(engine, store, expires=now + timedelta(minutes=1), now=now)
+    later = now + timedelta(minutes=2)
+
+    def provider_must_not_be_called(symbol, stamp):
+        raise AssertionError("expired opportunity does not need market data")
+
+    run = engine.reassess_due(
+        now=later,
+        market_update_provider=provider_must_not_be_called,
+        limit=10,
+    )
+
+    assert run.evaluated_count == 1
+    assert run.results[0].status == "EXPIRED"
+    assert store.get_opportunity(created.opportunity_id).state == "EXPIRED"
+    assert store.release_claim(created.opportunity_id, owner="test-opportunity-coordinator") is False
+
+
+def test_non_numeric_market_tick_fails_closed_without_triggering():
+    reset_registry()
+    now = datetime.now(timezone.utc)
+    store = PostgresOpportunityStore(DSN)
+    engine = coordinator(store)
+    created = register(engine, store, now=now)
+
+    result = engine.evaluate_market_update(
+        "BTCUSDT", MarketTick("BTCUSDT", True, now, candle_close=102.0), now=now,
+    )
+
+    assert result[0].status == "WAIT_RECHECK"
+    assert store.get_opportunity(created.opportunity_id).state == "WAITING"
