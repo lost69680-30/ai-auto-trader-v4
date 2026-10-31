@@ -1,7 +1,8 @@
 """Strictly allowlisted dispatcher for read-only scheduled analysis jobs."""
 from __future__ import annotations
 
-import loggingimport uuid
+import logging
+import uuid
 from collections.abc import Callable
 from typing import Any
 
