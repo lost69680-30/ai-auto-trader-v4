@@ -70,7 +70,7 @@ All new paths below are proposed; preserve the assembly's existing package and t
   - `release_claim(opportunity_id, *, owner, now) -> bool`
 - Consume the existing PostgreSQL DSN and SSL helper pattern from `backend/shared_market_store.py`; no new database provider or connection secret.
 
-- [ ] **Step 1: Add focused failing repository and migration tests**
+- [x] **Step 1: Add focused failing repository and migration tests**
 
 Test schema constraints and repository behavior using the existing `PAPER_TEST_DATABASE_URL` convention:
 1. A new opportunity and its initial event persist and are readable after a new store instance is created.
@@ -82,7 +82,7 @@ Test schema constraints and repository behavior using the existing `PAPER_TEST_D
 7. Database failure, missing migration, malformed JSON, or `orders_authorized=true` fails closed.
 8. Existing ledger, market feed, candle archive, scheduled-job and intelligence-report tables remain intact after migration.
 
-- [ ] **Step 2: Verify the expected failures**
+- [x] **Step 2: Verify the expected failures**
 
 Run from `extracted-source/ai-auto-trader-v4-assembly`:
 
@@ -92,7 +92,7 @@ pytest -q tests/test_opportunity_store.py
 
 Expected: the focused tests fail because the migration, records and repository do not yet exist.
 
-- [ ] **Step 3: Implement additive PostgreSQL schema and repository**
+- [x] **Step 3: Implement additive PostgreSQL schema and repository**
 
 Create separate relational records for opportunities, strategy assessments, evidence references, watch conditions, append-only opportunity events and opportunity claims. Use foreign keys and indexes for active-state lookup, symbol/timeframe lookup, expiry processing, event history and idempotency lookup. Keep compact evidence references to existing snapshot/candle/archive identifiers; do not copy full candle histories into each opportunity.
 
@@ -102,7 +102,7 @@ Implement transitions in a database transaction using row locking or a compare-a
 
 The state transition validator must encode the design's allowed lifecycle and terminal states. It must reject direct transitions to `PAPER_OPEN` from search, assessment, waiting or trigger code. The later risk-approved integration must use a distinct recorded-intent state/event if the paper ledger only accepts an intent; it may transition to `PAPER_OPEN` only if the existing paper ledger confirms the simulated position is actually open. Final state mapping is gated by product decision 6 below.
 
-- [ ] **Step 4: Verify the focused pass**
+- [x] **Step 4: Verify the focused pass**
 
 Run:
 
@@ -112,7 +112,7 @@ pytest -q tests/test_opportunity_store.py
 
 Expected: all repository and migration tests pass against a migrated test PostgreSQL database; tests requiring an unavailable database are explicitly skipped with the existing documented reason, not reported as passed.
 
-- [ ] **Step 5: Run affected integration checks**
+- [x] **Step 5: Run affected integration checks**
 
 Run:
 
@@ -122,7 +122,7 @@ pytest -q tests/test_shared_market_data_store.py tests/test_analysis_job_dispatc
 
 Expected: existing shared market-data and scheduled-job behavior remains green; the new migration does not remove or weaken existing tables, leases or safety constraints.
 
-- [ ] **Step 6: Commit the passing deliverable**
+- [x] **Step 6: Commit the passing deliverable**
 
 ```bash
 git add supabase/migrations/20261031170000_create_opportunity_registry.sql extracted-source/ai-auto-trader-v4-assembly/backend/opportunity_store.py extracted-source/ai-auto-trader-v4-assembly/tests/test_opportunity_store.py extracted-source/ai-auto-trader-v4-assembly/tests/test_shared_market_data_store.py
@@ -143,7 +143,7 @@ git commit -m "feat: add durable opportunity registry"
 - `MultiStrategyAssessmentEngine(profiles, assessors).assess(candidate, evidence, *, now) -> tuple[StrategyAssessmentRecord, ...]`.
 - `assessors` is an explicit registry keyed by strategy ID; a missing or failed assessor yields a recorded `REQUEST_MORE_EVIDENCE` or `NO_TRADE` result, never an implicit approval.
 
-- [ ] **Step 1: Add failing tests for strategy independence and authority boundaries**
+- [x] **Step 1: Add failing tests for strategy independence and authority boundaries**
 
 Cover:
 1. Each of the five strategy IDs receives its own assessment record and version.
@@ -155,7 +155,7 @@ Cover:
 7. Scores include `NOT_CALIBRATED` until an independently verified calibration artifact is supplied.
 8. Every assessment explicitly has `orders_authorized=false`.
 
-- [ ] **Step 2: Verify the expected failures**
+- [x] **Step 2: Verify the expected failures**
 
 Run:
 
@@ -165,7 +165,7 @@ pytest -q tests/test_strategy_assessment_engine.py
 
 Expected: collection fails until the new strategy profile and assessment interfaces are defined.
 
-- [ ] **Step 3: Implement the assessment registry and five isolated profiles**
+- [x] **Step 3: Implement the assessment registry and five isolated profiles**
 
 Implement the five explicit strategy identities: scalping, day trading, swing trading, position trading and long-term analysis. Reuse existing market assessment and research outputs as evidence; do not relabel a single existing consensus score as five independent assessments. Each profile must evaluate its own configured evidence/timeframes and emit its own decision, reasons, uncertainty, version, evidence references, costs where available, trigger/invalidation proposal where justified, expiry policy reference and calibration label.
 
@@ -173,7 +173,7 @@ Keep the assessment engine pure with respect to persistence, exchange access, ac
 
 Do not implement a profitability model or claim statistical calibration. Do not permit the long-term profile to create a watch condition eligible for the paper path.
 
-- [ ] **Step 4: Verify the focused pass**
+- [x] **Step 4: Verify the focused pass**
 
 Run:
 
@@ -183,7 +183,7 @@ pytest -q tests/test_strategy_assessment_engine.py backend/tests/test_opportunit
 
 Expected: new per-strategy tests pass and existing research/market-assessment behavior remains unchanged.
 
-- [ ] **Step 5: Run affected integration checks**
+- [x] **Step 5: Run affected integration checks**
 
 Run:
 
@@ -193,7 +193,7 @@ pytest -q tests/test_market_intelligence_scan.py tests/test_complete_analysis_pi
 
 Expected: existing scan and research-to-signal boundaries remain intact; the new strategy engine does not create signals or paper intents.
 
-- [ ] **Step 6: Commit the passing deliverable**
+- [x] **Step 6: Commit the passing deliverable**
 
 ```bash
 git add extracted-source/ai-auto-trader-v4-assembly/backend/strategy_assessment_engine.py extracted-source/ai-auto-trader-v4-assembly/backend/strategy_profiles.py extracted-source/ai-auto-trader-v4-assembly/tests/test_strategy_assessment_engine.py
@@ -213,7 +213,7 @@ git commit -m "feat: add independent strategy assessments"
 - `ContinuousOpportunitySearch(store, source, strategy_engine, config).scan(*, now, scan_id) -> SearchRunResult`.
 - `SearchRunResult`: scan ID, started/completed timestamps, coverage counts, per-symbol quality status, candidate IDs, skipped symbols/reasons and `orders_authorized=false`.
 
-- [ ] **Step 1: Add failing tests for scan coverage and quality gates**
+- [x] **Step 1: Add failing tests for scan coverage and quality gates**
 
 Cover:
 1. Only configured and enabled Testnet instruments are scanned.
@@ -225,7 +225,7 @@ Cover:
 7. A repeated scan ID/idempotency key does not create duplicate opportunities or assessments.
 8. All results remain research-only and have `orders_authorized=false`.
 
-- [ ] **Step 2: Verify the expected failures**
+- [x] **Step 2: Verify the expected failures**
 
 Run:
 
@@ -235,13 +235,13 @@ pytest -q tests/test_continuous_opportunity_search.py
 
 Expected: the new scan interface is absent and focused tests fail at import/collection.
 
-- [ ] **Step 3: Implement the search handler**
+- [x] **Step 3: Implement the search handler**
 
-Build a bounded scan over the configured allowlist using the worker's existing public Testnet source and the same market-data quality rules used by the shared feed and market assessment. Reuse the existing concurrent timeframe-fetch pattern rather than creating another polling loop. Record run coverage and quality outcomes even when a symbol is skipped. Pass immutable evidence references to Task 2 and persist candidate/assessment outputs through Task 1.
+Build a bounded scan over the configured allowlist using the worker's existing public Testnet source and the same market-data quality rules used by the shared feed and market assessment. Reuse the existing concurrent timeframe-fetch pattern rather than creating another polling loop. Record run coverage and quality outcomes even when a symbol is skipped. Pass immutable evidence references to Task 2 and persist the five independent strategy assessments inside the existing durable market-intelligence report. Do not create registry opportunities in this task: the exact setup identity must include an explicit strategy-approved trigger/price plan, which is established at the Task 4 coordinator boundary. This avoids creating duplicate or misleading waiting records from a scan-only heuristic.
 
 A scan must not synthesize entry/stop/target prices or create signals. It must not assume Spot or Forex is configured. Repeated scan delivery must be safe under at-least-once scheduled-job execution.
 
-- [ ] **Step 4: Verify the focused pass**
+- [x] **Step 4: Verify the focused pass**
 
 Run:
 
@@ -251,7 +251,7 @@ pytest -q tests/test_continuous_opportunity_search.py
 
 Expected: configured-universe, quality-gate, partial-failure, bounded-concurrency and idempotency tests pass.
 
-- [ ] **Step 5: Run affected integration checks**
+- [x] **Step 5: Run affected integration checks**
 
 Run:
 
@@ -261,7 +261,7 @@ pytest -q tests/test_market_intelligence_scan.py tests/test_shared_market_data_s
 
 Expected: the existing scheduled intelligence scan and shared snapshot store remain green with no competing market feed.
 
-- [ ] **Step 6: Commit the passing deliverable**
+- [x] **Step 6: Commit the passing deliverable**
 
 ```bash
 git add extracted-source/ai-auto-trader-v4-assembly/backend/continuous_opportunity_search.py extracted-source/ai-auto-trader-v4-assembly/tests/test_continuous_opportunity_search.py extracted-source/ai-auto-trader-v4-assembly/backend/market_intelligence_scan.py

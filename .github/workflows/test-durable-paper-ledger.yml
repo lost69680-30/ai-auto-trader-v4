@@ -71,6 +71,9 @@ jobs:
           psql "postgresql://postgres:postgres@127.0.0.1:5432/postgres" \
             -v ON_ERROR_STOP=1 \
             -f supabase/migrations/20261031155011_create_market_intelligence_reports.sql
+          psql "postgresql://postgres:postgres@127.0.0.1:5432/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/migrations/20261031170000_create_opportunity_registry.sql
       - name: Run the complete backend test suite
         working-directory: extracted-source/ai-auto-trader-v4-assembly
         run: python -m pytest -q
