@@ -358,3 +358,63 @@ def test_risk_manager_intent_requires_explicit_evidence_version():
             reason="missing risk evidence", event_id="missing-risk-evidence",
             actor="risk_manager", evidence_version=None, now=now,
         )
+
+
+def test_long_term_analysis_cannot_enter_waiting_or_trigger_lifecycle():
+    apply_migrations_and_reset()
+    now = datetime.now(timezone.utc)
+    record = make_opportunity(strategy_id="long_term")
+    store = PostgresOpportunityStore(DSN)
+    store.create_or_get_opportunity(record, idempotency_key="long-term-lifecycle", now=now)
+    store.transition(
+        record.opportunity_id, expected_version=0, to_state="ASSESSING",
+        reason="research-only analysis", event_id="long-term-assessing",
+        actor="assessment_engine", evidence_version="e1", now=now,
+    )
+
+    with pytest.raises(ValueError, match="long-term analysis"):
+        store.transition(
+            record.opportunity_id, expected_version=1, to_state="WAITING",
+            reason="must remain analysis-only", event_id="long-term-waiting",
+            actor="opportunity_coordinator", evidence_version="e1", now=now,
+        )
+
+
+def test_paper_open_requires_ledger_confirmation_after_risk_approved_intent():
+    apply_migrations_and_reset()
+    now = datetime.now(timezone.utc)
+    record = make_opportunity()
+    store = PostgresOpportunityStore(DSN)
+    store.create_or_get_opportunity(record, idempotency_key="paper-open-create", now=now)
+    transitions = (
+        ("ASSESSING", "paper-assessing", "assessment_engine", "e1"),
+        ("WAITING", "paper-waiting", "opportunity_coordinator", "e1"),
+        ("TRIGGERED", "paper-triggered", "opportunity_coordinator", "e2"),
+        ("RISK_CHECK", "paper-risk-check", "signal_validator", "e2"),
+    )
+    for version, (state, event, actor, evidence) in enumerate(transitions):
+        store.transition(
+            record.opportunity_id, expected_version=version, to_state=state,
+            reason="paper-only lifecycle test", event_id=event, actor=actor,
+            evidence_version=evidence, now=now,
+        )
+    store.transition(
+        record.opportunity_id, expected_version=4, to_state="INTENT_RECORDED",
+        reason="risk manager approved paper intent", event_id="paper-intent-approved",
+        actor="risk_manager", evidence_version="risk-evidence-v1", now=now,
+    )
+
+    with pytest.raises(ValueError, match="ledger-confirmed"):
+        store.transition(
+            record.opportunity_id, expected_version=5, to_state="PAPER_OPEN",
+            reason="unconfirmed open", event_id="paper-open-unconfirmed",
+            actor="risk_manager", evidence_version="risk-evidence-v1", now=now,
+        )
+
+    opened = store.transition(
+        record.opportunity_id, expected_version=5, to_state="PAPER_OPEN",
+        reason="paper ledger confirms simulated position", event_id="paper-open-confirmed",
+        actor="paper_ledger", evidence_version="paper-position-123", now=now,
+    )
+    assert opened.opportunity.state == "PAPER_OPEN"
+    assert opened.opportunity.orders_authorized is False
