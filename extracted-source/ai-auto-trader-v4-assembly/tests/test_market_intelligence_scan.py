@@ -69,15 +69,17 @@ def monthly_series(symbol, now, *, count=24, direction=1):
 
 
 class FakeSource:
-    def __init__(self, *, stale_snapshot=False, open_interval=None):
+    def __init__(self, *, stale_snapshot=False, open_interval=None, symbols=("BTCUSDT",)):
         self.calls = []
         self.stale_snapshot = stale_snapshot
         self.open_interval = open_interval
+        self.symbols = tuple(symbols)
 
     def fetch_market_universe(self, *, now=None):
         observed = now - timedelta(hours=1) if self.stale_snapshot else now
-        return SimpleNamespace(snapshots=(
-            MarketSnapshot("BTCUSDT", observed, 130.0, 20_000_000.0, 2.0, 1.0),
+        return SimpleNamespace(snapshots=tuple(
+            MarketSnapshot(symbol, observed, 130.0, 20_000_000.0, 2.0, 1.0)
+            for symbol in self.symbols
         ))
 
     def fetch_klines(self, symbol, *, interval, limit, now=None):
@@ -96,8 +98,8 @@ class FakeStore:
         self.payload = payload
 
 
-def policy(cost_pct=0.08):
-    return SimpleNamespace(symbol="BTCUSDT", estimated_round_trip_cost_pct=cost_pct)
+def policy(cost_pct=0.08, symbol="BTCUSDT"):
+    return SimpleNamespace(symbol=symbol, estimated_round_trip_cost_pct=cost_pct)
 
 
 def test_scheduled_scan_publishes_assessment_and_adaptive_strategy_without_order_authority():
@@ -157,3 +159,20 @@ def test_scan_rejects_wrong_job_scope_and_invalid_configuration():
         )
     with pytest.raises(ValueError, match="market_type"):
         market_intelligence_scan(FakeStore(), FakeSource(), (policy(),), market_type="LIVE")
+
+def test_scan_ranks_eligible_opportunities_across_symbols():
+    source = FakeSource(symbols=("BTCUSDT", "ETHUSDT"))
+    store = FakeStore()
+    handler = market_intelligence_scan(
+        store, source, (policy(symbol="BTCUSDT"), policy(symbol="ETHUSDT")),
+        market_type="FUTURES",
+    )
+
+    handler({"scope": "market_intelligence"}, "market-scan-ranked")
+
+    ranked = [
+        item["selection"]["opportunity_rank"]
+        for item in store.payload["symbols"]
+        if item["selection"]["eligible_for_risk_review"]
+    ]
+    assert sorted(ranked) == [1, 2]
