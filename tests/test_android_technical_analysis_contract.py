@@ -110,3 +110,13 @@ def test_market_risk_panel_exposes_explicit_heuristics_and_missing_data_uncertai
     assert "this does not mean risk is low or absent" in source
     assert "not a calibrated risk score" in source
     assert "does not estimate loss probability" in source
+
+
+def test_empty_performance_panels_do_not_draw_synthetic_chart_data():
+    source = SOURCE.read_text(encoding="utf-8")
+    # The synthetic EmptyChart renderer must be removed, not merely hidden.
+    assert "private fun EmptyChart(" not in source
+    assert "drawRect(if (i%3==0)" not in source
+    assert "drawPath(path" not in source
+    assert "No verified ledger data" in source
+    assert "This chart will appear only when real paper-ledger history is available." in source

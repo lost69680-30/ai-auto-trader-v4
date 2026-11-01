@@ -39,20 +39,21 @@ def test_foreground_market_poller_retries_network_errors_but_stops_on_bad_auth()
     assert 'statusJson.optString("mode") == "PAPER_ONLY"' in source
     assert 'statusJson.optBoolean("orders_authorized", true)' in source
 
-def test_apk_build_uses_production_only_for_main_and_staging_for_other_branches():
+def test_market_analysis_acceptance_apk_is_staging_only_and_never_targets_production():
     root = Path(__file__).resolve().parents[1]
     workflow_path = root / ".github/workflows/build-market-analysis-apk.yml"
     if not workflow_path.exists():
         workflow_path = root.parents[1] / ".github/workflows/build-market-analysis-apk.yml"
     workflow = workflow_path.read_text(encoding="utf-8")
 
-    assert 'TARGET_BRANCH="${GITHUB_BASE_REF:-}"' in workflow
-    assert 'TARGET_BRANCH="${GITHUB_REF_NAME:-}"' in workflow
-    assert 'if [[ "$TARGET_BRANCH" == "main" ]]' in workflow
-    assert "https://ai-auto-trader-v4-backend.onrender.com" in workflow
-    assert "https://solo-futures-websocket-staging.onrender.com" in workflow
+    staging_url = "https://solo-futures-websocket-staging.onrender.com"
+    assert f'PAPER_API_BASE_URL="{staging_url}"' in workflow
+    assert staging_url in workflow
+    assert "Unexpected staging worker API target" in workflow
     assert '-PpaperApiBaseUrl="$PAPER_API_BASE_URL"' in workflow
-    assert "-PpaperApiBaseUrl=https://ai-auto-trader-v4-backend.onrender.com" not in workflow
+    assert "No bearer or exchange credentials are embedded" in workflow
+    assert 'PAPER_API_BASE_URL="https://ai-auto-trader-v4-backend.onrender.com"' not in workflow
+    assert 'PAPER_API_BASE_URL="https://solo-ai-auto-trader-staging-api.onrender.com"' not in workflow
 
 def test_futures_index_funding_and_next_funding_are_validated_and_displayed():
     source = SOURCE.read_text(encoding="utf-8")

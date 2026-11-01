@@ -1,0 +1,109 @@
+package com.aiautotrader.v4
+
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class PaperLedgerClientTest {
+    @Test
+    fun parsesValidatedPaperPositionsAndRejectsPartialRows() {
+        val validRow = JSONObject()
+            .put("proposal_id", "p-1").put("symbol", "BTCUSDT").put("side", "LONG")
+            .put("quantity", 0.01).put("entry_price", 60000.0).put("mark_price", 61000.0)
+            .put("stop_loss", 59000.0).put("take_profit", 63000.0).put("status", "OPEN")
+            .put("unrealized_pnl", 10.0).put("total_pnl", 9.0)
+            .put("mark_observed_at", "2026-10-31T00:00:00Z")
+        val parsed = parsePaperPositions(JSONObject().put("orders_authorized", false)
+            .put("items", JSONArray().put(validRow)))
+        assertEquals("BTCUSDT", parsed.single().symbol)
+        assertEquals(10.0, parsed.single().unrealizedPnl, 0.0)
+        val partial = JSONObject().put("orders_authorized", false)
+            .put("items", JSONArray().put(validRow).put(JSONObject().put("symbol", "BAD")))
+        assertThrows(IllegalArgumentException::class.java) { parsePaperPositions(partial) }
+    }
+
+    @Test
+    fun rejectsPositionsWhenAuthorizationFlagIsMissingOrUnsafe() {
+        assertThrows(IllegalArgumentException::class.java) {
+            parsePaperPositions(JSONObject().put("items", JSONArray()))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            parsePaperPositions(JSONObject().put("orders_authorized", true).put("items", JSONArray()))
+        }
+    }
+
+    @Test
+    fun parsesRiskSnapshotWithoutInventingMissingMetrics() {
+        val json = JSONObject()
+            .put("orders_authorized", false)
+            .put("emergency_stop_active", true)
+            .put("open_position_count", 2)
+            .put("state_storage", "postgresql")
+            .put("latest_snapshot", JSONObject().put("account_equity", 1000.0)
+                .put("drawdown_pct", 1.5).put("marks_fresh", false).put("snapshot_at", "2026-10-31T00:00:00Z"))
+        val risk = parsePaperRisk(json)
+        assertTrue(risk.emergencyStopActive)
+        assertEquals(2, risk.openPositionCount)
+        assertEquals(1000.0, risk.accountEquity!!, 0.0)
+        assertNull(risk.unrealizedPnl)
+        assertFalse(risk.marksFresh!!)
+    }
+
+    @Test
+    fun rejectsRiskResponseWithoutExplicitPaperOnlyFlag() {
+        assertThrows(IllegalArgumentException::class.java) {
+            parsePaperRisk(JSONObject().put("open_position_count", 0))
+        }
+    }
+
+    @Test
+    fun rejectsUnsafeOrPartialOrderResponses() {
+        val valid = JSONObject().put("proposal_id", "p-1").put("symbol", "BTCUSDT")
+            .put("side", "BUY").put("quantity", 0.01).put("entry_price", 60000.0)
+            .put("stop_loss", 59000.0).put("take_profit", 62000.0).put("status", "OPEN")
+        assertEquals(1, parsePaperOrders(JSONObject().put("orders_authorized", false)
+            .put("items", JSONArray().put(valid))).size)
+        assertThrows(IllegalArgumentException::class.java) {
+            parsePaperOrders(JSONObject().put("orders_authorized", false)
+                .put("items", JSONArray().put(valid).put(JSONObject())))
+        }
+    }
+
+    @Test
+    fun parsesAuditEventsAndRejectsMalformedRows() {
+        val valid = JSONObject().put("event_type", "RISK_CHECK_BLOCKED")
+            .put("occurred_at", "2026-10-31T00:00:00Z")
+            .put("payload", JSONObject().put("reason", "stale data"))
+        val events = parsePaperAudit(JSONObject().put("orders_authorized", false)
+            .put("items", JSONArray().put(valid)))
+        assertEquals("RISK_CHECK_BLOCKED", events.single().eventType)
+        assertTrue(events.single().summary.contains("stale data"))
+        assertThrows(IllegalArgumentException::class.java) {
+            parsePaperAudit(JSONObject().put("orders_authorized", false)
+                .put("items", JSONArray().put(valid).put(JSONObject())))
+        }
+    }
+    @Test
+    fun parsesPaperFillsAndRejectsUnsafePartialResponses() {
+        val fill = JSONObject().put("fill_id", 1).put("proposal_id", "p-1")
+            .put("symbol", "BTCUSDT").put("side", "LONG").put("quantity", 0.01)
+            .put("market_price", 60000.0).put("fill_price", 60001.0).put("fee", 0.1)
+            .put("slippage_bps", 0.2).put("filled_at", "2026-10-31T00:00:00Z")
+        val parsed = parsePaperFills(JSONObject().put("orders_authorized", false)
+            .put("items", JSONArray().put(fill)))
+        assertEquals(1, parsed.size)
+        assertEquals(60001.0, parsed.single().fillPrice, 0.0)
+        assertThrows(IllegalArgumentException::class.java) {
+            parsePaperFills(JSONObject().put("orders_authorized", true).put("items", JSONArray()))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            parsePaperFills(JSONObject().put("orders_authorized", false).put("items", JSONArray().put(JSONObject())))
+        }
+    }
+
+}
