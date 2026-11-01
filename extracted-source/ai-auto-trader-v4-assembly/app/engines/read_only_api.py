@@ -407,7 +407,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                         "orders_authorized": False,
                     }), "503 Service Unavailable"
 
-            elif path in ("/api/v1/positions", "/api/v1/orders", "/api/v1/audit", "/api/v1/funding"):
+            elif path in ("/api/v1/positions", "/api/v1/orders", "/api/v1/fills", "/api/v1/audit", "/api/v1/funding"):
                 try:
                     with _open_ledger(database_path) as ledger:
                         if path.endswith("/positions"):
@@ -415,6 +415,9 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                                        "orders_authorized": False, "state_storage": state_storage}
                         elif path.endswith("/orders"):
                             payload = {"items": [vars_order(o) for o in ledger.orders],
+                                       "orders_authorized": False, "state_storage": state_storage}
+                        elif path.endswith("/fills"):
+                            payload = {"items": [vars_fill(fill) for fill in ledger.fills],
                                        "orders_authorized": False, "state_storage": state_storage}
                         elif path.endswith("/funding"):
                             payload = {"items": [dict(e) for e in ledger.funding_events],
@@ -450,6 +453,13 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                                 ("X-Content-Type-Options", "nosniff")])
         return [body]
     return app
+
+
+def vars_fill(fill) -> dict[str, object]:
+    return {"fill_id": fill.fill_id, "proposal_id": fill.proposal_id, "symbol": fill.symbol,
+            "side": fill.side, "quantity": fill.quantity, "market_price": fill.market_price,
+            "fill_price": fill.price, "fee": fill.fee, "fee_rate": fill.fee_rate,
+            "slippage_bps": fill.slippage_bps, "filled_at": fill.filled_at}
 
 
 def vars_order(order) -> dict[str, object]:
