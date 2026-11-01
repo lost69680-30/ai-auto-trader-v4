@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   build:
-    name: Test and build Android APK against staging API
+    name: Test and build Android APK against supervised staging worker API
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -71,13 +71,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PAPER_API_BASE_URL="https://solo-ai-auto-trader-staging-api.onrender.com"
+          PAPER_API_BASE_URL="https://solo-futures-websocket-staging.onrender.com"
           case "$PAPER_API_BASE_URL" in
-            https://solo-ai-auto-trader-staging-api.onrender.com) ;;
-            *) echo "Unexpected staging API target; refusing to build." >&2; exit 1 ;;
+            https://solo-futures-websocket-staging.onrender.com) ;;
+            *) echo "Unexpected staging worker API target; refusing to build." >&2; exit 1 ;;
           esac
           echo "PAPER_API_BASE_URL=$PAPER_API_BASE_URL" >> "$GITHUB_ENV"
-          echo "APK target is the dedicated staging API. No bearer or exchange credentials are embedded."
+          echo "APK target is the supervised staging worker API. No bearer or exchange credentials are embedded."
 
       - name: Verify Android source mirrors match
         shell: bash
@@ -111,7 +111,7 @@ jobs:
             --no-daemon --max-workers=2
           BUILD_CONFIG="$PROJECT_DIR/android/app/build/generated/source/buildConfig/debug/com/aiautotrader/v4/BuildConfig.java"
           test -s "$BUILD_CONFIG"
-          grep -F 'https://solo-ai-auto-trader-staging-api.onrender.com' "$BUILD_CONFIG"
+          grep -F 'https://solo-futures-websocket-staging.onrender.com' "$BUILD_CONFIG"
           if grep -Fq 'ai-auto-trader-v4-backend.onrender.com' "$BUILD_CONFIG"; then
             echo "Production backend URL found in staging APK configuration; refusing artifact." >&2
             exit 1
