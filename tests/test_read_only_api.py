@@ -801,3 +801,17 @@ def test_fills_endpoint_rejects_non_get_methods(tmp_path):
 
     assert status.startswith("405")
     assert body["orders_authorized"] is False
+
+
+
+def test_api_entrypoint_delegates_to_supervisor_when_enabled(monkeypatch):
+    from app.engines import read_only_api
+    from backend import shared_market_supervisor
+
+    calls = []
+    monkeypatch.setenv("PAPER_MARKET_SUPERVISOR_ENABLED", "true")
+    monkeypatch.setattr(shared_market_supervisor, "main", lambda: calls.append("supervisor"))
+
+    read_only_api.main()
+
+    assert calls == ["supervisor"]
