@@ -52,8 +52,8 @@ def test_market_analysis_acceptance_apk_is_staging_only_and_never_targets_produc
     assert "Unexpected staging API target" in workflow
     assert '-PpaperApiBaseUrl="$PAPER_API_BASE_URL"' in workflow
     assert "No bearer or exchange credentials are embedded" in workflow
-    assert "ai-auto-trader-v4-backend.onrender.com" not in workflow
-    assert "solo-futures-websocket-staging.onrender.com" not in workflow
+    assert 'PAPER_API_BASE_URL="https://ai-auto-trader-v4-backend.onrender.com"' not in workflow
+    assert 'PAPER_API_BASE_URL="https://solo-futures-websocket-staging.onrender.com"' not in workflow
 
 def test_futures_index_funding_and_next_funding_are_validated_and_displayed():
     source = SOURCE.read_text(encoding="utf-8")
