@@ -216,7 +216,7 @@ def test_opportunity_reassessment_handler_rejects_price_snapshot_without_market_
             market_update_provider("BTCUSDT", "1h", now)
         except ValueError as exc:
             seen["error"] = str(exc)
-        return SimpleNamespace(orders_authorized=False)
+        return SimpleNamespace(evaluated_count=1, failed_count=1, orders_authorized=False)
 
     coordinator.reassess_due = reassess_due
 
