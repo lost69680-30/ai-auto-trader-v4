@@ -11,7 +11,6 @@ from datetime import datetime, timedelta, timezone
 from app.engines.paper_service_app import PaperServiceApplication
 from backend.analysis_job_dispatcher import AnalysisJobDispatcher, market_feed_health_audit
 from backend.durable_scheduler import DurableJobScheduler
-from backend.continuous_opportunity_search import continuous_opportunity_search
 from backend.market_data_adapter import BinanceSpotMarketDataAdapter
 from backend.historical_candle_archive import PostgresCandleArchive, archive_is_caught_up, archive_market_poll, backfill_older_symbol_history, backfill_symbol_history
 from backend.shared_market_store import PostgresMarketFeedStore
@@ -97,6 +96,8 @@ def main() -> None:
         archive = PostgresCandleArchive(dsn)
         intelligence_handlers = {"market_feed_health_audit": market_feed_health_audit(store)}
         if intelligence_enabled:
+            from backend.continuous_opportunity_search import continuous_opportunity_search
+
             intelligence_candle_limit = int(
                 os.environ.get("PAPER_MARKET_INTELLIGENCE_CANDLE_LIMIT", "200")
             )
