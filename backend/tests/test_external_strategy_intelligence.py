@@ -45,6 +45,7 @@ def valid_rules():
     return ExternalRuleSpec(
         family="SMA_CROSS",
         parameters={"fast_period": 10, "slow_period": 30},
+        exit_policy="ONE_BAR",
     )
 
 
@@ -89,15 +90,15 @@ def test_missing_methodology_blocks_candidate_even_when_rules_are_present():
 @pytest.mark.parametrize(
     ("family", "parameters"),
     [
-        ("SMA_CROSS", {"fast_period": 30, "slow_period": 10}),
-        ("MOMENTUM", {"lookback": 0, "threshold_pct": 1.0}),
-        ("UNKNOWN", {}),
-        ("RSI_THRESHOLD", {"period": 14, "oversold": 60, "overbought": 40}),
+        ("SMA_CROSS", {"fast_period": 30, "slow_period": 10}, "ONE_BAR"),
+        ("MOMENTUM", {"lookback": 0, "threshold_pct": 1.0}, "ONE_BAR"),
+        ("UNKNOWN", {}, "ONE_BAR"),
+        ("RSI_THRESHOLD", {"period": 14, "oversold": 60, "overbought": 40}, "ONE_BAR"),
     ],
 )
-def test_invalid_or_unsupported_rule_specs_are_rejected(family, parameters):
+def test_invalid_or_unsupported_rule_specs_are_rejected(family, parameters, exit_policy):
     with pytest.raises(ValueError):
-        rules = ExternalRuleSpec(family=family, parameters=parameters)
+        rules = ExternalRuleSpec(family=family, parameters=parameters, exit_policy=exit_policy)
         assess_external_strategy(record(rules=rules))
 
 
@@ -156,13 +157,13 @@ def test_explicit_external_rules_are_evaluated_with_costs_and_untouched_holdout(
 @pytest.mark.parametrize(
     ("rule_spec", "closes", "expected"),
     [
-        (ExternalRuleSpec("SMA_CROSS", {"fast_period": 5, "slow_period": 20}),
+        (ExternalRuleSpec("SMA_CROSS", {"fast_period": 5, "slow_period": 20}, "ONE_BAR"),
          [100 + index for index in range(25)], "LONG"),
-        (ExternalRuleSpec("MOMENTUM", {"lookback": 5, "threshold_pct": 1.0}),
+        (ExternalRuleSpec("MOMENTUM", {"lookback": 5, "threshold_pct": 1.0}, "ONE_BAR"),
          [100.0] * 14 + [102.0], "LONG"),
-        (ExternalRuleSpec("BREAKOUT", {"lookback": 10, "buffer_pct": 0.1}),
+        (ExternalRuleSpec("BREAKOUT", {"lookback": 10, "buffer_pct": 0.1}, "ONE_BAR"),
          [100.0] * 14 + [102.0], "LONG"),
-        (ExternalRuleSpec("RSI_THRESHOLD", {"period": 14, "oversold": 30, "overbought": 70}),
+        (ExternalRuleSpec("RSI_THRESHOLD", {"period": 14, "oversold": 30, "overbought": 70}, "ONE_BAR"),
          [100.0 + index for index in range(15)], "SHORT"),
     ],
 )
@@ -175,3 +176,12 @@ def test_supported_external_rule_families_are_deterministic(rule_spec, closes, e
     ]
 
     assert evaluate_external_rule(rule_spec, rows) == expected
+
+
+def test_external_rule_requires_an_explicit_supported_exit_policy():
+    with pytest.raises(ValueError, match="exit policy"):
+        ExternalRuleSpec(
+            family="SMA_CROSS",
+            parameters={"fast_period": 10, "slow_period": 30},
+            exit_policy="TRAILING_ATR",
+        )
