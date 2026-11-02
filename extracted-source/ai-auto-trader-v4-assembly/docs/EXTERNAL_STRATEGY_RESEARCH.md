@@ -60,6 +60,21 @@ experiments. Database triggers reject update/delete operations.
 The migration is code only until separately approved and applied. It has not
 been applied to the user's Supabase project by this work.
 
+## Validation quality and rejection gates
+
+A reproducible rule is only an experiment candidate, not an accepted strategy.
+The current default research gate requires at least four chronological
+validation folds and 30 simulated validation trades. It rejects a candidate
+when mean cost-adjusted excess return does not beat the buy-and-hold baseline,
+fewer than half of validation folds have positive excess return, or any fold's
+maximum drawdown exceeds 25%. These are configurable research screening
+thresholds, not Risk Guardian limits and not promises of future performance.
+Insufficient samples are stored as `INSUFFICIENT_DATA`; weak results are stored
+as `REJECTED`; recent deterioration is stored as `DRIFT_FLAGGED`. The untouched
+final holdout is excluded from all these selection gates and is retained only
+as a separately reported result. The original public sample size, published
+metrics, backtest dates and methodology are preserved with the experiment.
+
 ## Isolated learning research
 
 `backend.strategy_learning_lab` accepts only Part 6 experiments marked
