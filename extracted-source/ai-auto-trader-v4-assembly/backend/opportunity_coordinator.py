@@ -81,8 +81,9 @@ def _paper_safe(value: Any) -> bool:
 
 def _fingerprint(
     *, symbol: str, market_type: str, venue: str, strategy_id: str,
-    strategy_version: str, direction: str, timeframe: str, plan: SignalPricePlan,
+    strategy_version: str, direction: str, timeframe: str, setup_anchor: str,
 ) -> str:
+    """Identify a setup by its closed-candle origin, never by mutable price levels."""
     identity = {
         "symbol": symbol,
         "market_type": market_type,
@@ -91,13 +92,7 @@ def _fingerprint(
         "strategy_version": strategy_version,
         "direction": direction,
         "timeframe": timeframe,
-        "trigger_rule": plan.trigger_rule,
-        "trigger_price": plan.trigger_price,
-        "invalidation_price": plan.invalidation_price,
-        "entry_price": plan.entry_price,
-        "stop_price": plan.stop_price,
-        "target_price": plan.target_price,
-        "estimated_round_trip_cost_pct": plan.estimated_round_trip_cost_pct,
+        "setup_anchor": setup_anchor,
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -242,11 +237,26 @@ class OpportunityCoordinator:
             )
         if not geometry_valid:
             raise ValueError("price plan entry, stop, target, trigger or invalidation geometry is invalid")
+        refs = tuple(dict.fromkeys(
+            _required_text(ref, "evidence_ref", 240)
+            for ref in (*tuple(assessment.evidence_refs), *tuple(evidence_refs))
+        ))
+        if not refs:
+            raise ValueError("opportunity requires at least one evidence reference")
+        anchor_prefixes = (
+            f"closed-candle:{symbol}:{timeframe}:",
+            f"candle:{symbol}:{timeframe}:",
+        )
+        anchors = sorted(ref for ref in refs if ref.startswith(anchor_prefixes))
+        if not anchors:
+            raise ValueError("setup identity requires closed-candle evidence for its watch timeframe")
+        setup_anchor = anchors[-1]
+
         # Reuse WatchRequest's direction-specific trigger/invalidation validation.
         fingerprint = _fingerprint(
             symbol=symbol, market_type=market_type, venue=venue,
             strategy_id=assessment.strategy_id, strategy_version=assessment.strategy_version,
-            direction=direction, timeframe=timeframe, plan=plan,
+            direction=direction, timeframe=timeframe, setup_anchor=setup_anchor,
         )
         opportunity_id = "opp-" + fingerprint[:40]
         watch_id = "watch-" + fingerprint[:40]
@@ -262,12 +272,6 @@ class OpportunityCoordinator:
             invalidation_price=plan.invalidation_price,
         )
 
-        refs = tuple(dict.fromkeys(
-            _required_text(ref, "evidence_ref", 240)
-            for ref in (*tuple(assessment.evidence_refs), *tuple(evidence_refs))
-        ))
-        if not refs:
-            raise ValueError("opportunity requires at least one evidence reference")
         evidence_version = _evidence_version(refs)
         metadata = {
             "assessment_id": assessment.assessment_id,
@@ -393,6 +397,56 @@ class OpportunityCoordinator:
             },
             orders_authorized=False,
         )
+        if saved.state in {"WAITING", "REASSESSING"}:
+            previous_plan = saved.metadata.get("price_plan", {})
+            comparable_fields = (
+                "direction", "entry_price", "stop_price", "target_price",
+                "trigger_price", "trigger_rule", "invalidation_price",
+                "estimated_round_trip_cost_pct",
+            )
+            if isinstance(previous_plan, dict) and all(
+                previous_plan.get(field) == _price_plan_payload(plan).get(field)
+                for field in comparable_fields
+            ):
+                return saved
+            refreshed_evidence = OpportunityEvidenceRecord(
+                evidence_id="evidence-" + price_plan_hash,
+                opportunity_id=opportunity_id,
+                evidence_type="PRICE_PLAN",
+                reference_id=price_plan_reference,
+                observed_at=market_data_at,
+                payload=_price_plan_payload(plan),
+                orders_authorized=False,
+            )
+            refreshed = self.store.refresh_waiting_opportunity(
+                opportunity_id,
+                expected_version=saved.version,
+                metadata=metadata,
+                expires_at=expires_at,
+                watch=watch,
+                evidence=refreshed_evidence,
+                idempotency_key=f"refresh:{opportunity_id}:{plan.signal_id}",
+                event_id="event-refresh-" + hashlib.sha256(
+                    f"{opportunity_id}|{plan.signal_id}".encode("utf-8")
+                ).hexdigest()[:48],
+                reason="fresh closed-candle assessment replaced the waiting price plan",
+                evidence_version=evidence_version,
+                now=stamp,
+            )
+            if saved.state == "REASSESSING":
+                refreshed = self.store.transition(
+                    opportunity_id, expected_version=refreshed.version,
+                    to_state="WAITING",
+                    reason="refreshed price plan is stored; opportunity returned to waiting",
+                    event_id="event-refresh-waiting-" + hashlib.sha256(
+                        f"{opportunity_id}|{plan.signal_id}|waiting".encode("utf-8")
+                    ).hexdigest()[:40],
+                    actor="opportunity_coordinator",
+                    evidence_version=evidence_version,
+                    now=stamp,
+                ).opportunity
+            return refreshed
+
         self.store.save_watch_condition(
             watch, idempotency_key=f"watch:{fingerprint}", now=stamp,
         )
