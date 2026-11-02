@@ -358,19 +358,20 @@ class OpportunityCoordinator:
         price_plan_hash = hashlib.sha256(
             f"{opportunity_id}|{price_plan_reference}".encode("utf-8")
         ).hexdigest()[:40]
-        self.store.append_evidence(
-            OpportunityEvidenceRecord(
-                evidence_id="evidence-" + price_plan_hash,
-                opportunity_id=opportunity_id,
-                evidence_type="PRICE_PLAN",
-                reference_id=price_plan_reference,
-                observed_at=market_data_at,
-                payload=_price_plan_payload(plan),
-                orders_authorized=False,
-            ),
-            idempotency_key=f"evidence:{opportunity_id}:{price_plan_hash}",
-            now=stamp,
-        )
+        if saved.state not in {"WAITING", "REASSESSING"}:
+            self.store.append_evidence(
+                OpportunityEvidenceRecord(
+                    evidence_id="evidence-" + price_plan_hash,
+                    opportunity_id=opportunity_id,
+                    evidence_type="PRICE_PLAN",
+                    reference_id=price_plan_reference,
+                    observed_at=market_data_at,
+                    payload=_price_plan_payload(plan),
+                    orders_authorized=False,
+                ),
+                idempotency_key=f"evidence:{opportunity_id}:{price_plan_hash}",
+                now=stamp,
+            )
 
         if saved.state == "DISCOVERED":
             saved = self.store.transition(
