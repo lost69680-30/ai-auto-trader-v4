@@ -165,9 +165,13 @@ def summarize_portfolio_correlations(
     if (
         isinstance(high_correlation_threshold, bool)
         or not isinstance(high_correlation_threshold, (int, float))
-        or not math.isfinite(high_correlation_threshold)
-        or not 0 <= high_correlation_threshold <= 1
     ):
+        raise ValueError("high_correlation_threshold must be finite and between 0 and 1")
+    try:
+        threshold = float(high_correlation_threshold)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError("high_correlation_threshold must be finite and between 0 and 1") from exc
+    if not math.isfinite(threshold) or not 0 <= threshold <= 1:
         raise ValueError("high_correlation_threshold must be finite and between 0 and 1")
     defined = tuple(
         pair for pair in report.pairs
@@ -179,7 +183,7 @@ def summarize_portfolio_correlations(
     max_abs = max((abs(pair.correlation) for pair in defined), default=None)
     high_pairs = tuple(
         pair for pair in defined
-        if abs(pair.correlation) >= float(high_correlation_threshold)
+        if abs(pair.correlation) >= threshold
     )
     return PortfolioCorrelationSummary(
         pair_count=pair_count,
@@ -188,6 +192,6 @@ def summarize_portfolio_correlations(
         coverage_pct=round(coverage, 4) if coverage is not None else None,
         max_abs_correlation=round(max_abs, 8) if max_abs is not None else None,
         high_correlation_pairs=high_pairs,
-        high_correlation_threshold=float(high_correlation_threshold),
+        high_correlation_threshold=threshold,
         orders_authorized=False,
     )
