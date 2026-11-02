@@ -102,3 +102,8 @@ def test_walk_forward_records_descriptive_market_regime_for_each_window():
 def test_walk_forward_rejects_non_integer_fold_geometry(kwargs):
     with pytest.raises(ValueError, match="integer"):
         WalkForwardConfig(**kwargs)
+
+
+def test_walk_forward_rejects_overlapping_out_of_sample_windows():
+    with pytest.raises(ValueError, match="step_bars"):
+        WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40, step_bars=20)
