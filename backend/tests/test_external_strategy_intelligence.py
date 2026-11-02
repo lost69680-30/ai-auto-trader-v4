@@ -3,12 +3,16 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from backend.backtesting import BacktestConfig
 from backend.external_strategy_intelligence import (
     ExternalPerformanceEvidence,
     ExternalRuleSpec,
     ExternalStrategyRecord,
     assess_external_strategy,
+    evaluate_external_candidate,
 )
+from backend.walk_forward import WalkForwardConfig
+from backend.strategy_research import Candle
 
 NOW = datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc)
 
@@ -115,3 +119,34 @@ def test_invalid_provenance_and_backtest_windows_are_rejected():
                 ),
             )
         )
+
+
+def test_explicit_external_rules_are_evaluated_with_costs_and_untouched_holdout():
+    assessment = assess_external_strategy(record(rules=valid_rules()))
+    assert assessment.candidate is not None
+    rows = []
+    start = NOW - timedelta(minutes=359)
+    price = 100.0
+    for index in range(360):
+        price *= 1.0005
+        rows.append(Candle(
+            "BTCUSDT", start + timedelta(minutes=index), price,
+            price * 1.002, price * 0.998, price, 1000.0,
+        ))
+
+    result = evaluate_external_candidate(
+        assessment.candidate,
+        rows,
+        walk_forward_config=WalkForwardConfig(
+            train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40,
+        ),
+        backtest_config=BacktestConfig(fee_bps_per_side=4, slippage_bps_per_side=2),
+        research_now=NOW,
+    )
+
+    assert result.folds
+    assert result.holdout.used_for_selection is False
+    assert result.holdout.strategy.orders_authorized is False
+    assert all(fold.strategy.orders_authorized is False for fold in result.folds)
+    assert result.holdout.strategy.total_costs >= 0
+    assert result.orders_authorized is False
