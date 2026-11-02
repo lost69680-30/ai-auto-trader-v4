@@ -619,7 +619,7 @@ class OpportunityCoordinator:
                         evaluation_reason = "trigger overshoot exceeded one original ATR trigger buffer"
             if result.status == "WAITING" and record.state == "REASSESSING":
                 target_state = "WAITING"
-            if target_state in {"TRIGGERED", "INVALIDATED", "EXPIRED"} or (
+            if target_state in {"TRIGGERED", "INVALIDATED", "EXPIRED", "BLOCKED"} or (
                 target_state == "WAITING" and record.state == "REASSESSING"
             ):
                 try:
@@ -646,7 +646,7 @@ class OpportunityCoordinator:
             else:
                 state = record.state
             evaluations.append(OpportunityEvaluation(
-                record.opportunity_id, result.status, state, result.reason,
+                record.opportunity_id, target_state, state, evaluation_reason,
                 result.observed_price, False,
             ))
         return tuple(evaluations)
