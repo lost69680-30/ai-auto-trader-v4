@@ -93,13 +93,13 @@ def _triggered_opportunity(store, now):
     for version, state, actor in (
         (0, "ASSESSING", "assessment_engine"),
         (1, "WAITING", "opportunity_coordinator"),
-        (2, "TRIGGERED", "opportunity_coordinator"),
     ):
         store.transition(
             record.opportunity_id, expected_version=version, to_state=state,
             reason="test lifecycle", event_id=f"{record.opportunity_id}-{state}",
             actor=actor, evidence_version="test-evidence", now=now,
         )
+    # A watch must be durable before the opportunity can become TRIGGERED.
     store.save_watch_condition(
         WatchConditionRecord(
             watch_id=f"watch-{record.opportunity_id}",
@@ -114,6 +114,11 @@ def _triggered_opportunity(store, now):
         ),
         idempotency_key=f"watch-{record.opportunity_id}",
         now=now,
+    )
+    store.transition(
+        record.opportunity_id, expected_version=2, to_state="TRIGGERED",
+        reason="test lifecycle", event_id=f"{record.opportunity_id}-TRIGGERED",
+        actor="opportunity_coordinator", evidence_version="test-evidence", now=now,
     )
     return store.get_opportunity(record.opportunity_id)
 
