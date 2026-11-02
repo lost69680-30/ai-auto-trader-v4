@@ -88,7 +88,7 @@ def test_missing_methodology_blocks_candidate_even_when_rules_are_present():
 
 
 @pytest.mark.parametrize(
-    ("family", "parameters"),
+    ("family", "parameters", "exit_policy"),
     [
         ("SMA_CROSS", {"fast_period": 30, "slow_period": 10}, "ONE_BAR"),
         ("MOMENTUM", {"lookback": 0, "threshold_pct": 1.0}, "ONE_BAR"),
