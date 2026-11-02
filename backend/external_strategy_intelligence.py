@@ -76,6 +76,7 @@ class ExternalPerformanceEvidence:
 class ExternalRuleSpec:
     family: str
     parameters: Mapping[str, int | float]
+    exit_policy: str
 
     def __post_init__(self) -> None:
         family = _text(self.family, "rule family", 40)
@@ -83,6 +84,11 @@ class ExternalRuleSpec:
             raise ValueError("unsupported external strategy rule family")
         if not isinstance(self.parameters, Mapping):
             raise ValueError("rule parameters must be a mapping")
+        exit_policy = _text(self.exit_policy, "exit policy", 40)
+        # The current simulator implements only an explicit one-bar exit.
+        # Unsupported published exit rules must not be silently approximated.
+        if exit_policy != "ONE_BAR":
+            raise ValueError("unsupported external strategy exit policy")
         for key, value in self.parameters.items():
             _text(key, "rule parameter name", 80)
             _finite_number(value, f"rule parameter {key}")
@@ -244,6 +250,7 @@ def assess_external_strategy(
         rule_payload = {
             "family": record.rules.family,
             "parameters": dict(record.rules.parameters),
+            "exit_policy": record.rules.exit_policy,
         }
         identity = {
             "provenance_id": provenance_id,
