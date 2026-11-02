@@ -100,10 +100,23 @@ def calculate_pairwise_correlations(
 
             values_a = [normalized[symbol_a][stamp] for stamp in shared]
             values_b = [normalized[symbol_b][stamp] for stamp in shared]
-            mean_a = math.fsum(values_a) / count
-            mean_b = math.fsum(values_b) / count
-            centered_a = [value - mean_a for value in values_a]
-            centered_b = [value - mean_b for value in values_b]
+
+            # Scale each series before centering. Pearson correlation is
+            # invariant to positive scaling, while this keeps intermediate
+            # squares/products bounded for extreme but finite input values.
+            scale_a = max(abs(value) for value in values_a)
+            scale_b = max(abs(value) for value in values_b)
+            if scale_a == 0 or scale_b == 0:
+                pairs.append(PairwiseCorrelation(
+                    symbol_a, symbol_b, count, None, "ZERO_VARIANCE"
+                ))
+                continue
+            scaled_a = [value / scale_a for value in values_a]
+            scaled_b = [value / scale_b for value in values_b]
+            mean_a = math.fsum(scaled_a) / count
+            mean_b = math.fsum(scaled_b) / count
+            centered_a = [value - mean_a for value in scaled_a]
+            centered_b = [value - mean_b for value in scaled_b]
             variance_a = math.fsum(value * value for value in centered_a)
             variance_b = math.fsum(value * value for value in centered_b)
             if variance_a <= 0 or variance_b <= 0:
