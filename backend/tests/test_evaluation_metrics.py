@@ -70,3 +70,13 @@ def test_metrics_reject_non_finite_or_negative_cost_inputs():
         calculate_evaluation_metrics([trade(float("nan"))])
     with pytest.raises(ValueError, match="cost"):
         calculate_evaluation_metrics([trade(1.0, costs=-1.0)])
+
+
+def test_metrics_reject_aggregate_overflow_instead_of_returning_non_finite_values():
+    with pytest.raises(ValueError, match="aggregate metrics"):
+        calculate_evaluation_metrics([trade(1e308, costs=0.0), trade(1e308, costs=0.0)])
+
+
+def test_metrics_reject_profit_factor_overflow():
+    with pytest.raises(ValueError, match="profit factor"):
+        calculate_evaluation_metrics([trade(1e308, costs=0.0), trade(-1e-308, costs=0.0)])
