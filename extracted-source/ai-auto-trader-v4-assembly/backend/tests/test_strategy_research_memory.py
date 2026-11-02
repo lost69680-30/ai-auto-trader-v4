@@ -67,9 +67,14 @@ def _record(*, experiment_version=1, orders_authorized=False):
 
 def _apply_migration():
     import psycopg
-    migration = _repo_root() / "supabase/migrations/20261102184500_create_strategy_research_memory.sql"
+    root = _repo_root()
+    migrations = (
+        root / "supabase/migrations/20261029205318_create_paper_ledger_schema.sql",
+        root / "supabase/migrations/20261102184500_create_strategy_research_memory.sql",
+    )
     with psycopg.connect(DSN, autocommit=True) as conn:
-        conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
+        for migration in migrations:
+            conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
 
 
 def test_memory_is_durable_append_only_and_idempotent_across_store_instances():
