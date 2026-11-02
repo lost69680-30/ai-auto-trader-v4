@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
+from types import MappingProxyType
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -67,6 +68,10 @@ class ResearchDatasetSnapshot:
                 raise ValueError("orders_authorized must be false")
         if self.orders_authorized is not False:
             raise ValueError("orders_authorized must be false")
+        object.__setattr__(
+            self, "validation_rows",
+            tuple(MappingProxyType(dict(row)) for row in self.validation_rows),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +112,7 @@ class ResearchLearningProposal:
             _finite(value, f"weight {key}")
         if self.orders_authorized is not False:
             raise ValueError("orders_authorized must be false")
+        object.__setattr__(self, "weights", MappingProxyType(dict(self.weights)))
 
 
 @dataclass(frozen=True, slots=True)
