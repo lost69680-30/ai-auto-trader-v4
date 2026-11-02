@@ -123,6 +123,14 @@ def test_scheduled_scan_publishes_assessment_and_adaptive_strategy_without_order
     assert item["selection"]["orders_authorized"] is False
     assert item["selection"]["performance_status"] == "NOT_CALIBRATED"
     assert item["selection"]["decision"] in {"SELECTED", "ANALYSIS_ONLY", "NO_TRADE"}
+    indicators = item["indicator_assessments"]
+    assert set(indicators) == set(SCAN_INTERVALS) | {"1Y"}
+    assert indicators["1h"]["status"] == "HEALTHY"
+    assert indicators["1h"]["ema_20"] is not None
+    assert indicators["1h"]["rsi_14"] is not None
+    assert indicators["1h"]["atr_14"] is not None
+    assert indicators["1h"]["calibration_status"] == "NOT_CALIBRATED"
+    assert indicators["1h"]["orders_authorized"] is False
 
 
 def test_scheduled_scan_records_in_progress_candles_but_excludes_them_from_confirmed_analysis():
