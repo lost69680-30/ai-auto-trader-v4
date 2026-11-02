@@ -152,6 +152,18 @@ internal fun parsePaperRisk(json: JSONObject): PaperRiskView {
         val value = snapshot.optDouble(name, Double.NaN)
         return value.takeIf { it.isFinite() }
     }
+    // PostgreSQL stores marks_fresh as INTEGER (0/1), not a JSON boolean.
+    // Accept both representations so a fresh persisted snapshot is not shown as stale.
+    val marksFresh = when (val value = snapshot?.opt("marks_fresh")) {
+        is Boolean -> value
+        is Number -> when (value.toInt()) { 1 -> true; 0 -> false; else -> null }
+        is String -> when (value.trim().lowercase()) {
+            "true", "1" -> true
+            "false", "0" -> false
+            else -> null
+        }
+        else -> null
+    }
     return PaperRiskView(
         emergencyStopActive = json.optBoolean("emergency_stop_active", false),
         openPositionCount = json.optInt("open_position_count", -1).takeIf { it >= 0 }
@@ -160,7 +172,7 @@ internal fun parsePaperRisk(json: JSONObject): PaperRiskView {
         drawdownAmount = finite("drawdown_amount"),
         drawdownPct = finite("drawdown_pct"),
         unrealizedPnl = finite("unrealized_pnl"),
-        marksFresh = if (snapshot == null || snapshot.isNull("marks_fresh")) null else snapshot.optBoolean("marks_fresh"),
+        marksFresh = marksFresh,
         snapshotAt = snapshot?.optString("snapshot_at")?.takeIf { it.isNotBlank() && it != "null" },
         stateStorage = json.optString("state_storage", "UNKNOWN")
     )
