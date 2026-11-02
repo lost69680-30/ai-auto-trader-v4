@@ -495,3 +495,29 @@ def test_waiting_opportunity_refresh_atomically_replaces_plan_watch_and_appends_
             idempotency_key="refresh-plan-stale", event_id="refresh-plan-stale-event",
             reason="stale refresh", evidence_version="stale", now=now + timedelta(seconds=6),
         )
+
+
+def test_active_opportunity_cap_is_enforced_atomically_per_symbol_and_venue():
+    apply_migrations_and_reset()
+    now = datetime.now(timezone.utc)
+    store = PostgresOpportunityStore(DSN)
+    first = make_opportunity(setup_fingerprint="first-setup")
+    second = make_opportunity(setup_fingerprint="second-setup")
+
+    store.create_or_get_opportunity(
+        first, idempotency_key="cap-first", max_active_per_symbol=1, now=now,
+    )
+    with pytest.raises(ValueError, match="active opportunity limit"):
+        store.create_or_get_opportunity(
+            second, idempotency_key="cap-second", max_active_per_symbol=1, now=now,
+        )
+
+    # Replaying the existing identity is idempotent and does not consume another slot.
+    replay = store.create_or_get_opportunity(
+        first, idempotency_key="cap-first", max_active_per_symbol=1, now=now,
+    )
+    assert replay.opportunity_id == first.opportunity_id
+    assert len(store.list_opportunities(
+        states=("DISCOVERED",), symbol="BTCUSDT",
+        market_type="FUTURES", venue="BINANCE_USDM_TESTNET", limit=10,
+    ).items) == 1
