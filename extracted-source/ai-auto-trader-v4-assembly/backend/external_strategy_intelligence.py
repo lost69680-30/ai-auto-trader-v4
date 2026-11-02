@@ -278,3 +278,95 @@ def assess_external_strategy(
         candidate=candidate,
         orders_authorized=False,
     )
+
+
+def external_rule_minimum_candles(rule_spec: ExternalRuleSpec) -> int:
+    if not isinstance(rule_spec, ExternalRuleSpec):
+        raise ValueError("an explicit supported ExternalRuleSpec is required")
+    params = rule_spec.parameters
+    if rule_spec.family == "SMA_CROSS":
+        return int(params["slow_period"])
+    if rule_spec.family in {"MOMENTUM", "BREAKOUT"}:
+        return int(params["lookback"]) + 1
+    return int(params["period"]) + 1
+
+
+def evaluate_external_rule(rule_spec: ExternalRuleSpec, candles: Any) -> str:
+    """Evaluate only the explicit, bounded rule DSL; return LONG, SHORT or NEUTRAL."""
+    if not isinstance(rule_spec, ExternalRuleSpec):
+        raise ValueError("an explicit supported ExternalRuleSpec is required")
+    rows = list(candles)
+    if len(rows) < external_rule_minimum_candles(rule_spec):
+        return "NEUTRAL"
+    closes = [float(row.close) for row in rows]
+    last = closes[-1]
+    params = rule_spec.parameters
+
+    if rule_spec.family == "SMA_CROSS":
+        fast_period = int(params["fast_period"])
+        slow_period = int(params["slow_period"])
+        fast = math.fsum(closes[-fast_period:]) / fast_period
+        slow = math.fsum(closes[-slow_period:]) / slow_period
+        return "LONG" if fast > slow else "SHORT" if fast < slow else "NEUTRAL"
+
+    if rule_spec.family == "MOMENTUM":
+        lookback = int(params["lookback"])
+        change_pct = (last / closes[-lookback - 1] - 1.0) * 100.0
+        threshold = float(params["threshold_pct"])
+        return "LONG" if change_pct >= threshold else (
+            "SHORT" if change_pct <= -threshold else "NEUTRAL"
+        )
+
+    if rule_spec.family == "BREAKOUT":
+        lookback = int(params["lookback"])
+        prior = rows[-lookback - 1:-1]
+        prior_high = max(float(row.high) for row in prior)
+        prior_low = min(float(row.low) for row in prior)
+        buffer = float(params["buffer_pct"]) / 100.0
+        return "LONG" if last > prior_high * (1.0 + buffer) else (
+            "SHORT" if last < prior_low * (1.0 - buffer) else "NEUTRAL"
+        )
+
+    period = int(params["period"])
+    changes = [closes[index] - closes[index - 1] for index in range(len(closes) - period, len(closes))]
+    gains = [max(change, 0.0) for change in changes]
+    losses = [max(-change, 0.0) for change in changes]
+    average_gain = math.fsum(gains) / period
+    average_loss = math.fsum(losses) / period
+    if average_loss == 0:
+        rsi = 50.0 if average_gain == 0 else 100.0
+    elif average_gain == 0:
+        rsi = 0.0
+    else:
+        relative_strength = average_gain / average_loss
+        rsi = 100.0 - 100.0 / (1.0 + relative_strength)
+    return "LONG" if rsi <= float(params["oversold"]) else (
+        "SHORT" if rsi >= float(params["overbought"]) else "NEUTRAL"
+    )
+
+
+def evaluate_external_candidate(
+    candidate: ExternalStrategyCandidate,
+    candles: Any,
+    *,
+    walk_forward_config: Any,
+    backtest_config: Any = None,
+    research_config: Any = None,
+    research_now: datetime,
+):
+    """Run explicit external rules through the offline, cost-aware OOS harness."""
+    if not isinstance(candidate, ExternalStrategyCandidate) or candidate.orders_authorized is not False:
+        raise ValueError("a paper-only external strategy candidate is required")
+    if not isinstance(candidate.rule_spec, ExternalRuleSpec):
+        raise ValueError("candidate does not contain explicit reproducible rules")
+    from backend.walk_forward import evaluate_walk_forward
+
+    return evaluate_walk_forward(
+        next(iter(candidate.symbols), "UNKNOWN"),
+        candles,
+        config=walk_forward_config,
+        backtest_config=backtest_config,
+        research_config=research_config,
+        research_now=research_now,
+        rule_spec=candidate.rule_spec,
+    )
