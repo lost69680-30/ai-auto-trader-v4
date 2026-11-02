@@ -15,7 +15,7 @@ def candle_series(count=60):
     start = NOW - timedelta(hours=count + 1)
     for index in range(count):
         opened = start + timedelta(hours=index)
-        close = 100.0 + index
+        close = 100.0 + index * 0.5 if index < 30 else 115.0 + (index - 30) * 1.0
         rows.append(MarketCandle(
             symbol="BTCUSDT",
             open_time=opened,
