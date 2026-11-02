@@ -249,6 +249,14 @@ def assess_external_strategy(
     elif not record.market_types or not record.timeframes:
         status = "INCOMPLETE_SCOPE"
         limitations.append("Published market type and timeframe scope are required for reproducible testing.")
+    elif {
+        "SMA_CROSS": "SMA",
+        "MOMENTUM": "MOMENTUM",
+        "BREAKOUT": "BREAKOUT",
+        "RSI_THRESHOLD": "RSI",
+    }[record.rules.family] not in {item.upper() for item in record.indicators}:
+        status = "RULE_METADATA_MISMATCH"
+        limitations.append("Explicit rule family does not match the published indicator metadata.")
     else:
         rule_payload = {
             "family": record.rules.family,
@@ -261,6 +269,7 @@ def assess_external_strategy(
             "market_types": list(record.market_types),
             "symbols": list(record.symbols),
             "timeframes": list(record.timeframes),
+            "indicators": list(record.indicators),
         }
         fingerprint = hashlib.sha256(json.dumps(
             identity, sort_keys=True, separators=(",", ":"), allow_nan=False
