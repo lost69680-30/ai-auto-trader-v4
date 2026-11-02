@@ -113,24 +113,26 @@ def price_plan(*, trigger=101.0, signal_id="signal-1", direction="LONG", expires
     )
 
 
-def coordinator(store):
+def coordinator(store, *, market_type="FUTURES", venue="BINANCE_USDM_TESTNET", owner="test-opportunity-coordinator"):
     return OpportunityCoordinator(
         store,
-        owner="test-opportunity-coordinator",
+        owner=owner,
         watcher_config=WatcherConfig(max_market_data_age_seconds=10),
         lease_seconds=30,
+        market_type=market_type,
+        venue=venue,
     )
 
 
-def register(engine, store, *, result=None, trigger=101.0, signal_id="signal-1", timeframe="1h", expires=None, now=None):
+def register(engine, store, *, result=None, trigger=101.0, signal_id="signal-1", timeframe="1h", expires=None, now=None, market_type="FUTURES", venue="BINANCE_USDM_TESTNET"):
     now = now or datetime.now(timezone.utc)
     result = result or assessment()
     return engine.register_assessed_opportunity(
         result,
         price_plan_result=price_plan(trigger=trigger, signal_id=signal_id, expires=expires, now=now),
         symbol="BTCUSDT",
-        market_type="FUTURES",
-        venue="BINANCE_USDM_TESTNET",
+        market_type=market_type,
+        venue=venue,
         timeframe=timeframe,
         evidence_refs=["snapshot:BTCUSDT:latest", "candle:BTCUSDT:1h:closed"],
         now=now,
@@ -365,3 +367,55 @@ def test_reassessment_provider_failure_keeps_waiting_state_and_releases_lease():
     assert "private upstream response details" not in run.results[0].reason
     assert store.get_opportunity(created.opportunity_id).state == "WAITING"
     assert store.release_claim(created.opportunity_id, owner="test-opportunity-coordinator") is False
+
+def test_spot_and_futures_coordinators_claim_only_their_own_venue_opportunities():
+    reset_registry()
+    now = datetime.now(timezone.utc)
+    store = PostgresOpportunityStore(DSN)
+    futures_engine = coordinator(store, owner="futures-coordinator")
+    spot_engine = coordinator(
+        store, market_type="SPOT", venue="BINANCE_SPOT_TESTNET",
+        owner="spot-coordinator",
+    )
+
+    futures = register(futures_engine, store, signal_id="futures-signal", now=now)
+    spot = register(
+        spot_engine, store, signal_id="spot-signal", now=now,
+        market_type="SPOT", venue="BINANCE_SPOT_TESTNET",
+    )
+
+    futures_run = futures_engine.reassess_due(
+        now=now,
+        market_update_provider=lambda symbol, stamp: MarketTick(
+            symbol, 102.0, stamp, candle_close=102.0
+        ),
+        limit=10,
+    )
+
+    assert [item.opportunity_id for item in futures_run.results] == [futures.opportunity_id]
+    assert store.get_opportunity(futures.opportunity_id).state == "TRIGGERED"
+    assert store.get_opportunity(spot.opportunity_id).state == "WAITING"
+
+    spot_run = spot_engine.reassess_due(
+        now=now + timedelta(seconds=1),
+        market_update_provider=lambda symbol, stamp: MarketTick(
+            symbol, 102.0, stamp, candle_close=102.0
+        ),
+        limit=10,
+    )
+    assert [item.opportunity_id for item in spot_run.results] == [spot.opportunity_id]
+    assert store.get_opportunity(spot.opportunity_id).state == "TRIGGERED"
+
+
+def test_coordinator_rejects_registration_for_another_venue_scope():
+    reset_registry()
+    now = datetime.now(timezone.utc)
+    store = PostgresOpportunityStore(DSN)
+    futures_engine = coordinator(store)
+
+    with pytest.raises(ValueError, match="venue scope"):
+        register(
+            futures_engine, store, signal_id="wrong-scope", now=now,
+            market_type="SPOT", venue="BINANCE_SPOT_TESTNET",
+        )
+
