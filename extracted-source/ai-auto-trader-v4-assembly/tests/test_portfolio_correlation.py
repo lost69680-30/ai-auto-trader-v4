@@ -134,3 +134,30 @@ def test_portfolio_summary_rejects_forged_or_malformed_pair_records(pair):
     )
     with pytest.raises(ValueError, match="report|pair|correlation"):
         summarize_portfolio_correlations(report, high_correlation_threshold=0.9)
+
+
+def test_close_to_close_return_builder_skips_gaps_instead_of_bridging_them():
+    from datetime import datetime, timedelta, timezone
+
+    from backend.strategy_research import Candle
+    from app.engines.portfolio_correlation import build_close_to_close_returns
+
+    start = datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc)
+    rows = [
+        Candle("BTCUSDT", start, 100.0, 100.0, 100.0, 100.0, 1.0),
+        Candle("BTCUSDT", start + timedelta(seconds=60), 110.0, 110.0, 110.0, 110.0, 1.0),
+        Candle("BTCUSDT", start + timedelta(seconds=180), 220.0, 220.0, 220.0, 220.0, 1.0),
+        Candle("BTCUSDT", start + timedelta(seconds=240), 242.0, 242.0, 242.0, 242.0, 1.0),
+    ]
+
+    result = build_close_to_close_returns(
+        {"BTCUSDT": rows},
+        interval_seconds=60,
+    )
+
+    assert result == {
+        "BTCUSDT": {
+            int((start + timedelta(seconds=60)).timestamp()): pytest.approx(0.1),
+            int((start + timedelta(seconds=240)).timestamp()): pytest.approx(0.1),
+        }
+    }
