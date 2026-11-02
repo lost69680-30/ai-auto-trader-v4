@@ -80,3 +80,14 @@ def test_chart_candle_refreshes_pause_when_android_app_enters_background():
     assert "val isForeground = BackendSession.appInForeground.value" in analysis_screen
     assert "LaunchedEffect(sessionToken, selectedMarket?.symbol, candleSymbolKey, isForeground)" in analysis_screen
     assert "if (isForeground && sessionToken.length >= 32" in analysis_screen
+
+
+def test_staging_apk_uses_the_deployed_staging_api_with_paper_ledger_endpoints():
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github/workflows/build-market-analysis-apk.yml").read_text(encoding="utf-8")
+    staging_api = "https://solo-ai-auto-trader-staging-api.onrender.com"
+
+    assert f'PAPER_API_BASE_URL="{staging_api}"' in workflow
+    assert staging_api in workflow
+    assert "solo-futures-websocket-staging.onrender.com" not in workflow
+    assert "ai-auto-trader-v4-backend.onrender.com" not in workflow
