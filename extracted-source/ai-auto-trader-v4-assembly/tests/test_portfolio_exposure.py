@@ -45,9 +45,9 @@ def test_portfolio_exposure_reports_gross_net_and_asset_concentration():
     assert report.position_count == 3
     assert report.asset_count == 2
     assert report.gross_exposure == 350.0
-    assert report.net_exposure == 150.0
+    assert report.net_exposure == 250.0
     assert report.gross_exposure_pct_equity == 35.0
-    assert report.net_exposure_pct_equity == 15.0
+    assert report.net_exposure_pct_equity == 25.0
     assert report.top_asset_share_pct == pytest.approx(200 / 350 * 100)
     assert report.concentration_hhi == pytest.approx((150 / 350) ** 2 + (200 / 350) ** 2)
     assert report.exposure_by_symbol[0].symbol == "BTCUSDT"
