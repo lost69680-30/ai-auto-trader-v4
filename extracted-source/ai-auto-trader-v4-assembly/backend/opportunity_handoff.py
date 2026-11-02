@@ -15,7 +15,6 @@ from typing import Any
 from app.engines.price_planner import PricePlanRequest, PricePlanningConfig, plan_prices
 from app.engines.research_pipeline import ResearchCandidate
 from app.engines.signal_handoff import prepare_signal
-from backend.adaptive_strategy import select_strategy
 from backend.indicator_intelligence import assess_indicators
 from backend.market_assessment import assess_market
 from backend.market_data_adapter import MarketCandle
@@ -159,6 +158,65 @@ def process_triggered_opportunity(
         )
         return {"status": "EXPIRED_BEFORE_HANDOFF", "state": latest.state, "orders_authorized": False}
 
+    signal_id = _signal_id(record.opportunity_id)
+    proposal_id = f"paper:{signal_id}"
+    if record.state == "RISK_CHECK":
+        try:
+            existing_order = next(
+                (item for item in tuple(paper_service.ledger.orders)
+                 if item.proposal_id == proposal_id),
+                None,
+            )
+        except Exception:
+            return {
+                "status": "RECONCILIATION_REQUIRED",
+                "state": "RISK_CHECK",
+                "reason": "paper ledger state is uncertain; no duplicate handoff was attempted",
+                "orders_authorized": False,
+            }
+        if existing_order is not None:
+            coordinator.store.append_evidence(
+                OpportunityEvidenceRecord(
+                    evidence_id="evidence-paper-intent-" + hashlib.sha256(
+                        f"{record.opportunity_id}|{proposal_id}".encode("utf-8")
+                    ).hexdigest()[:40],
+                    opportunity_id=record.opportunity_id,
+                    evidence_type="PAPER_INTENT",
+                    reference_id=proposal_id,
+                    observed_at=stamp,
+                    payload={
+                        "proposal_id": proposal_id,
+                        "signal_id": signal_id,
+                        "ledger_status": existing_order.status,
+                        "risk_approved": True,
+                        "orders_authorized": False,
+                    },
+                    orders_authorized=False,
+                ),
+                idempotency_key=f"paper-intent:{record.opportunity_id}:{proposal_id}",
+                now=stamp,
+            )
+            latest = coordinator.store.get_opportunity(record.opportunity_id)
+            if latest is not None and latest.state == "RISK_CHECK":
+                latest = coordinator.store.transition(
+                    latest.opportunity_id,
+                    expected_version=latest.version,
+                    to_state="INTENT_RECORDED",
+                    reason="recovered Risk Guardian-approved intent from the durable paper ledger",
+                    event_id="event-intent-recovered-" + hashlib.sha256(
+                        f"{record.opportunity_id}|{proposal_id}".encode("utf-8")
+                    ).hexdigest()[:40],
+                    actor="risk_manager",
+                    evidence_version=proposal_id,
+                    now=stamp,
+                ).opportunity
+            return {
+                "status": "INTENT_RECORDED",
+                "state": latest.state if latest else "UNKNOWN",
+                "proposal_id": proposal_id,
+                "orders_authorized": False,
+            }
+
     symbol = record.symbol
     original_plan = record.metadata.get("price_plan", {}) if isinstance(record.metadata, dict) else {}
     watch = coordinator.store.get_watch_condition(record.opportunity_id)
@@ -252,8 +310,8 @@ def process_triggered_opportunity(
         refs = [f"market-snapshot:{symbol}:{snapshot_at.astimezone(timezone.utc).isoformat()}"]
         for interval in SCAN_INTERVALS:
             rows = tuple(source.fetch_klines(symbol, interval=interval, limit=200, now=stamp))
-            if any(not isinstance(item, MarketCandle) or item.orders_authorized is not False for item in rows):
-                raise ValueError(f"{interval} candle data is malformed or unsafe")
+            if any(not isinstance(item, MarketCandle) for item in rows):
+                raise ValueError(f"{interval} candle data is malformed")
             closed = tuple(item for item in rows if item.is_closed)
             candles[interval] = closed
             if closed:
@@ -355,11 +413,13 @@ def process_triggered_opportunity(
             liquidity=None,
             orders_authorized=False,
         )
+        remaining_lifetime = (record.expires_at - stamp).total_seconds()
+        if remaining_lifetime < 30:
+            raise ValueError("triggered opportunity has insufficient lifetime for a fresh paper handoff")
         lifetime = min(
             max(30.0, float(paper_service.config.plan_lifetime_seconds)),
-            max(30.0, (record.expires_at - stamp).total_seconds()),
+            remaining_lifetime,
         )
-        signal_id = _signal_id(record.opportunity_id)
         planned = plan_prices(
             PricePlanRequest(
                 signal_id=signal_id,
@@ -646,8 +706,14 @@ def reconcile_paper_intents(
                     payload={
                         "proposal_id": proposal_id,
                         "status": position_status,
-                        "opened_at": getattr(position, "opened_at", None),
-                        "closed_at": getattr(position, "closed_at", None),
+                        "opened_at": (
+                            position.opened_at.isoformat()
+                            if isinstance(getattr(position, "opened_at", None), datetime) else None
+                        ),
+                        "closed_at": (
+                            position.closed_at.isoformat()
+                            if isinstance(getattr(position, "closed_at", None), datetime) else None
+                        ),
                         "realized_pnl": getattr(position, "realized_pnl", None),
                         "orders_authorized": False,
                     },
