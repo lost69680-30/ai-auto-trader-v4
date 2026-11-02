@@ -287,7 +287,7 @@ def test_reassess_due_uses_worker_leases_and_releases_claim_after_trigger():
 
     run = engine.reassess_due(
         now=now,
-        market_update_provider=lambda symbol, stamp: MarketTick(symbol, 102.0, stamp, candle_close=102.0),
+        market_update_provider=lambda symbol, timeframe, stamp: MarketTick(symbol, 102.0, stamp, candle_close=102.0),
         limit=10,
     )
 
@@ -318,7 +318,7 @@ def test_expired_opportunity_is_closed_even_when_market_update_provider_is_unava
     created = register(engine, store, expires=now + timedelta(minutes=1), now=now)
     later = now + timedelta(minutes=2)
 
-    def provider_must_not_be_called(symbol, stamp):
+    def provider_must_not_be_called(symbol, timeframe, stamp):
         raise AssertionError("expired opportunity does not need market data")
 
     run = engine.reassess_due(
@@ -355,7 +355,7 @@ def test_reassessment_provider_failure_keeps_waiting_state_and_releases_lease():
     engine = coordinator(store)
     created = register(engine, store, now=now)
 
-    def unavailable(symbol, stamp):
+    def unavailable(symbol, timeframe, stamp):
         raise TimeoutError("private upstream response details")
 
     run = engine.reassess_due(
@@ -386,7 +386,7 @@ def test_spot_and_futures_coordinators_claim_only_their_own_venue_opportunities(
 
     futures_run = futures_engine.reassess_due(
         now=now,
-        market_update_provider=lambda symbol, stamp: MarketTick(
+        market_update_provider=lambda symbol, timeframe, stamp: MarketTick(
             symbol, 102.0, stamp, candle_close=102.0
         ),
         limit=10,
@@ -398,7 +398,7 @@ def test_spot_and_futures_coordinators_claim_only_their_own_venue_opportunities(
 
     spot_run = spot_engine.reassess_due(
         now=now + timedelta(seconds=1),
-        market_update_provider=lambda symbol, stamp: MarketTick(
+        market_update_provider=lambda symbol, timeframe, stamp: MarketTick(
             symbol, 102.0, stamp, candle_close=102.0
         ),
         limit=10,
@@ -418,4 +418,27 @@ def test_coordinator_rejects_registration_for_another_venue_scope():
             futures_engine, store, signal_id="wrong-scope", now=now,
             market_type="SPOT", venue="BINANCE_SPOT_TESTNET",
         )
+
+
+def test_reassessment_provider_is_called_per_opportunity_timeframe():
+    reset_registry()
+    now = datetime.now(timezone.utc)
+    store = PostgresOpportunityStore(DSN)
+    engine = coordinator(store)
+    first = register(engine, store, signal_id="one-hour", timeframe="1h", now=now)
+    second = register(
+        engine, store, signal_id="four-hour", timeframe="4h", trigger=105.0, now=now,
+    )
+    seen = []
+
+    def provider(symbol, timeframe, stamp):
+        seen.append((symbol, timeframe))
+        return MarketTick(symbol, 102.0, stamp, candle_close=102.0)
+
+    run = engine.reassess_due(now=now, market_update_provider=provider, limit=10)
+
+    assert run.evaluated_count == 2
+    assert set(seen) == {("BTCUSDT", "1h"), ("BTCUSDT", "4h")}
+    assert store.get_opportunity(first.opportunity_id).state == "TRIGGERED"
+    assert store.get_opportunity(second.opportunity_id).state == "WAITING"
 
