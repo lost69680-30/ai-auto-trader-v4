@@ -54,10 +54,10 @@ def _paper_json(value: Mapping[str, Any], name: str) -> dict[str, Any]:
     result = dict(value)
     inspect(result, name)
     try:
-        json.dumps(result, allow_nan=False, separators=(",", ":"))
+        encoded = json.dumps(result, allow_nan=False, separators=(",", ":"))
+        return json.loads(encoded)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{name} must contain finite JSON-compatible values") from exc
-    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,8 +98,8 @@ class StrategyResearchExperiment:
             not isinstance(reason, str) or not reason.strip() for reason in self.failure_reasons
         ):
             raise ValueError("failure_reasons must be a tuple of non-empty strings")
-        _paper_json(self.assumptions, "assumptions")
-        _paper_json(self.outcomes, "outcomes")
+        object.__setattr__(self, "assumptions", _paper_json(self.assumptions, "assumptions"))
+        object.__setattr__(self, "outcomes", _paper_json(self.outcomes, "outcomes"))
         if self.orders_authorized is not False:
             raise ValueError("orders_authorized must be false")
 
