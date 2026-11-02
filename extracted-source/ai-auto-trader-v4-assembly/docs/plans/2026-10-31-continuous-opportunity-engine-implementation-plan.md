@@ -270,7 +270,7 @@ git commit -m "feat: add continuous opportunity search"
 
 ## Task 4: Implement the durable multi-opportunity waiting coordinator
 
-<badge>Completed and CI verified on the feature branch</badge>
+**Status:** Complete and CI verified on the feature branch.
 
 **Implemented files:**
 - `extracted-source/ai-auto-trader-v4-assembly/backend/opportunity_coordinator.py`
