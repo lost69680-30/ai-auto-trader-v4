@@ -1,13 +1,14 @@
 """Independent, research-only assessment of each Solo strategy horizon."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
 import math
 from typing import Any, Iterable, Mapping, Protocol
 
 from backend.adaptive_strategy import select_strategy
+from backend.indicator_intelligence import IndicatorAssessment
 from backend.market_assessment import MarketAssessment
 from backend.opportunity_store import StrategyAssessmentRecord
 from backend.strategy_profiles import DEFAULT_STRATEGY_PROFILES, StrategyProfile
@@ -24,6 +25,7 @@ class StrategyCandidate:
     estimated_round_trip_cost_bps: float | None
     assessment_version: int = 1
     orders_authorized: bool = False
+    indicator_assessments: Mapping[str, IndicatorAssessment] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.opportunity_id, str) or not self.opportunity_id.strip():
@@ -40,6 +42,17 @@ class StrategyCandidate:
             raise ValueError("candidate and market assessment symbols must match")
         if self.orders_authorized is not False:
             raise ValueError("orders_authorized must be false")
+        if not isinstance(self.indicator_assessments, Mapping):
+            raise ValueError("indicator_assessments must be a timeframe mapping")
+        for timeframe, indicator in self.indicator_assessments.items():
+            if (
+                not isinstance(timeframe, str)
+                or not isinstance(indicator, IndicatorAssessment)
+                or indicator.timeframe != timeframe
+                or indicator.symbol != self.symbol
+                or indicator.orders_authorized is not False
+            ):
+                raise ValueError("indicator evidence must match candidate symbol/timeframe and deny order authority")
         if (
             isinstance(self.assessment_version, bool)
             or not isinstance(self.assessment_version, int)
@@ -90,6 +103,43 @@ def _assessment_id(candidate: StrategyCandidate, profile: StrategyProfile) -> st
 def _request_more_evidence(reasons: tuple[str, ...]) -> bool:
     markers = ("missing", "unhealthy", "insufficient", "evidence is missing")
     return any(marker in reason.lower() for reason in reasons for marker in markers)
+
+
+def _indicator_context(candidate: StrategyCandidate) -> dict[str, Any]:
+    """Attach compact, auditable indicator evidence without voting on strategy decisions."""
+    evidence: dict[str, Any] = {}
+    conflicts: list[str] = []
+    for timeframe, item in sorted(candidate.indicator_assessments.items()):
+        if item.confluence == "MIXED":
+            conflicts.append(timeframe)
+        evidence[timeframe] = {
+            "status": item.status,
+            "latest_close_time": item.latest_close_time.isoformat() if item.latest_close_time else None,
+            "ema_20": item.ema_20,
+            "ema_50": item.ema_50,
+            "rsi_14": item.rsi_14,
+            "macd_line": item.macd_line,
+            "macd_signal": item.macd_signal,
+            "macd_histogram": item.macd_histogram,
+            "atr_14": item.atr_14,
+            "atr_percent": item.atr_percent,
+            "vwap": item.vwap,
+            "relative_volume_20": item.relative_volume_20,
+            "trend": item.trend,
+            "momentum": item.momentum,
+            "confluence": item.confluence,
+            "reasons": list(item.reasons),
+            "calibration_status": item.calibration_status,
+            "orders_authorized": False,
+        }
+    return {
+        "indicator_evidence_status": (
+            "AVAILABLE" if any(item.status == "HEALTHY" for item in candidate.indicator_assessments.values())
+            else "UNAVAILABLE"
+        ),
+        "indicator_assessments": evidence,
+        "indicator_conflicts": conflicts,
+    }
 
 
 def _adaptive_assessor(
@@ -256,6 +306,11 @@ class MultiStrategyAssessmentEngine:
                     or result.payload.get("paper_eligible") is True
                 ):
                     raise ValueError("long-term analysis cannot be eligible for paper handoff")
+                # Preserve each strategy's own decision; attach indicator evidence as
+                # traceable context, never as a majority-vote override.
+                result = replace(result, payload={**result.payload, **_indicator_context(candidate)})
+                if not _paper_safe(result.payload):
+                    raise ValueError("indicator evidence violated the paper-only contract")
                 results.append(result)
             except Exception as exc:
                 results.append(self._failure_record(
