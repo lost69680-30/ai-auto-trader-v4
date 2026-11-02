@@ -14,6 +14,7 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 from urllib.parse import parse_qs
@@ -54,6 +55,20 @@ def _safe_startup_error(exc: Exception) -> str:
         message = message.replace(dsn, "[database URI redacted]")
     message = " ".join(message.split())[:240]
     return f"{type(exc).__name__}: {message}"
+
+def _api_value(value):
+    if isinstance(value, datetime):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("API timestamps must be timezone-aware")
+        return value.astimezone(timezone.utc).isoformat()
+    if is_dataclass(value):
+        return _api_value(asdict(value))
+    if isinstance(value, dict):
+        return {str(key): _api_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_api_value(item) for item in value]
+    return value
+
 
 def _json_bytes(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), allow_nan=False).encode("utf-8")
@@ -175,7 +190,8 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                market_history: Callable[[str, datetime, datetime, int], dict] | None = None,
                account_status: Callable[[], dict] | None = None,
                analysis_status: Callable[[], dict] | None = None,
-               market_intelligence: Callable[[], dict] | None = None):
+               market_intelligence: Callable[[], dict] | None = None,
+               opportunity_registry=None):
     """Create WSGI app. A strong API token is mandatory; no permissive defaults."""
     if not isinstance(token, str) or len(token) < 32:
         raise ValueError("API token must be at least 32 characters; configure it as a secret")
@@ -406,6 +422,85 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                         "reason": "market intelligence unavailable",
                         "orders_authorized": False,
                     }), "503 Service Unavailable"
+
+            elif path == "/api/v1/opportunities":
+                try:
+                    if opportunity_registry is None:
+                        raise RuntimeError("opportunity registry is not configured")
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    def one(name):
+                        values = query.get(name, [])
+                        if len(values) > 1:
+                            raise ValueError(f"{name} must be supplied at most once")
+                        return values[0].strip() if values else None
+                    symbol = one("symbol")
+                    market_type = one("market_type")
+                    venue = one("venue")
+                    cursor = one("cursor")
+                    raw_limit = one("limit") or "50"
+                    if not raw_limit.isdigit() or not 1 <= int(raw_limit) <= 100:
+                        raise ValueError("limit must be between 1 and 100")
+                    states = tuple(value for item in query.get("state", []) for value in item.split(",") if value)
+                    if (market_type is None) != (venue is None):
+                        raise ValueError("market_type and venue must be supplied together")
+                    page = opportunity_registry.list_opportunities(
+                        states=states or None, symbol=symbol or None,
+                        market_type=market_type, venue=venue,
+                        limit=int(raw_limit), cursor=cursor,
+                    )
+                    items = _api_value(page.items)
+                    if any(not isinstance(item, dict) or item.get("orders_authorized") is not False for item in items):
+                        raise ValueError("opportunity registry returned an unsafe record")
+                    body, status = _json_bytes({
+                        "items": items, "next_cursor": page.next_cursor,
+                        "orders_authorized": False, "mode": "PAPER_ONLY",
+                    }), "200 OK"
+                except ValueError:
+                    body, status = _json_bytes({"error": "invalid_opportunity_query", "orders_authorized": False}), "400 Bad Request"
+                except Exception:
+                    body, status = _json_bytes({"error": "opportunities_unavailable", "orders_authorized": False}), "503 Service Unavailable"
+            elif path.startswith("/api/v1/opportunities/"):
+                try:
+                    if opportunity_registry is None:
+                        raise RuntimeError("opportunity registry is not configured")
+                    suffix = path[len("/api/v1/opportunities/"):]
+                    parts = suffix.split("/")
+                    if not parts[0] or len(parts[0]) > 160 or not all(ch.isalnum() or ch in "-_" for ch in parts[0]):
+                        raise ValueError("invalid opportunity id")
+                    opportunity_id = parts[0]
+                    if len(parts) == 1:
+                        record = opportunity_registry.get_opportunity(opportunity_id)
+                        if record is None:
+                            body, status = _json_bytes({"error": "not_found", "orders_authorized": False}), "404 Not Found"
+                        else:
+                            payload = _api_value(record)
+                            if payload.get("orders_authorized") is not False:
+                                raise ValueError("opportunity record is unsafe")
+                            body, status = _json_bytes({
+                                "opportunity": payload,
+                                "orders_authorized": False, "mode": "PAPER_ONLY",
+                            }), "200 OK"
+                    elif len(parts) == 2 and parts[1] in {"events", "assessments", "evidence"}:
+                        if opportunity_registry.get_opportunity(opportunity_id) is None:
+                            body, status = _json_bytes({"error": "not_found", "orders_authorized": False}), "404 Not Found"
+                        else:
+                            method_name = {
+                                "events": "list_events",
+                                "assessments": "list_assessments",
+                                "evidence": "list_evidence",
+                            }[parts[1]]
+                            records = _api_value(getattr(opportunity_registry, method_name)(opportunity_id))
+                            if any(not isinstance(item, dict) or item.get("orders_authorized") is not False for item in records):
+                                raise ValueError("opportunity history returned an unsafe record")
+                            body, status = _json_bytes({
+                                "items": records, "orders_authorized": False, "mode": "PAPER_ONLY",
+                            }), "200 OK"
+                    else:
+                        body, status = _json_bytes({"error": "not_found", "orders_authorized": False}), "404 Not Found"
+                except ValueError:
+                    body, status = _json_bytes({"error": "invalid_opportunity_request", "orders_authorized": False}), "400 Bad Request"
+                except Exception:
+                    body, status = _json_bytes({"error": "opportunity_unavailable", "orders_authorized": False}), "503 Service Unavailable"
 
             elif path in ("/api/v1/positions", "/api/v1/orders", "/api/v1/fills", "/api/v1/audit", "/api/v1/funding"):
                 try:
@@ -820,6 +915,11 @@ def main() -> None:
         poller.start()
     else:
         logging.info("API-only role enabled; no local market poller or analysis worker will be started")
+    opportunity_registry = None
+    if os.environ.get("PAPER_DATABASE_URL", "").strip():
+        from backend.opportunity_store import PostgresOpportunityStore
+        opportunity_registry = PostgresOpportunityStore(os.environ["PAPER_DATABASE_URL"])
+
     try:
         http_app = create_app(database_path=database, token=token,
                               market_status=cache.status, market_items=cache.items,
@@ -827,7 +927,8 @@ def main() -> None:
                               market_history=market_history,
                               account_status=binance_testnet_account.account_summary,
                               analysis_status=(cache.analysis_status if hasattr(cache, "analysis_status") else analysis_health.status),
-                              market_intelligence=(cache.market_intelligence if hasattr(cache, "market_intelligence") else None))
+                              market_intelligence=(cache.market_intelligence if hasattr(cache, "market_intelligence") else None),
+                              opportunity_registry=opportunity_registry)
         if enable_websocket:
             if len(token) < 32:
                 raise SystemExit("PAPER_WEBSOCKET_ENABLED requires a PAPER_API_TOKEN of at least 32 characters")
