@@ -144,6 +144,22 @@ internal fun parsePaperFills(json: JSONObject): List<PaperFillView> {
     }.takeLast(100).reversed()
 }
 
+internal const val PAPER_SNAPSHOT_FRESHNESS_LIMIT_SECONDS = 360.0
+
+internal fun paperSnapshotMarksFresh(
+    snapshotAt: String?,
+    storedMarksFresh: Boolean?,
+    nowEpochSeconds: Double = System.currentTimeMillis() / 1000.0,
+): Boolean? {
+    if (storedMarksFresh != true) return storedMarksFresh
+    val rawTimestamp = snapshotAt?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val snapshotEpochSeconds = rawTimestamp.toDoubleOrNull()
+        ?: runCatching { java.time.Instant.parse(rawTimestamp).toEpochMilli() / 1000.0 }.getOrNull()
+        ?: return null
+    val ageSeconds = nowEpochSeconds - snapshotEpochSeconds
+    return ageSeconds >= -30.0 && ageSeconds <= PAPER_SNAPSHOT_FRESHNESS_LIMIT_SECONDS
+}
+
 internal fun parsePaperRisk(json: JSONObject): PaperRiskView {
     require(!json.optBoolean("orders_authorized", true)) { "Unsafe risk response" }
     val snapshot = json.optJSONObject("latest_snapshot")
@@ -153,8 +169,7 @@ internal fun parsePaperRisk(json: JSONObject): PaperRiskView {
         return value.takeIf { it.isFinite() }
     }
     // PostgreSQL stores marks_fresh as INTEGER (0/1), not a JSON boolean.
-    // Accept both representations so a fresh persisted snapshot is not shown as stale.
-    val marksFresh = when (val value = snapshot?.opt("marks_fresh")) {
+    val storedMarksFresh = when (val value = snapshot?.opt("marks_fresh")) {
         is Boolean -> value
         is Number -> when (value.toInt()) { 1 -> true; 0 -> false; else -> null }
         is String -> when (value.trim().lowercase()) {
@@ -164,6 +179,8 @@ internal fun parsePaperRisk(json: JSONObject): PaperRiskView {
         }
         else -> null
     }
+    val snapshotAt = snapshot?.optString("snapshot_at")?.takeIf { it.isNotBlank() && it != "null" }
+    val marksFresh = paperSnapshotMarksFresh(snapshotAt, storedMarksFresh)
     return PaperRiskView(
         emergencyStopActive = json.optBoolean("emergency_stop_active", false),
         openPositionCount = json.optInt("open_position_count", -1).takeIf { it >= 0 }
@@ -173,7 +190,7 @@ internal fun parsePaperRisk(json: JSONObject): PaperRiskView {
         drawdownPct = finite("drawdown_pct"),
         unrealizedPnl = finite("unrealized_pnl"),
         marksFresh = marksFresh,
-        snapshotAt = snapshot?.optString("snapshot_at")?.takeIf { it.isNotBlank() && it != "null" },
+        snapshotAt = snapshotAt,
         stateStorage = json.optString("state_storage", "UNKNOWN")
     )
 }
