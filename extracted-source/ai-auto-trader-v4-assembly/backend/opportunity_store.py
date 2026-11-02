@@ -825,7 +825,7 @@ class PostgresOpportunityStore:
                     """SELECT evidence_id FROM paper_ledger.opportunity_evidence
                        WHERE opportunity_id = %s AND evidence_type = 'PAPER_POSITION'
                          AND reference_id = %s
-                         AND payload->>'status' = 'OPEN'
+                         AND payload->>'status' IN ('OPEN', 'CLOSED')
                          AND payload->>'orders_authorized' = 'false'""",
                     (opportunity_id, evidence_version),
                 ).fetchone()
