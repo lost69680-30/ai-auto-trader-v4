@@ -246,6 +246,9 @@ def assess_external_strategy(
     elif evidence.methodology is None or not evidence.methodology.strip():
         status = "METHODOLOGY_MISSING"
         limitations.append("Backtest methodology is missing; reproducibility cannot be established.")
+    elif not record.market_types or not record.timeframes:
+        status = "INCOMPLETE_SCOPE"
+        limitations.append("Published market type and timeframe scope are required for reproducible testing.")
     else:
         rule_payload = {
             "family": record.rules.family,
