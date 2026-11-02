@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import signal
 import threading
@@ -41,11 +42,21 @@ def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source
             if (
                 getattr(snapshot, "symbol", None) != symbol
                 or getattr(snapshot, "orders_authorized", None) is not False
-                or getattr(snapshot, "market_type", coordinator.market_type) != coordinator.market_type
+                or getattr(snapshot, "market_type", None) != coordinator.market_type
             ):
                 raise ValueError("market source returned an invalid or mismatched paper-only price snapshot")
             price = getattr(snapshot, "mark_price", None)
             observed_at = getattr(snapshot, "observed_at", None)
+            if (
+                isinstance(price, bool) or not isinstance(price, (int, float))
+                or not math.isfinite(price) or price <= 0
+            ):
+                raise ValueError("market source returned an invalid mark price")
+            if not isinstance(observed_at, datetime) or observed_at.tzinfo is None or observed_at.utcoffset() is None:
+                raise ValueError("market source returned an invalid mark observation timestamp")
+            mark_age = (stamp - observed_at.astimezone(timezone.utc)).total_seconds()
+            if mark_age < -2 or mark_age > 30:
+                raise ValueError("market source mark price is stale or future-dated")
             candle_rows = source.fetch_klines(
                 symbol, interval=timeframe, limit=2, now=stamp,
             )
@@ -54,6 +65,15 @@ def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source
                 raise ValueError("no closed candle is available for the opportunity timeframe")
             latest_closed = closed[-1]
             close_at = getattr(latest_closed, "close_time", None)
+            close_price = getattr(latest_closed, "close", None)
+            if (
+                getattr(latest_closed, "symbol", symbol) != symbol
+                or isinstance(close_price, bool)
+                or not isinstance(close_price, (int, float))
+                or not math.isfinite(close_price)
+                or close_price <= 0
+            ):
+                raise ValueError("latest closed candle does not match the requested symbol or price")
             if not isinstance(close_at, datetime) or close_at.tzinfo is None or close_at.utcoffset() is None:
                 raise ValueError("latest closed candle timestamp is invalid")
             age_seconds = (stamp - close_at.astimezone(timezone.utc)).total_seconds()
