@@ -50,6 +50,9 @@ jobs:
       - name: Run PostgreSQL ledger integration tests
         working-directory: extracted-source/ai-auto-trader-v4-assembly
         run: python -m pytest -q tests/test_postgres_paper_ledger.py
+      - name: Run PostgreSQL opportunity registry integration tests
+        working-directory: extracted-source/ai-auto-trader-v4-assembly
+        run: python -m pytest -q tests/test_opportunity_store.py
       - name: Run complete backend test suite
         working-directory: extracted-source/ai-auto-trader-v4-assembly
         run: python -m pytest -q

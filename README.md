@@ -103,7 +103,10 @@ The optional WSGI API in `app.engines.read_only_api` exposes only `GET` routes:
 - `/api/v1/risk` — emergency stop, open-position count and latest equity snapshot
 - `/api/v1/audit` — audit events
 - `/api/v1/funding` — funding events recorded in the paper ledger
-- `/api/v1/markets` — returns `UNAVAILABLE` until market-worker state is wired in; no fabricated prices
+- `/api/v1/markets` — validated market feed status and snapshots
+- `/api/v1/opportunities` — authenticated read-only opportunity list with optional state, symbol, and venue filters
+- `/api/v1/opportunities/{id}` — one durable opportunity
+- `/api/v1/opportunities/{id}/events`, `/assessments`, and `/evidence` — immutable opportunity audit history (available when `PAPER_DATABASE_URL` is configured)
 
 Set `PAPER_API_TOKEN` to a randomly generated secret of at least 32 characters and
 `PAPER_DATABASE_PATH` to the durable SQLite file. Start with
