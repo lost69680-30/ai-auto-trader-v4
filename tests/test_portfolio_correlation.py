@@ -140,7 +140,7 @@ def test_close_to_close_return_builder_skips_gaps_instead_of_bridging_them():
     from datetime import datetime, timedelta, timezone
 
     from backend.strategy_research import Candle
-    from app.engines.portfolio_correlation import build_close_to_close_returns
+    from app.engines import portfolio_correlation
 
     start = datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc)
     rows = [
@@ -150,10 +150,9 @@ def test_close_to_close_return_builder_skips_gaps_instead_of_bridging_them():
         Candle("BTCUSDT", start + timedelta(seconds=240), 242.0, 242.0, 242.0, 242.0, 1.0),
     ]
 
-    result = build_close_to_close_returns(
-        {"BTCUSDT": rows},
-        interval_seconds=60,
-    )
+    builder = getattr(portfolio_correlation, "build_close_to_close_returns", None)
+    assert callable(builder), "close-to-close return builder is not implemented"
+    result = builder({"BTCUSDT": rows}, interval_seconds=60)
 
     assert result == {
         "BTCUSDT": {
