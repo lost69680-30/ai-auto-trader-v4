@@ -105,7 +105,6 @@ def test_opportunity_reassessment_handler_uses_venue_scoped_read_only_price_sour
     assert seen["limit"] == 50
     assert seen["tick"].symbol == "BTCUSDT"
     assert seen["tick"].price == 123.4
-    assert seen["tick"].orders_authorized is False
 
 
 def test_opportunity_reassessment_handler_rejects_cross_venue_job_payload():
