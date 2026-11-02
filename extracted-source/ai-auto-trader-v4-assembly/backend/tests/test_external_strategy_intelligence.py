@@ -186,3 +186,11 @@ def test_external_rule_requires_an_explicit_supported_exit_policy():
             parameters={"fast_period": 10, "slow_period": 30},
             exit_policy="TRAILING_ATR",
         )
+
+
+def test_missing_market_or_timeframe_scope_does_not_create_candidate():
+    item = record(rules=valid_rules())
+    assessment = assess_external_strategy(replace(item, timeframes=()))
+
+    assert assessment.status == "INCOMPLETE_SCOPE"
+    assert assessment.candidate is None
