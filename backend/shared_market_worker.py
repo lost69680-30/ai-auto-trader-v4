@@ -36,7 +36,7 @@ def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source
             raise ValueError("reassessment job venue does not match its isolated coordinator")
         now = datetime.now(timezone.utc)
 
-        def update(symbol: str, stamp: datetime) -> MarketTick:
+        def update(symbol: str, timeframe: str, stamp: datetime) -> MarketTick:
             snapshot = source.fetch_mark_price(symbol)
             if (
                 getattr(snapshot, "symbol", None) != symbol
@@ -46,7 +46,28 @@ def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source
                 raise ValueError("market source returned an invalid or mismatched paper-only price snapshot")
             price = getattr(snapshot, "mark_price", None)
             observed_at = getattr(snapshot, "observed_at", None)
-            return MarketTick(symbol=symbol, price=price, observed_at=observed_at)
+            candle_rows = source.fetch_klines(
+                symbol, interval=timeframe, limit=2, now=stamp,
+            )
+            closed = [row for row in candle_rows if getattr(row, "is_closed", False)]
+            if not closed:
+                raise ValueError("no closed candle is available for the opportunity timeframe")
+            latest_closed = closed[-1]
+            close_at = getattr(latest_closed, "close_time", None)
+            if not isinstance(close_at, datetime) or close_at.tzinfo is None or close_at.utcoffset() is None:
+                raise ValueError("latest closed candle timestamp is invalid")
+            age_seconds = (stamp - close_at.astimezone(timezone.utc)).total_seconds()
+            max_age_seconds = {
+                "1m": 180, "5m": 600, "15m": 1800, "30m": 3600,
+                "1h": 7200, "4h": 28800, "1d": 172800,
+                "1w": 1209600, "1M": 2678400,
+            }.get(timeframe)
+            if max_age_seconds is None or age_seconds < -2 or age_seconds > max_age_seconds:
+                raise ValueError("latest closed candle is stale or timeframe is unsupported")
+            return MarketTick(
+                symbol=symbol, price=price, observed_at=observed_at,
+                candle_close=getattr(latest_closed, "close", None),
+            )
 
         result = coordinator.reassess_due(
             now=now, market_update_provider=update, limit=50,
