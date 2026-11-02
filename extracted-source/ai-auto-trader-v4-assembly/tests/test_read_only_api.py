@@ -801,3 +801,117 @@ def test_fills_endpoint_rejects_non_get_methods(tmp_path):
 
     assert status.startswith("405")
     assert body["orders_authorized"] is False
+
+
+def test_authenticated_opportunity_registry_endpoints_are_read_only(tmp_path):
+    from types import SimpleNamespace
+
+    class Registry:
+        def __init__(self):
+            self.calls = []
+
+        def list_opportunities(self, **kwargs):
+            self.calls.append(("list", kwargs))
+            return SimpleNamespace(items=({
+                "opportunity_id": "opp-spot-123",
+                "symbol": "BTCUSDT",
+                "market_type": "SPOT",
+                "venue": "BINANCE_SPOT_TESTNET",
+                "state": "WAITING",
+                "orders_authorized": False,
+            },), next_cursor=None)
+
+        def get_opportunity(self, opportunity_id):
+            self.calls.append(("get", opportunity_id))
+            if opportunity_id != "opp-spot-123":
+                return None
+            return {
+                "opportunity_id": opportunity_id,
+                "symbol": "BTCUSDT",
+                "market_type": "SPOT",
+                "venue": "BINANCE_SPOT_TESTNET",
+                "state": "WAITING",
+                "orders_authorized": False,
+            }
+
+        def list_events(self, opportunity_id):
+            self.calls.append(("events", opportunity_id))
+            return [{
+                "event_id": "event-1", "to_state": "WAITING",
+                "orders_authorized": False,
+            }]
+
+        def list_assessments(self, opportunity_id):
+            return [{"assessment_id": "assessment-1", "orders_authorized": False}]
+
+        def list_evidence(self, opportunity_id):
+            return [{"evidence_id": "evidence-1", "orders_authorized": False}]
+
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    registry = Registry()
+    app = create_app(
+        database_path=db, token=TOKEN, opportunity_registry=registry,
+    )
+
+    status, _, body = request(
+        app,
+        path="/api/v1/opportunities?market_type=SPOT&venue=BINANCE_SPOT_TESTNET&limit=10",
+        auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("200")
+    assert body["items"][0]["opportunity_id"] == "opp-spot-123"
+    assert body["orders_authorized"] is False
+    assert registry.calls[0][1]["market_type"] == "SPOT"
+
+    status, _, detail = request(
+        app, path="/api/v1/opportunities/opp-spot-123",
+        auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("200")
+    assert detail["opportunity"]["venue"] == "BINANCE_SPOT_TESTNET"
+
+    status, _, events = request(
+        app, path="/api/v1/opportunities/opp-spot-123/events",
+        auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("200")
+    assert events["items"][0]["event_id"] == "event-1"
+
+    status, _, denied = request(app, path="/api/v1/opportunities", auth=None)
+    assert status.startswith("401")
+    assert denied["orders_authorized"] is False
+
+    status, _, forbidden = request(
+        app, path="/api/v1/opportunities", method="POST",
+        auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("405")
+    assert forbidden["orders_authorized"] is False
+
+
+def test_opportunity_api_rejects_partial_venue_filter_and_missing_registry(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+    status, _, body = request(
+        app, path="/api/v1/opportunities?market_type=SPOT",
+        auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("503")
+    assert body["orders_authorized"] is False
+
+    class Registry:
+        def list_opportunities(self, **kwargs):
+            raise AssertionError("partial venue filters must be rejected before database access")
+
+    app = create_app(database_path=db, token=TOKEN, opportunity_registry=Registry())
+    status, _, body = request(
+        app, path="/api/v1/opportunities?market_type=SPOT",
+        auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("400")
+    assert body["orders_authorized"] is False
+
