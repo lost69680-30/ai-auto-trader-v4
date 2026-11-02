@@ -358,6 +358,7 @@ class PostgresOpportunityStore:
 
     def list_opportunities(
         self, *, states: Iterable[str] | None = None, symbol: str | None = None,
+        market_type: str | None = None, venue: str | None = None,
         limit: int = 50, cursor: str | None = None,
     ) -> OpportunityPage:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
@@ -367,6 +368,9 @@ class PostgresOpportunityStore:
             raise ValueError("states contains an invalid opportunity state")
         if symbol is not None:
             symbol = _required_text(symbol, "symbol", 30).upper()
+        if market_type is not None or venue is not None:
+            if market_type not in _VENUES or venue != _VENUES.get(market_type):
+                raise ValueError("list scope must be an explicit Spot or Futures Testnet venue pair")
         cursor_row = None
         with self._connect() as conn:
             if cursor is not None:
@@ -385,6 +389,9 @@ class PostgresOpportunityStore:
             if symbol:
                 clauses.append("symbol = %s")
                 params.append(symbol)
+            if market_type is not None:
+                clauses.append("market_type = %s AND venue = %s")
+                params.extend((market_type, venue))
             if cursor_row:
                 clauses.append("(created_at, opportunity_id) < (%s, %s)")
                 params.extend((cursor_row["created_at"], cursor_row["opportunity_id"]))
