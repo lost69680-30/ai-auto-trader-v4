@@ -205,6 +205,7 @@ def market_intelligence_scan(
                     estimated_round_trip_cost_bps=cost_bps,
                     assessment_version=1,
                     orders_authorized=False,
+                    indicator_assessments=indicator_assessments,
                 ),
                 evidence_refs,
                 now=now,
