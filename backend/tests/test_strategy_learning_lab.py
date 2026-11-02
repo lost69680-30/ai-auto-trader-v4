@@ -27,8 +27,10 @@ def experiment(*, status="EVALUATED", holdout_used=False, nested_holdout_used=Fa
         assumptions={"fee_bps_per_side": 4, "orders_authorized": False},
         outcomes={
             "validation_folds": [
-                {"strategy_net_return_pct": 2.0, "buy_hold_return_pct": 1.0},
-                {"strategy_net_return_pct": 3.0, "buy_hold_return_pct": 1.0},
+                {"strategy_net_return_pct": 2.0, "buy_hold_return_pct": 1.0,
+                 "market_regime": {"trend_state": "UP", "volatility_state": "LOW", "observations": 39, "orders_authorized": False}},
+                {"strategy_net_return_pct": 3.0, "buy_hold_return_pct": 1.0,
+                 "market_regime": {"trend_state": "DOWN", "volatility_state": "HIGH", "observations": 39, "orders_authorized": False}},
             ],
             "untouched_holdout": {"strategy_net_return_pct": 1.0, "used_for_selection": nested_holdout_used},
             "holdout_used_for_selection": holdout_used,
@@ -58,6 +60,7 @@ def test_learning_dataset_uses_only_validated_folds_and_excludes_holdout():
     assert snapshot.source_experiment_ids == ("exp-001",)
     assert len(snapshot.validation_rows) == 2
     assert "untouched_holdout" not in str(snapshot.validation_rows)
+    assert snapshot.validation_rows[0]["market_regime"]["trend_state"] == "UP"
     assert snapshot.orders_authorized is False
 
 
