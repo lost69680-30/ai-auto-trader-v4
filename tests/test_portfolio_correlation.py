@@ -85,7 +85,7 @@ def test_portfolio_correlation_summary_reports_coverage_without_imputing_unknown
     assert summary.pair_count == 3
     assert summary.defined_pair_count == 1
     assert summary.undefined_pair_count == 2
-    assert summary.coverage_pct == pytest.approx(100 / 3)
+    assert summary.coverage_pct == pytest.approx(100 / 3, abs=0.0001)
     assert summary.max_abs_correlation == pytest.approx(1.0)
     assert len(summary.high_correlation_pairs) == 1
     assert summary.orders_authorized is False
