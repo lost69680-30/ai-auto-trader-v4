@@ -47,6 +47,25 @@ class ResearchDatasetSnapshot:
     validation_rows: tuple[Mapping[str, Any], ...]
     orders_authorized: bool = False
 
+    def __post_init__(self) -> None:
+        _text(self.dataset_fingerprint, "dataset_fingerprint", 128)
+        if not isinstance(self.source_experiment_ids, tuple) or not self.source_experiment_ids:
+            raise ValueError("source_experiment_ids must be a non-empty tuple")
+        if len(self.source_experiment_ids) != len(set(self.source_experiment_ids)):
+            raise ValueError("source experiment IDs must be unique")
+        if not isinstance(self.validation_rows, tuple) or not self.validation_rows:
+            raise ValueError("validation_rows must be a non-empty tuple")
+        allowed_ids = set(self.source_experiment_ids)
+        for row in self.validation_rows:
+            if not isinstance(row, Mapping) or row.get("experiment_id") not in allowed_ids:
+                raise ValueError("validation row provenance is invalid")
+            if "untouched_holdout" in row or "holdout" in row:
+                raise ValueError("final holdout data cannot enter a learning dataset")
+            if row.get("orders_authorized", False) is not False:
+                raise ValueError("orders_authorized must be false")
+        if self.orders_authorized is not False:
+            raise ValueError("orders_authorized must be false")
+
 
 @dataclass(frozen=True, slots=True)
 class LearningProposalValidation:
