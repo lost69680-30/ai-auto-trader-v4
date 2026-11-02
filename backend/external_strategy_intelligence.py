@@ -175,6 +175,7 @@ class ExternalStrategyCandidate:
     market_types: tuple[str, ...]
     symbols: tuple[str, ...]
     timeframes: tuple[str, ...]
+    indicators: tuple[str, ...]
     orders_authorized: bool = False
 
 
@@ -283,6 +284,7 @@ def assess_external_strategy(
             market_types=record.market_types,
             symbols=record.symbols,
             timeframes=record.timeframes,
+            indicators=record.indicators,
             orders_authorized=False,
         )
 
@@ -514,7 +516,7 @@ def persist_external_strategy_experiment(
         "market_types": list(candidate.market_types),
         "symbols": list(candidate.symbols),
         "timeframes": list(candidate.timeframes),
-        "indicators": list(candidate.rule_spec.parameters.keys()),
+        "indicators": list(candidate.indicators),
     }
     assumptions_payload["orders_authorized"] = False
     if market_regime_evidence is not None and not isinstance(market_regime_evidence, Mapping):
