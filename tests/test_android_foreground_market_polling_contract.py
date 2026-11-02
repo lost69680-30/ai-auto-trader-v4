@@ -90,7 +90,9 @@ def test_staging_apk_uses_the_deployed_staging_api_with_paper_ledger_endpoints()
     assert f'PAPER_API_BASE_URL="{staging_api}"' in workflow
     assert staging_api in workflow
     assert "solo-futures-websocket-staging.onrender.com" not in workflow
-    assert "ai-auto-trader-v4-backend.onrender.com" not in workflow
+    # The workflow must contain a production-URL rejection guard, not the production URL as its target.
+    assert "Production backend URL found in staging APK configuration" in workflow
+    assert 'PAPER_API_BASE_URL="https://ai-auto-trader-v4-backend.onrender.com"' not in workflow
 
 def test_valid_market_instrument_is_retained_when_inline_candles_are_empty():
     source = SOURCE.read_text(encoding="utf-8")
