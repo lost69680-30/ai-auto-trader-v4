@@ -163,3 +163,18 @@ def test_learning_agents_cannot_smuggle_portfolio_controls_as_model_weights(weig
     snapshot = build_research_dataset([experiment()])
     with pytest.raises(ValueError, match="risk or execution"):
         proposal(snapshot, weights=weights)
+
+
+def test_learning_dataset_rows_and_proposal_weights_are_immutable():
+    from dataclasses import FrozenInstanceError
+
+    snapshot = build_research_dataset([experiment()])
+    candidate = proposal(snapshot)
+    original_value = snapshot.validation_rows[0]["strategy_net_return_pct"]
+
+    with pytest.raises(TypeError):
+        snapshot.validation_rows[0]["strategy_net_return_pct"] = 999.0
+    with pytest.raises(TypeError):
+        candidate.weights["momentum"] = 99.0
+
+    assert snapshot.validation_rows[0]["strategy_net_return_pct"] == original_value
