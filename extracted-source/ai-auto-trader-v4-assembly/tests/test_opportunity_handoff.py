@@ -187,7 +187,7 @@ class FreshSource:
         rows = []
         for index in range(100):
             opened = self.now - timedelta(hours=100 - index)
-            close = 100.0 + index * 0.5
+            close = 100.0 + index * 0.5 if index <= 90 else 142.5 + (index - 91) * 0.95625
             rows.append(MarketCandle(
                 symbol=symbol, open_time=opened,
                 close_time=opened + timedelta(hours=1) - timedelta(seconds=1),
