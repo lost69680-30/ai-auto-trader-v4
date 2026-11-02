@@ -456,3 +456,21 @@ def test_reassessment_provider_is_called_per_opportunity_timeframe():
     assert store.get_opportunity(first.opportunity_id).state == "TRIGGERED"
     assert store.get_opportunity(second.opportunity_id).state == "WAITING"
 
+
+
+def test_trigger_overshoot_beyond_original_atr_buffer_is_blocked():
+    reset_registry()
+    now = datetime.now(timezone.utc)
+    store = PostgresOpportunityStore(DSN)
+    engine = coordinator(store)
+    created = register(engine, store, trigger=101.0, signal_id="overshoot-signal", now=now)
+
+    result = engine.evaluate_market_update(
+        "BTCUSDT", MarketTick("BTCUSDT", 103.0, now, candle_close=103.0), now=now,
+    )
+
+    assert result[0].status == "BLOCKED"
+    assert result[0].state == "BLOCKED"
+    assert "overshoot" in result[0].reason.lower()
+    assert store.get_opportunity(created.opportunity_id).state == "BLOCKED"
+    assert store.list_events(created.opportunity_id)[-1].to_state == "BLOCKED"
