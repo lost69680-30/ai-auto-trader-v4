@@ -119,3 +119,20 @@ def test_backtest_start_timestamp_uses_prior_candles_only_as_warmup():
 def test_backtest_config_requires_positive_integer_candle_interval(interval):
     with pytest.raises(ValueError, match="candle_interval_minutes"):
         BacktestConfig(candle_interval_minutes=interval)
+
+
+@pytest.mark.parametrize(
+    "config_kwargs",
+    [
+        {"initial_equity": True},
+        {"initial_equity": 10 ** 1000},
+        {"position_fraction": "0.1"},
+        {"fee_bps_per_side": False},
+        {"slippage_bps_per_side": float("nan")},
+        {"funding_bps_per_8h": float("inf")},
+        {"minimum_signal_score": "60"},
+    ],
+)
+def test_backtest_config_rejects_non_numeric_boolean_and_non_finite_values(config_kwargs):
+    with pytest.raises(ValueError, match="numeric|finite"):
+        BacktestConfig(**config_kwargs)
