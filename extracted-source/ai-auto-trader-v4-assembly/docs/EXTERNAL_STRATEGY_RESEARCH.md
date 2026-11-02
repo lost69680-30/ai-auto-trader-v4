@@ -74,6 +74,9 @@ as `REJECTED`; recent deterioration is stored as `DRIFT_FLAGGED`. The untouched
 final holdout is excluded from all these selection gates and is retained only
 as a separately reported result. The original public sample size, published
 metrics, backtest dates and methodology are preserved with the experiment.
+Each validation fold and the untouched holdout also retain a descriptive
+net-return-to-maximum-drawdown ratio. A zero-drawdown ratio is reported as
+undefined rather than infinity; it is not treated as evidence of zero risk.
 
 ## Isolated learning research
 
