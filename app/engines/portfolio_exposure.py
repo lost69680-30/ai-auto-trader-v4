@@ -135,7 +135,9 @@ def calculate_portfolio_exposure(
         )
         for symbol, notional in sorted(by_symbol.items())
     )
-    shares = [item.gross_notional / gross for item in assets]
+    # Concentration must use the unrounded source notionals. The rounded
+    # display values can materially distort HHI for small positions.
+    shares = [notional / gross for _, notional in sorted(by_symbol.items())]
     hhi = math.fsum(share * share for share in shares)
     gross_pct_equity = gross / equity_value * 100.0
     net_pct_equity = net / equity_value * 100.0
