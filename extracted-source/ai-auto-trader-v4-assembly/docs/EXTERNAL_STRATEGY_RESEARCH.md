@@ -15,9 +15,9 @@ Published metrics are preserved as source evidence. They are never converted
 into probabilities, expected returns or calibrated confidence. A leaderboard
 record without published rules remains `IDEA_ONLY`; proprietary rules are
 never inferred from scores or rankings. A candidate requires a sufficient
-sample, documented methodology, explicit supported rules, and market/timeframe
-scope. Candidate readiness means only that it can be reproduced in the
-research harness.
+sample, documented methodology, explicit supported rules, matching published
+indicator metadata, and market/timeframe scope. Candidate readiness means only
+that it can be reproduced in the research harness.
 
 ## Supported reproducible rules
 
@@ -51,8 +51,10 @@ automatic rejection/promotion rule. Insufficient folds are reported as
 `paper_ledger.strategy_research_experiments`. The migration
 `supabase/migrations/20261102184500_create_strategy_research_memory.sql`
 adds a private append-only table with provenance, candidate fingerprint,
-experiment/config versions, dataset window, assumptions, outcomes and failure
-reasons. Idempotency keys and candidate/version uniqueness prevent duplicate
+explicit rule version, market scope, experiment/config versions, dataset
+window, cost assumptions, outcomes, regime evidence and failure reasons.
+Unavailable regime data is explicitly marked `NOT_AVAILABLE`; it is never
+invented. Idempotency keys and candidate/version uniqueness prevent duplicate
 experiments. Database triggers reject update/delete operations.
 
 The migration is code only until separately approved and applied. It has not
