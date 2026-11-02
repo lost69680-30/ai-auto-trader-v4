@@ -22,7 +22,7 @@ from backend.shared_market_store import PostgresMarketFeedStore
 logger = logging.getLogger(__name__)
 
 
-def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source):
+def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source, *, paper_service=None):
     """Build a venue-bound reassessment job using only public price observations."""
     if not isinstance(coordinator, OpportunityCoordinator):
         raise ValueError("a venue-scoped OpportunityCoordinator is required")
@@ -74,10 +74,43 @@ def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source
         )
         if result.orders_authorized is not False:
             raise RuntimeError("opportunity coordinator violated paper-only authorization boundary")
+
+        # A trigger is only a research state. Futures must be freshly revalidated
+        # and passed through the existing PaperSignalCycle/Risk Guardian boundary;
+        # Spot remains research-only until it has an isolated Spot paper runtime.
+        handoff_count = 0
+        reconciliation_count = 0
+        if coordinator.market_type == "FUTURES" and paper_service is not None:
+            from backend.opportunity_handoff import (
+                process_triggered_opportunity, reconcile_paper_intents,
+            )
+            page = coordinator.store.list_opportunities(
+                states=("TRIGGERED", "RISK_CHECK"),
+                market_type=coordinator.market_type,
+                venue=coordinator.venue,
+                limit=50,
+            )
+            if page.next_cursor is not None:
+                raise RuntimeError("trigger handoff exceeded its bounded opportunity page")
+            for opportunity in page.items:
+                handoff = process_triggered_opportunity(
+                    coordinator, opportunity, source=source,
+                    paper_service=paper_service, now=now,
+                )
+                if handoff.get("orders_authorized") is not False:
+                    raise RuntimeError("opportunity handoff violated paper-only authorization boundary")
+                handoff_count += 1
+            reconciled = reconcile_paper_intents(
+                coordinator, paper_service.ledger, now=now,
+            )
+            if any(item.get("orders_authorized") is not False for item in reconciled):
+                raise RuntimeError("paper opportunity reconciliation violated paper-only authorization boundary")
+            reconciliation_count = len(reconciled)
+
         logger.info(
-            "opportunity reassessment completed venue=%s market_type=%s evaluated=%d failed=%d job=%s orders_authorized=False",
+            "opportunity reassessment completed venue=%s market_type=%s evaluated=%d failed=%d handoffs=%d reconciled=%d job=%s orders_authorized=False",
             coordinator.venue, coordinator.market_type, result.evaluated_count,
-            result.failed_count, idempotency_key,
+            result.failed_count, handoff_count, reconciliation_count, idempotency_key,
         )
 
     return handle
