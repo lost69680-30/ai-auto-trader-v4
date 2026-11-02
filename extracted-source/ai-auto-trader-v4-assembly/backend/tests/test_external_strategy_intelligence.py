@@ -31,7 +31,7 @@ def record(*, sample_size=80, rules=None, methodology="Published backtest method
         market_types=("CRYPTO_SPOT",),
         symbols=("BTCUSDT",),
         timeframes=("1h",),
-        indicators=("EMA", "ATR"),
+        indicators=("SMA", "ATR"),
         performance=ExternalPerformanceEvidence(
             sample_size=sample_size,
             backtest_start=NOW - timedelta(days=180),
@@ -307,3 +307,11 @@ def test_external_strategy_evaluation_is_written_to_research_memory_without_auth
     assert memory.experiment.outcomes["orders_authorized"] is False
     assert memory.experiment.outcomes["holdout_used_for_selection"] is False
     assert memory.experiment.orders_authorized is False
+
+
+def test_external_rule_metadata_must_match_published_indicators():
+    item = record(rules=valid_rules())
+    assessment = assess_external_strategy(replace(item, indicators=("EMA", "ATR")))
+
+    assert assessment.status == "RULE_METADATA_MISMATCH"
+    assert assessment.candidate is None
