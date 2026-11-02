@@ -24,6 +24,12 @@ class WalkForwardConfig:
     candle_interval_minutes: int = 1
 
     def __post_init__(self) -> None:
+        geometry = (
+            self.train_bars, self.validation_bars, self.holdout_bars,
+            self.step_bars, self.candle_interval_minutes,
+        )
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in geometry):
+            raise ValueError("walk-forward fold geometry and candle interval must be integers")
         if self.train_bars < 30:
             raise ValueError("train_bars must be at least 30")
         if self.validation_bars < 32:
