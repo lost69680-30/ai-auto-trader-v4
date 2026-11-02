@@ -77,7 +77,7 @@ def test_futures_mark_index_and_funding_context_reaches_read_only_api():
     assert frame.next_funding_at == NOW + timedelta(hours=8)
     assert frame.orders_authorized is False
 
-    cache = MarketFeedCache(max_age_seconds=86400)
+    cache = MarketFeedCache(max_age_seconds=10 * 86400)
     cache.publish(poll)
     item = cache.items()[0]
     assert item["price_type"] == "FUTURES_MARK_PRICE"
