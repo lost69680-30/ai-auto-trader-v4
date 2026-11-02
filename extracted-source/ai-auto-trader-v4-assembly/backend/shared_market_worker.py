@@ -12,6 +12,7 @@ from app.engines.paper_service_app import PaperServiceApplication
 from backend.analysis_job_dispatcher import AnalysisJobDispatcher, market_feed_health_audit
 from backend.durable_scheduler import DurableJobScheduler
 from backend.market_intelligence_scan import market_intelligence_scan
+from backend.market_data_adapter import BinanceSpotMarketDataAdapter
 from backend.historical_candle_archive import PostgresCandleArchive, archive_is_caught_up, archive_market_poll, backfill_older_symbol_history, backfill_symbol_history
 from backend.shared_market_store import PostgresMarketFeedStore
 
@@ -102,9 +103,29 @@ def main() -> None:
             intelligence_fetch_workers = int(
                 os.environ.get("PAPER_MARKET_INTELLIGENCE_FETCH_WORKERS", "12")
             )
+            intelligence_interval = max(
+                300, int(os.environ.get("PAPER_MARKET_INTELLIGENCE_INTERVAL_SECONDS", "900"))
+            )
             intelligence_handlers["market_intelligence_scan"] = market_intelligence_scan(
                 store, app.worker.source, app.config.symbols,
-                market_type="FUTURES", candle_limit=intelligence_candle_limit,
+                market_type="FUTURES", venue="BINANCE_USDM_TESTNET",
+                candle_limit=intelligence_candle_limit,
+                max_fetch_workers=intelligence_fetch_workers,
+            )
+            # Spot uses its own public Testnet adapter and scan identity. It does
+            # not share Futures mark/funding semantics or the paper runtime's
+            # market source, and it has no exchange-order interface.
+            spot_source = BinanceSpotMarketDataAdapter()
+            scheduler.register_interval(
+                "market_intelligence_scan_spot",
+                interval_seconds=intelligence_interval,
+                first_run_at=datetime.now(timezone.utc) + timedelta(seconds=90),
+                payload={"scope": "market_intelligence"},
+            )
+            intelligence_handlers["market_intelligence_scan_spot"] = market_intelligence_scan(
+                store, spot_source, app.config.symbols,
+                market_type="SPOT", venue="BINANCE_SPOT_TESTNET",
+                candle_limit=intelligence_candle_limit,
                 max_fetch_workers=intelligence_fetch_workers,
             )
         dispatcher = AnalysisJobDispatcher(
