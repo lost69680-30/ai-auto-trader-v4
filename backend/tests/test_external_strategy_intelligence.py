@@ -476,3 +476,11 @@ def test_walk_forward_quality_accepts_consistent_cost_adjusted_validation_eviden
     assert report.maximum_fold_drawdown_pct == 5.0
     assert report.holdout_used is False
     assert report.orders_authorized is False
+
+
+def test_external_candidate_constructor_rejects_authorized_state():
+    assessment = assess_external_strategy(record(rules=valid_rules()))
+    assert assessment.candidate is not None
+
+    with pytest.raises(ValueError, match="orders_authorized"):
+        replace(assessment.candidate, orders_authorized=True)
