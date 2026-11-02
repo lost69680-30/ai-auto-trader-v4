@@ -197,3 +197,31 @@ def test_futures_reassessment_handler_hands_off_triggers_and_reconciles_ledger(m
     assert seen["states"] == ("TRIGGERED", "RISK_CHECK")
     assert seen["handoff"] == [("opp-triggered", paper_service)]
     assert seen["reconcile"] == 1
+
+
+def test_opportunity_reassessment_handler_rejects_price_snapshot_without_market_type():
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from backend.opportunity_coordinator import OpportunityCoordinator
+    from backend.shared_market_worker import opportunity_reassessment_handler
+
+    coordinator = object.__new__(OpportunityCoordinator)
+    coordinator.market_type = "SPOT"
+    coordinator.venue = "BINANCE_SPOT_TESTNET"
+    coordinator.reassess_due = lambda **kwargs: None
+
+    class IncompleteSource:
+        def fetch_mark_price(self, symbol):
+            return SimpleNamespace(
+                symbol=symbol, mark_price=123.4,
+                observed_at=datetime.now(timezone.utc), orders_authorized=False,
+            )
+
+    handler = opportunity_reassessment_handler(coordinator, IncompleteSource())
+    with pytest.raises(ValueError, match="mismatched"):
+        handler(
+            {"scope": "opportunity_reassessment", "market_type": "SPOT",
+             "venue": "BINANCE_SPOT_TESTNET"},
+            "spot-missing-market-type",
+        )
