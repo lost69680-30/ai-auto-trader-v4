@@ -37,12 +37,12 @@ def _repo_root():
     raise RuntimeError("repository migration directory was not found")
 
 
-def _record(*, experiment_version=1, orders_authorized=False):
+def _record(*, experiment_version=1, orders_authorized=False, candidate_fingerprint=None):
     end = datetime.now(timezone.utc)
     return StrategyResearchExperiment(
         experiment_id="research-" + uuid.uuid4().hex,
         candidate_id="external-candidate-alpha",
-        candidate_fingerprint="candidate-fingerprint-alpha",
+        candidate_fingerprint=candidate_fingerprint or ("candidate-fingerprint-" + uuid.uuid4().hex),
         source_provenance_id="source-provenance-alpha",
         experiment_version=experiment_version,
         dataset_start=end - timedelta(days=180),
@@ -95,16 +95,17 @@ def test_memory_is_durable_append_only_and_idempotent_across_store_instances():
 def test_memory_rejects_idempotency_conflicts_and_duplicate_versions():
     _apply_migration()
     store = PostgresStrategyResearchMemory(DSN)
-    first = _record()
+    fingerprint = "candidate-fingerprint-conflict"
+    first = _record(candidate_fingerprint=fingerprint)
     store.append(first, idempotency_key="memory-conflict-key")
-    conflicting = _record(experiment_version=2)
+    conflicting = _record(experiment_version=2, candidate_fingerprint=fingerprint)
 
     with pytest.raises(ValueError, match="idempotency"):
         store.append(conflicting, idempotency_key="memory-conflict-key")
 
     with pytest.raises(ValueError, match="version"):
         store.append(
-            _record(experiment_version=1),
+            _record(experiment_version=1, candidate_fingerprint=fingerprint),
             idempotency_key="memory-different-key",
         )
 
