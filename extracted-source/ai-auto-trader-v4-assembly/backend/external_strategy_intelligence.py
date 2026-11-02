@@ -183,7 +183,15 @@ class ExternalStrategyCandidate:
     symbols: tuple[str, ...]
     timeframes: tuple[str, ...]
     indicators: tuple[str, ...]
+    published_sample_size: int
+    published_backtest_start: datetime
+    published_backtest_end: datetime
+    published_metrics: Mapping[str, int | float]
+    published_methodology: str | None
     orders_authorized: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "published_metrics", MappingProxyType(dict(self.published_metrics)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,6 +304,11 @@ def assess_external_strategy(
             symbols=record.symbols,
             timeframes=record.timeframes,
             indicators=record.indicators,
+            published_sample_size=evidence.sample_size,
+            published_backtest_start=_aware(evidence.backtest_start, "backtest_start"),
+            published_backtest_end=_aware(evidence.backtest_end, "backtest_end"),
+            published_metrics=dict(evidence.published_metrics),
+            published_methodology=evidence.methodology,
             orders_authorized=False,
         )
 
@@ -525,6 +538,14 @@ def persist_external_strategy_experiment(
         "captured_at": _aware(candidate.captured_at, "candidate captured_at").isoformat(),
     }
     assumptions_payload["strategy_title"] = candidate.title
+    assumptions_payload["published_performance"] = {
+        "sample_size": candidate.published_sample_size,
+        "backtest_start": _aware(candidate.published_backtest_start, "published_backtest_start").isoformat(),
+        "backtest_end": _aware(candidate.published_backtest_end, "published_backtest_end").isoformat(),
+        "metrics": dict(candidate.published_metrics),
+        "methodology": candidate.published_methodology,
+        "orders_authorized": False,
+    }
     assumptions_payload["external_rule_spec"] = {
         "family": candidate.rule_spec.family,
         "parameters": dict(candidate.rule_spec.parameters),
