@@ -120,6 +120,7 @@ def test_portfolio_correlation_summary_rejects_invalid_thresholds(threshold):
     [
         PairwiseCorrelation("BTCUSDT", "ETHUSDT", 30, float("nan"), "OK"),
         PairwiseCorrelation("BTCUSDT", "ETHUSDT", 30, 1.5, "OK"),
+        PairwiseCorrelation("BTCUSDT", "ETHUSDT", 30, 10 ** 1000, "OK"),
         PairwiseCorrelation("BTCUSDT", "ETHUSDT", 30, None, "OK"),
         PairwiseCorrelation("BTCUSDT", "ETHUSDT", 30, 0.5, "UNKNOWN"),
         PairwiseCorrelation("BTCUSDT", "BTCUSDT", 30, 0.5, "OK"),
