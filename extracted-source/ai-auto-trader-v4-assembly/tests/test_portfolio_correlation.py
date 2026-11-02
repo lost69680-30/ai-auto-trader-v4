@@ -100,3 +100,14 @@ def test_single_asset_correlation_summary_has_unknown_coverage_not_zero():
     assert summary.max_abs_correlation is None
     assert summary.high_correlation_pairs == ()
     assert summary.orders_authorized is False
+
+
+@pytest.mark.parametrize("threshold", [True, -0.1, 1.1, 10 ** 1000])
+def test_portfolio_correlation_summary_rejects_invalid_thresholds(threshold):
+    report = calculate_pairwise_correlations({
+        "BTCUSDT": {1: 0.01, 2: 0.02},
+        "ETHUSDT": {1: 0.02, 2: 0.04},
+    }, min_observations=2)
+
+    with pytest.raises(ValueError, match="threshold"):
+        summarize_portfolio_correlations(report, high_correlation_threshold=threshold)
