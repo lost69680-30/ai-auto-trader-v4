@@ -58,6 +58,18 @@ experiments. Database triggers reject update/delete operations.
 The migration is code only until separately approved and applied. It has not
 been applied to the user's Supabase project by this work.
 
+## Isolated learning research
+
+`backend.strategy_learning_lab` accepts only Part 6 experiments marked
+`EVALUATED`, binds each proposal to a fingerprinted research dataset, and
+builds learning rows from validation folds only. The untouched final holdout is
+excluded from training data. Proposal contracts support PPO, RL, GAT and
+specialist-agent kinds, but do not include model-training implementations.
+Every proposal must be assessed against a separate independent evaluation
+dataset and a fixed baseline. Even a favourable comparison returns
+`REVIEW_REQUIRED`; it never promotes a strategy automatically. Proposal
+weights cannot modify risk limits or execution settings.
+
 ## Safety boundaries and current limitations
 
 - Every candidate, report and experiment has `orders_authorized=False`.
