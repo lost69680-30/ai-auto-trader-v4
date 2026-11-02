@@ -191,6 +191,10 @@ class ExternalStrategyCandidate:
     orders_authorized: bool = False
 
     def __post_init__(self) -> None:
+        if self.orders_authorized is not False:
+            raise ValueError("orders_authorized must be false")
+        if not isinstance(self.published_metrics, Mapping):
+            raise ValueError("published_metrics must be a mapping")
         object.__setattr__(self, "published_metrics", MappingProxyType(dict(self.published_metrics)))
 
 
