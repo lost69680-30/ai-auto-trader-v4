@@ -201,6 +201,11 @@ def evaluate_walk_forward(
     rs_cfg = research_config or ResearchConfig()
     rows = list(candles)
     _validate_dataset(symbol, rows, cfg.candle_interval_minutes)
+    if rows and rows[-1].timestamp.astimezone(timezone.utc) > (
+        research_now.astimezone(timezone.utc)
+        + timedelta(seconds=rs_cfg.max_future_skew_seconds)
+    ):
+        raise ValueError("candle dataset contains future timestamps relative to research_now")
     minimum = cfg.train_bars + cfg.validation_bars + cfg.holdout_bars
     if len(rows) < minimum:
         raise ValueError(f"not enough candles: need at least {minimum}, got {len(rows)}")
