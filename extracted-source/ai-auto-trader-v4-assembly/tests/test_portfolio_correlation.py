@@ -59,9 +59,12 @@ def test_single_asset_report_has_no_pairs():
     assert report.pairs == ()
     assert report.orders_authorized is False
 
-def test_extreme_finite_returns_fail_closed_when_correlation_arithmetic_overflows():
-    with pytest.raises(ValueError, match="finite"):
-        calculate_pairwise_correlations({
-            "BTCUSDT": {1: 1e308, 2: -1e308, 3: 1e308},
-            "ETHUSDT": {1: -1e308, 2: 1e308, 3: -1e308},
-        }, min_observations=3)
+def test_extreme_finite_returns_produce_stable_finite_correlation():
+    report = calculate_pairwise_correlations({
+        "BTCUSDT": {1: 1e308, 2: -1e308, 3: 1e308},
+        "ETHUSDT": {1: -1e308, 2: 1e308, 3: -1e308},
+    }, min_observations=3)
+
+    assert report.pairs[0].correlation == pytest.approx(-1.0)
+    assert report.pairs[0].status == "OK"
+    assert report.orders_authorized is False
