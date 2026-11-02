@@ -413,3 +413,28 @@ def test_walk_forward_quality_marks_low_trade_sample_insufficient():
     assert report.total_validation_trades == len(sparse_folds)
     assert report.holdout_used is False
     assert report.orders_authorized is False
+
+
+def test_walk_forward_quality_rejects_fold_that_claims_order_authorization():
+    from dataclasses import replace
+    from backend.external_strategy_intelligence import assess_walk_forward_quality
+    from backend.walk_forward import evaluate_walk_forward
+
+    rows = []
+    start = NOW - timedelta(minutes=359)
+    price = 100.0
+    for index in range(360):
+        price *= 1.0005
+        rows.append(Candle("BTCUSDT", start + timedelta(minutes=index), price,
+                           price * 1.002, price * 0.998, price, 1000.0))
+    baseline = evaluate_walk_forward(
+        "BTCUSDT", rows,
+        config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40),
+        research_now=NOW,
+    )
+    forged_strategy = replace(baseline.folds[0].strategy, orders_authorized=True)
+    forged_fold = replace(baseline.folds[0], strategy=forged_strategy)
+    forged = replace(baseline, folds=(forged_fold,) + baseline.folds[1:])
+
+    with pytest.raises(ValueError, match="invalid metrics"):
+        assess_walk_forward_quality(forged)
