@@ -36,8 +36,8 @@ class WalkForwardConfig:
             raise ValueError("validation_bars must be at least 32 to allow warmup and trades")
         if self.holdout_bars < 32:
             raise ValueError("holdout must be at least 32 bars to allow warmup and trades")
-        if self.step_bars <= 0:
-            raise ValueError("step_bars must be positive")
+        if self.step_bars < self.validation_bars:
+            raise ValueError("step_bars must be at least validation_bars to keep OOS windows disjoint")
         if self.candle_interval_minutes <= 0:
             raise ValueError("candle interval must be positive")
 
