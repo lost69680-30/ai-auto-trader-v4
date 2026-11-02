@@ -10,6 +10,7 @@ from backend.external_strategy_intelligence import (
     ExternalStrategyRecord,
     assess_external_strategy,
     evaluate_external_candidate,
+    evaluate_external_rule,
 )
 from backend.walk_forward import WalkForwardConfig
 from backend.strategy_research import Candle
@@ -150,3 +151,27 @@ def test_explicit_external_rules_are_evaluated_with_costs_and_untouched_holdout(
     assert all(fold.strategy.orders_authorized is False for fold in result.folds)
     assert result.holdout.strategy.total_costs >= 0
     assert result.orders_authorized is False
+
+
+@pytest.mark.parametrize(
+    ("rule_spec", "closes", "expected"),
+    [
+        (ExternalRuleSpec("SMA_CROSS", {"fast_period": 5, "slow_period": 20}),
+         [100 + index for index in range(25)], "LONG"),
+        (ExternalRuleSpec("MOMENTUM", {"lookback": 5, "threshold_pct": 1.0}),
+         [100.0] * 14 + [102.0], "LONG"),
+        (ExternalRuleSpec("BREAKOUT", {"lookback": 10, "buffer_pct": 0.1}),
+         [100.0] * 14 + [102.0], "LONG"),
+        (ExternalRuleSpec("RSI_THRESHOLD", {"period": 14, "oversold": 30, "overbought": 70}),
+         [100.0 + index for index in range(15)], "SHORT"),
+    ],
+)
+def test_supported_external_rule_families_are_deterministic(rule_spec, closes, expected):
+    start = NOW - timedelta(minutes=len(closes) - 1)
+    rows = [
+        Candle("BTCUSDT", start + timedelta(minutes=index), close, close * 1.01,
+               close * 0.99, close, 1000.0)
+        for index, close in enumerate(closes)
+    ]
+
+    assert evaluate_external_rule(rule_spec, rows) == expected
