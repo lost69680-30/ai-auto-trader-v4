@@ -147,3 +147,19 @@ def test_learning_comparison_rejects_reused_or_insufficient_evaluation_data():
     report = compare_learning_proposal(candidate, snapshot, insufficient, minimum_sample_size=30)
     assert report.status == "INSUFFICIENT_INDEPENDENT_EVIDENCE"
     assert report.promotion_status == "NOT_PROMOTED"
+
+
+@pytest.mark.parametrize(
+    "weights",
+    [
+        {"capital_exposure": 0.2},
+        {"max_drawdown_pct": 0.1},
+        {"margin_mode": 1.0},
+        {"equity_reserve": 0.1},
+        {"notional_cap": 100.0},
+    ],
+)
+def test_learning_agents_cannot_smuggle_portfolio_controls_as_model_weights(weights):
+    snapshot = build_research_dataset([experiment()])
+    with pytest.raises(ValueError, match="risk or execution"):
+        proposal(snapshot, weights=weights)
