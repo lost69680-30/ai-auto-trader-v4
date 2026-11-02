@@ -9,6 +9,7 @@ from backend.external_strategy_intelligence import (
     ExternalRuleSpec,
     ExternalStrategyRecord,
     assess_external_strategy,
+    assess_walk_forward_decay,
     evaluate_external_candidate,
     evaluate_external_rule,
 )
@@ -194,3 +195,64 @@ def test_missing_market_or_timeframe_scope_does_not_create_candidate():
 
     assert assessment.status == "INCOMPLETE_SCOPE"
     assert assessment.candidate is None
+
+
+def test_walk_forward_decay_uses_validation_folds_and_never_the_holdout():
+    from backend.backtesting import BacktestResult
+    from backend.walk_forward import evaluate_walk_forward
+
+    rows = []
+    start = NOW - timedelta(minutes=359)
+    price = 100.0
+    for index in range(360):
+        price *= 1.0005
+        rows.append(Candle(
+            "BTCUSDT", start + timedelta(minutes=index), price,
+            price * 1.002, price * 0.998, price, 1000.0,
+        ))
+    baseline = evaluate_walk_forward(
+        "BTCUSDT", rows,
+        config=WalkForwardConfig(
+            train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40,
+        ),
+        research_now=NOW,
+    )
+    folds = []
+    for index, fold in enumerate(baseline.folds):
+        pnl = 400.0 if index < 3 else -100.0
+        strategy = replace(fold.strategy, net_pnl=pnl)
+        folds.append(replace(fold, strategy=strategy))
+    changed = replace(baseline, folds=tuple(folds))
+    report = assess_walk_forward_decay(changed, recent_folds=2, minimum_folds=4)
+
+    assert report.status == "RECENT_EDGE_DETERIORATED"
+    assert report.change_pct_points < 0
+    assert report.holdout_used is False
+    assert report.orders_authorized is False
+
+
+def test_walk_forward_decay_requires_enough_validation_folds():
+    from backend.walk_forward import evaluate_walk_forward
+
+    rows = []
+    start = NOW - timedelta(minutes=199)
+    price = 100.0
+    for index in range(200):
+        price *= 1.0005
+        rows.append(Candle(
+            "BTCUSDT", start + timedelta(minutes=index), price,
+            price * 1.002, price * 0.998, price, 1000.0,
+        ))
+    result = evaluate_walk_forward(
+        "BTCUSDT", rows,
+        config=WalkForwardConfig(
+            train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40,
+        ),
+        research_now=NOW,
+    )
+    report = assess_walk_forward_decay(result, recent_folds=2, minimum_folds=4)
+
+    assert report.status == "INSUFFICIENT_FOLDS"
+    assert report.change_pct_points is None
+    assert report.holdout_used is False
+    assert report.orders_authorized is False
