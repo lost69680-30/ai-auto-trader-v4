@@ -18,6 +18,8 @@ class SearchRunResult:
     eligible_candidate_count: int
     analysis_only_count: int
     symbols: tuple[dict[str, Any], ...]
+    opportunities_registered_count: int = 0
+    opportunity_plan_failure_count: int = 0
     orders_authorized: bool = False
 
 
@@ -33,13 +35,16 @@ def continuous_opportunity_search(
     max_snapshot_age_seconds: float = 120.0,
     max_fetch_workers: int = 12,
     strategy_engine: MultiStrategyAssessmentEngine | None = None,
+    opportunity_coordinator: Any | None = None,
+    plan_lifetime_seconds: float | None = None,
 ):
     """Create a scheduled search handler over the worker's existing public source.
 
     The handler shares the current market-intelligence fetch path; it does not
     construct another exchange client or poller. It durably publishes scan reports
-    through the existing shared-market store. Durable opportunity identity and
-    waiting-state creation are handled by the opportunity coordinator stage.
+    through the existing shared-market store. If a venue-scoped opportunity
+    coordinator is supplied, eligible assessments are price-planned and registered
+    as durable waits; no paper intent or order is created.
     """
     if environment != "TESTNET":
         raise ValueError("continuous opportunity search is Testnet-only")
@@ -61,6 +66,8 @@ def continuous_opportunity_search(
         max_snapshot_age_seconds=max_snapshot_age_seconds,
         max_fetch_workers=max_fetch_workers,
         strategy_engine=strategy_engine,
+        opportunity_coordinator=opportunity_coordinator,
+        plan_lifetime_seconds=plan_lifetime_seconds,
     )
 
     def handle(payload: dict[str, Any], idempotency_key: str) -> SearchRunResult:
@@ -92,6 +99,16 @@ def continuous_opportunity_search(
             eligible_candidate_count=sum(item.get("decision") == "ELIGIBLE" for item in assessments),
             analysis_only_count=sum(item.get("decision") == "ANALYSIS_ONLY" for item in assessments),
             symbols=symbols,
+            opportunities_registered_count=sum(
+                item.get("status") == "REGISTERED"
+                for symbol in symbols
+                for item in symbol.get("opportunity_registrations", ())
+            ),
+            opportunity_plan_failure_count=sum(
+                item.get("status") in {"NO_PLAN", "REGISTRATION_FAILED"}
+                for symbol in symbols
+                for item in symbol.get("opportunity_registrations", ())
+            ),
             orders_authorized=False,
         )
 
