@@ -155,6 +155,13 @@ def test_valid_assessment_and_explicit_price_plan_create_durable_waiting_opportu
     assert saved_assessments[0].orders_authorized is False
     saved_evidence = store.list_evidence(created.opportunity_id)
     assert len(saved_evidence) == 3
+    price_plan_evidence = [item for item in saved_evidence if item.evidence_type == "PRICE_PLAN"]
+    assert len(price_plan_evidence) == 1
+    assert price_plan_evidence[0].reference_id == "price-plan:signal-1"
+    assert price_plan_evidence[0].payload["entry_price"] == 100.0
+    assert price_plan_evidence[0].payload["stop_price"] == 95.0
+    assert price_plan_evidence[0].payload["target_price"] == 110.0
+    assert price_plan_evidence[0].payload["orders_authorized"] is False
     assert all(item.orders_authorized is False for item in saved_evidence)
     assert [event.to_state for event in store.list_events(created.opportunity_id)] == [
         "DISCOVERED", "ASSESSING", "WAITING"
