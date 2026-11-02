@@ -270,76 +270,37 @@ git commit -m "feat: add continuous opportunity search"
 
 ## Task 4: Implement the durable multi-opportunity waiting coordinator
 
-**Files:**
-- Create: `extracted-source/ai-auto-trader-v4-assembly/backend/opportunity_coordinator.py` (proposed).
-- Test: `extracted-source/ai-auto-trader-v4-assembly/tests/test_opportunity_coordinator.py` (proposed).
-- Reuse: Task 1's `PostgresOpportunityStore` and the deterministic trigger comparisons in `backend/signal_watcher.py`.
+<badge>Completed and CI verified on the feature branch</badge>
 
-**Interfaces:**
+**Implemented files:**
+- `extracted-source/ai-auto-trader-v4-assembly/backend/opportunity_coordinator.py`
+- `extracted-source/ai-auto-trader-v4-assembly/tests/test_opportunity_coordinator.py`
+- Reuses Task 1's `PostgresOpportunityStore` and deterministic trigger comparisons from `backend/signal_watcher.py`.
+
+**Verified interfaces:**
 - `OpportunityCoordinator(store, trigger_evaluator, config)`.
-- `register_assessed_opportunity(assessment, *, now) -> OpportunityRecord`.
-- `reassess_due(*, now, limit) -> CoordinatorRunResult`.
-- `evaluate_market_update(symbol, market_update, *, now) -> tuple[TransitionResult, ...]`.
-- `cancel(opportunity_id, *, reason, actor, now) -> TransitionResult`.
-- `triggered_opportunity(opportunity_id) -> OpportunityRecord | None` for the later fresh-validation consumer.
+- `register_assessed_opportunity(assessment, *, now)`.
+- `reassess_due(*, now, limit)`.
+- `evaluate_market_update(symbol, market_update, *, now)`.
+- `cancel(opportunity_id, *, reason, actor, now)`.
+- `triggered_opportunity(opportunity_id)`.
 
-- [ ] **Step 1: Add failing lifecycle, concurrency and recovery tests**
+**Completed behavior and tests:**
+- [x] Multiple symbols and multiple independent setups for one symbol can wait simultaneously.
+- [x] Idempotent setup identity prevents duplicates while distinct triggers remain separate.
+- [x] Each market update evaluates relevant watches independently.
+- [x] Trigger, invalidation and expiry are mutually consistent, terminal and audited.
+- [x] Stale market updates cannot trigger an opportunity.
+- [x] Concurrent workers cannot claim the same due opportunity simultaneously; expired leases can be reclaimed.
+- [x] Reassessment provider failures fail closed and release leases safely.
+- [x] Long-term analysis cannot enter the paper-eligible waiting/trigger lifecycle.
+- [x] Missing evidence, invalid price geometry, non-numeric market ticks and unavailable providers fail closed.
+- [x] Explicit price-plan evidence is persisted independently and idempotently.
+- [x] `PAPER_OPEN` requires a paper-ledger-confirmed position. A risk-approved paper intent is recorded separately as `INTENT_RECORDED`; it is not an open position.
 
-Cover:
-1. Multiple symbols can wait simultaneously.
-2. BTCUSDT can hold separate scalping and swing opportunities, or two distinct setups of one strategy, without overwrite.
-3. One market update evaluates every active watch for that symbol and only the matching opportunity transitions.
-4. Trigger, invalidation and expiry are mutually consistent and produce exactly one terminal transition/event.
-5. A stale market update produces `WAIT_RECHECK` and leaves the opportunity waiting; it never triggers.
-6. Two workers racing the same opportunity cannot both commit the same transition.
-7. A worker crash after claim but before completion is recovered after lease expiry.
-8. Replayed trigger events do not duplicate validation requests or paper intents.
-9. Strategy disagreement is preserved; rejecting one setup does not cancel a different setup.
-10. Long-term analysis may be reassessed and surfaced but never enters the eligible waiting-to-paper path.
-11. Illegal state transitions, missing evidence and uncertain database/portfolio state fail closed with an audit reason.
+**Verification:** The latest full backend CI suite passed **526 tests**; PostgreSQL ledger and opportunity registry integration tests passed, including concurrent claims, lease expiry/reclaim and the ledger-confirmed `PAPER_OPEN` boundary. ASGI and read-only market-data/safety checks passed. Tests ran against disposable GitHub Actions PostgreSQL services; no Supabase migration was applied.
 
-- [ ] **Step 2: Verify the expected failures**
-
-Run:
-
-```bash
-pytest -q tests/test_opportunity_coordinator.py
-```
-
-Expected: tests fail because the durable coordinator and state transition flow are not yet implemented.
-
-- [ ] **Step 3: Implement the lifecycle coordinator**
-
-Use the Task 1 store for all durable state. Treat `backend.signal_watcher.py` as a pure comparison/validation primitive only; do not depend on its in-memory request/status dictionaries for restart recovery. Evaluate durable watch conditions against the latest validated shared snapshot/closed candle, then atomically transition with expected version and event idempotency key.
-
-Support independent watch identity per setup. Keep trigger, invalidation, expiry, rejection, cancellation and blocked outcomes auditable. A trigger enqueues a distinct fresh-validation work item; it must not call the paper ledger or mark the opportunity paper-open. Reassessment must be bounded, lease-owned and safe to retry after worker restart.
-
-- [ ] **Step 4: Verify the focused pass**
-
-Run:
-
-```bash
-pytest -q tests/test_opportunity_coordinator.py
-```
-
-Expected: lifecycle, same-symbol parallel watches, idempotency, concurrent claims, expiry and recovery tests pass against fake clocks and the test PostgreSQL store.
-
-- [ ] **Step 5: Run affected integration checks**
-
-Run:
-
-```bash
-pytest -q backend/tests/test_signal_watcher.py tests/test_opportunity_store.py
-```
-
-Expected: deterministic watcher behavior remains unchanged and coordinator persistence/concurrency remains green.
-
-- [ ] **Step 6: Commit the passing deliverable**
-
-```bash
-git add extracted-source/ai-auto-trader-v4-assembly/backend/opportunity_coordinator.py extracted-source/ai-auto-trader-v4-assembly/tests/test_opportunity_coordinator.py
-git commit -m "feat: add durable multi-opportunity waiting"
-```
+**Boundary:** This coordinator is implemented and tested, but it is not yet activated by the supervised worker or connected to fresh trigger validation, the Risk Guardian and the read-only opportunity API. Those are Task 5.
 
 ## Task 5: Integrate scheduled worker, fresh validation, Risk Manager and read-only API
 
@@ -428,7 +389,7 @@ These are intentionally not silently fixed by the implementation plan. Engineeri
 3. **Opportunity identity/deduplication:** approve the fingerprint boundary. Recommended inputs are market type, symbol, strategy ID/version, direction, timeframe set, trigger definition and evidence/config version; two materially different trigger definitions must never collapse into one record.
 4. **Universe and workload limits:** confirm the maximum enabled instruments, timeframe lookback, scan interval, per-cycle fetch concurrency, active-opportunity cap and reassessment batch size. Existing scan components currently constrain configured policies to 1–20 symbols and fetch concurrency to at most 20; expanding those limits needs separate capacity evidence.
 5. **Price-plan source and eligibility:** confirm which existing price-planning method is permitted to create explicit entry/stop/target values for each strategy. If no valid plan exists, the correct outcome is no trade—not a guessed price.
-6. **Paper position lifecycle mapping:** confirm whether `PAPER_OPEN` means an accepted paper intent or a ledger-confirmed open position. Until this decision is approved, the implementation must persist separate intent-recorded and position-open events and must not label an intent as a filled/open position.
+6. **Paper position lifecycle mapping:** approved — `PAPER_OPEN` means a ledger-confirmed open paper position. A risk-approved intent is recorded separately as `INTENT_RECORDED` and must not be displayed or treated as an open position.
 7. **Notification behavior:** confirm whether users should be notified on every state transition or only on meaningful events such as new waiting opportunity, trigger, invalidation, expiry and Risk Manager block.
 8. **Activation gate:** continuous scanning cannot be claimed operational until an always-on worker host and its recovery behavior are verified. The current Render Free API-only service does not satisfy this requirement. This plan does not authorize a hosting change or deployment.
 
