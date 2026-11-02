@@ -76,9 +76,10 @@ def market_intelligence_scan(
 ):
     """Create a durable-scheduler handler for market assessment and strategy ranking.
 
-    The scan reads public market data only. It never creates a signal, paper intent,
-    order, fill, position, or risk-policy change. Its only write is an advisory
-    assessment payload through the supplied shared-market store.
+    The scan reads public market data only. When a venue-scoped coordinator is
+    supplied, independently eligible assessments receive a fresh ATR price plan
+    and are registered durably. This stage never creates a paper intent, risk
+    approval, fill, position, or exchange order.
     """
     policies = tuple(symbol_policies)
     if not policies or len(policies) > 20:
@@ -299,6 +300,7 @@ def market_intelligence_scan(
                             str(strategy_assessment.payload["direction"]), timeframe,
                             latest_candle.close_time.astimezone(timezone.utc).isoformat(),
                             format(float(reference_price), ".12g"),
+                            now.astimezone(timezone.utc).isoformat(),
                         ))
                         signal_id = "signal-" + hashlib.sha256(
                             signal_material.encode("utf-8")
