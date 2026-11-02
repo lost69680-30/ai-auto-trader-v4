@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +58,76 @@ def _finite_return(value: object) -> float:
         raise ValueError("returns must contain finite numeric values") from exc
     if not math.isfinite(result):
         raise ValueError("returns must contain finite numeric values")
+    return result
+
+
+def build_close_to_close_returns(
+    candles_by_symbol: Mapping[str, Iterable[Any]],
+    *,
+    interval_seconds: int,
+) -> dict[str, dict[int, float]]:
+    """Build timestamp-aligned close returns without bridging missing candles.
+
+    Each return is timestamped at the later candle. A return is emitted only
+    when two adjacent supplied candles are exactly one configured interval
+    apart. Gaps are omitted rather than forward-filled or bridged.
+    """
+    if not isinstance(candles_by_symbol, Mapping):
+        raise ValueError("candles_by_symbol must be a mapping")
+    if (
+        isinstance(interval_seconds, bool)
+        or not isinstance(interval_seconds, int)
+        or interval_seconds <= 0
+    ):
+        raise ValueError("interval_seconds must be a positive integer")
+
+    result: dict[str, dict[int, float]] = {}
+    for symbol, candle_rows in candles_by_symbol.items():
+        if not _valid_symbol(symbol):
+            raise ValueError("each candle series must use a canonical uppercase symbol")
+        if isinstance(candle_rows, (str, bytes)):
+            raise ValueError("each candle series must be iterable candle records")
+        try:
+            rows = list(candle_rows)
+        except TypeError as exc:
+            raise ValueError("each candle series must be iterable candle records") from exc
+
+        normalized: list[tuple[int, float]] = []
+        seen_timestamps: set[int] = set()
+        for row in rows:
+            if getattr(row, "symbol", None) != symbol:
+                raise ValueError("candle symbol does not match its mapping key")
+            stamp = getattr(row, "timestamp", None)
+            if (
+                not isinstance(stamp, datetime)
+                or stamp.tzinfo is None
+                or stamp.utcoffset() is None
+            ):
+                raise ValueError("candle timestamps must be timezone-aware")
+            epoch = stamp.astimezone(timezone.utc).timestamp()
+            if not math.isfinite(epoch) or epoch < 0 or not epoch.is_integer():
+                raise ValueError("candle timestamps must resolve to non-negative whole seconds")
+            timestamp = int(epoch)
+            if timestamp in seen_timestamps:
+                raise ValueError("candle timestamps must be unique within each series")
+            seen_timestamps.add(timestamp)
+            close = _finite_return(getattr(row, "close", None))
+            if close <= 0:
+                raise ValueError("candle close prices must be positive")
+            normalized.append((timestamp, close))
+
+        normalized.sort(key=lambda item: item[0])
+        returns: dict[int, float] = {}
+        for previous, current in zip(normalized, normalized[1:]):
+            previous_time, previous_close = previous
+            current_time, current_close = current
+            if current_time - previous_time != interval_seconds:
+                continue
+            value = current_close / previous_close - 1.0
+            if not math.isfinite(value):
+                raise ValueError("computed close-to-close return is not finite")
+            returns[current_time] = value
+        result[symbol] = returns
     return result
 
 
