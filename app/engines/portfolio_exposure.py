@@ -137,15 +137,20 @@ def calculate_portfolio_exposure(
     )
     shares = [item.gross_notional / gross for item in assets]
     hhi = math.fsum(share * share for share in shares)
+    gross_pct_equity = gross / equity_value * 100.0
+    net_pct_equity = net / equity_value * 100.0
+    top_share_pct = max(shares) * 100.0
+    if not all(math.isfinite(value) for value in (hhi, gross_pct_equity, net_pct_equity, top_share_pct)):
+        raise ValueError("derived portfolio exposure metrics are not finite")
     return PortfolioExposureReport(
         status="COMPLETE",
         position_count=open_count,
         asset_count=len(assets),
         gross_exposure=round(gross, 8),
         net_exposure=round(net, 8),
-        gross_exposure_pct_equity=round(gross / equity_value * 100.0, 6),
-        net_exposure_pct_equity=round(net / equity_value * 100.0, 6),
-        top_asset_share_pct=round(max(shares) * 100.0, 6),
+        gross_exposure_pct_equity=round(gross_pct_equity, 6),
+        net_exposure_pct_equity=round(net_pct_equity, 6),
+        top_asset_share_pct=round(top_share_pct, 6),
         concentration_hhi=round(hhi, 8),
         exposure_by_symbol=assets,
         max_mark_age_seconds=round(max(ages), 4),
