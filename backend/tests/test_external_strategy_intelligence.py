@@ -12,6 +12,7 @@ from backend.external_strategy_intelligence import (
     assess_walk_forward_decay,
     evaluate_external_candidate,
     evaluate_external_rule,
+    persist_external_strategy_experiment,
 )
 from backend.walk_forward import WalkForwardConfig
 from backend.strategy_research import Candle
@@ -256,3 +257,53 @@ def test_walk_forward_decay_requires_enough_validation_folds():
     assert report.change_pct_points is None
     assert report.holdout_used is False
     assert report.orders_authorized is False
+
+
+def test_external_strategy_evaluation_is_written_to_research_memory_without_authority():
+    assessment = assess_external_strategy(record(rules=valid_rules()))
+    rows = []
+    start = NOW - timedelta(minutes=359)
+    price = 100.0
+    for index in range(360):
+        price *= 1.0005
+        rows.append(Candle(
+            "BTCUSDT", start + timedelta(minutes=index), price,
+            price * 1.002, price * 0.998, price, 1000.0,
+        ))
+    walk_forward = evaluate_external_candidate(
+        assessment.candidate,
+        rows,
+        symbol="BTCUSDT",
+        walk_forward_config=WalkForwardConfig(
+            train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40,
+        ),
+        backtest_config=BacktestConfig(fee_bps_per_side=4, slippage_bps_per_side=2),
+        research_now=NOW,
+    )
+
+    class MemoryCapture:
+        def append(self, experiment, *, idempotency_key):
+            self.experiment = experiment
+            self.idempotency_key = idempotency_key
+            return experiment
+
+    memory = MemoryCapture()
+    result = persist_external_strategy_experiment(
+        memory,
+        assessment.candidate,
+        walk_forward,
+        dataset_start=rows[0].timestamp,
+        dataset_end=rows[-1].timestamp,
+        configuration_version="wf-v1",
+        experiment_version=1,
+        assumptions={"fee_bps_per_side": 4, "slippage_bps_per_side": 2},
+        idempotency_key="alpha-experiment-v1",
+    )
+
+    assert result is memory.experiment
+    assert memory.experiment.source_provenance_id == assessment.provenance_id
+    assert memory.experiment.candidate_fingerprint == assessment.candidate.candidate_fingerprint
+    assert memory.experiment.assumptions["orders_authorized"] is False
+    assert memory.experiment.outcomes["orders_authorized"] is False
+    assert memory.experiment.outcomes["holdout_used_for_selection"] is False
+    assert memory.experiment.orders_authorized is False
