@@ -104,3 +104,16 @@ Task 5: not started (worker, fresh validation, risk/ledger and read-only API int
 - Task 4: integrate supervised scheduled jobs, fresh trigger validation, read-only API visibility and the independent Risk Guardian/paper-ledger boundary.
 - Task 5: end-to-end restart, duplicate-delivery, fail-closed, API and worker-recovery verification.
 - Continuous runtime remains inactive until worker integration and an approved, verified always-on host.
+
+
+## Dual-venue research worker integration — implementation checkpoint (2026-11-02)
+
+- Added a Spot-specific public market-universe reader using Spot exchange metadata, 24-hour ticker and book-ticker endpoints. Spot contract metadata is labelled `SPOT`; Futures remains `FUTURES`.
+- Spot adapter defaults to Binance Spot Testnet (`https://testnet.binance.vision`); it does not use the production Spot data host. Spot candles and last-trade price remain read-only.
+- Added Spot-specific market-universe tests and Spot Testnet scan/venue-pair tests.
+- Extended continuous opportunity research validation to accept only the explicit pairs `SPOT/BINANCE_SPOT_TESTNET` and `FUTURES/BINANCE_USDM_TESTNET`.
+- Registered separate scheduled research scans for Spot and Futures in the supervised shared market worker. Both use the durable scheduler/dispatcher and existing shared report store; no second polling loop was added to the paper runtime.
+- Kept the worker's Spot source separate from the Futures source so Spot last-trade prices cannot be interpreted as Futures mark/funding data.
+- Synchronized root/assembly mirrored market adapter and worker files. CI caught a missing root mirror for the new search module and a premature import; both were corrected. The latest observed ASGI workflow passed; full test/build, PostgreSQL and read-only safety workflows were still running at the latest check.
+- **Important limitation:** this is scheduled dual-venue market intelligence/opportunity research, not yet a fully active durable opportunity lifecycle. The coordinator is not yet wired to venue-scoped reassessment/price-plan refresh, and triggered opportunities are not yet connected end-to-end to fresh strategy revalidation, the independent Risk Guardian, the existing paper signal cycle/ledger, and authenticated read-only opportunity APIs. The current coordinator's reassessment provider groups by symbol without venue identity, so running Spot and Futures reassessment together would risk evaluating a watch against the wrong venue. This must be fixed before calling the Continuous Opportunity Engine operational.
+- No Supabase migration was applied, no deployment or hosting change was made, and no exchange permissions or order-authority settings were changed. All research outputs continue to require `orders_authorized=false`.
