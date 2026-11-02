@@ -403,3 +403,29 @@ The feature is not complete when code merely exists. Completion requires:
 - Trigger-to-fresh-validation-to-Risk-Manager-to-paper-ledger behavior is demonstrated with paper-only test data, including all fail-closed cases.
 - Authenticated API responses are verified read-only.
 - Staging deployment and Android phone acceptance are separate later gates and require explicit authorization; neither is part of this plan's execution.
+
+---
+
+## Part 5 implementation record — 2026-11-02
+
+**Repository implementation: completed on the feature branch; not deployed or activated in the running backend.**
+
+- [x] Scheduled market-intelligence scans automatically create/update durable opportunities only from independently eligible, paper-safe strategy assessments and explicit fresh price plans. Long-term remains analysis-only.
+- [x] Stable setup identity, active-opportunity caps, idempotent creation and transactional waiting-plan refresh keep metadata, watch condition, price-plan evidence and audit version consistent.
+- [x] Venue-isolated Spot/Futures reassessment uses fresh read-only prices and the opportunity's own latest closed candle/timeframe; stale or malformed data fails closed.
+- [x] Trigger overshoot is checked against the original trigger buffer; excessive overshoot transitions to audited BLOCKED rather than silently remaining TRIGGERED.
+- [x] Futures trigger processing is now wired into the existing durable reassessment job. It reloads the opportunity, revalidates fresh market data and all five independent strategy assessments, runs the existing signal-handoff validation, then calls the existing PaperServiceApplication adapter into PaperSignalCycle, TradingOrchestrator and Risk Guardian. Spot remains research-only because no isolated Spot paper runtime is enabled.
+- [x] Paper-intent evidence/state is written only after the existing ledger confirms the deterministic proposal. A later ledger reconciliation moves to PAPER_OPEN only when a matching simulated position is confirmed. Uncertain ledger state does not trigger a duplicate handoff.
+- [x] Authenticated opportunity GET/list/detail/event/assessment/evidence API routes remain read-only.
+- [x] Added regression coverage for the worker's scheduled Futures handoff and ledger reconciliation. Existing paper-cycle/orchestrator/service tests cover risk veto, Emergency Stop, daily-loss, missing equity, stale marks, duplicate proposals and restart behavior.
+- [x] Root backend/shared_market_worker.py deployment mirror synchronized with the tested assembly copy.
+
+**Verification on exact feature-branch commit 4ac54fe98a8a13490789abca0d1ce943613d24f5:**
+- Durable PostgreSQL ledger/opportunity integration workflow: passed; complete backend suite 555 passed.
+- Second durable paper-ledger workflow: passed; complete backend suite 555 passed.
+- ASGI runtime workflow: passed.
+- Step 3 market-data/analysis safety and source-parity workflow: passed.
+- Disposable GitHub Actions PostgreSQL service applied the schema migrations successfully. The user's Supabase database was not migrated.
+- No live orders, deployment, PR merge, secrets changes, hosting changes or billing changes.
+
+**Remaining activation gates (not Part 5 code defects):** PR #74 remains draft/open and unmerged. The running Render backend has not been updated; the durable worker is not yet verified on an always-on host; no production/Supabase migration, staging activation or Android phone acceptance was performed. These require a separate explicit approval and deployment/hosting decision. Migration rollback was not run against the user's database.
