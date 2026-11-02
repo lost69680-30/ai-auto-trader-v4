@@ -655,8 +655,9 @@ class PostgresOpportunityStore:
                 raise ValueError("long-term analysis cannot receive a paper watch refresh")
             if watch.timeframe != current["timeframe"]:
                 raise ValueError("refreshed watch timeframe must match the opportunity")
-            if current["expires_at"] is not None and expiry > current["expires_at"]:
-                raise ValueError("refresh cannot extend the opportunity's original expiry")
+            created_at = _utc(current["created_at"], field_name="opportunity created_at")
+            if expiry > created_at + timedelta(hours=24):
+                raise ValueError("refresh cannot extend an opportunity beyond its 24-hour maximum lifetime")
 
             updated = conn.execute(
                 """UPDATE paper_ledger.opportunities
