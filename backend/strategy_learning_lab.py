@@ -25,6 +25,14 @@ _FORBIDDEN_WEIGHT_TERMS = {
 }
 
 
+def _freeze_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_value(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_value(item) for item in value)
+    return value
+
+
 def _text(value: object, name: str, maximum: int = 160) -> str:
     if not isinstance(value, str) or not value.strip() or value != value.strip() or len(value) > maximum:
         raise ValueError(f"{name} must be a trimmed non-empty string")
@@ -70,7 +78,7 @@ class ResearchDatasetSnapshot:
             raise ValueError("orders_authorized must be false")
         object.__setattr__(
             self, "validation_rows",
-            tuple(MappingProxyType(dict(row)) for row in self.validation_rows),
+            tuple(_freeze_value(dict(row)) for row in self.validation_rows),
         )
 
 
@@ -186,6 +194,20 @@ def build_research_dataset(
                 raise ValueError("validation fold evidence is malformed")
             strategy_return = _finite(fold.get("strategy_net_return_pct"), "strategy_net_return_pct")
             benchmark_return = _finite(fold.get("buy_hold_return_pct"), "buy_hold_return_pct")
+            regime = fold.get("market_regime")
+            if not isinstance(regime, dict) or regime.get("orders_authorized") is not False:
+                raise ValueError("validation fold market regime evidence is missing or invalid")
+            if regime.get("trend_state") not in {"UP", "DOWN", "RANGE"}:
+                raise ValueError("validation fold trend regime is invalid")
+            if regime.get("volatility_state") not in {"LOW", "MEDIUM", "HIGH"}:
+                raise ValueError("validation fold volatility regime is invalid")
+            observations = regime.get("observations")
+            if isinstance(observations, bool) or not isinstance(observations, int) or observations < 1:
+                raise ValueError("validation fold regime observation count is invalid")
+            trend_return = _finite(regime.get("trend_return_pct"), "regime trend_return_pct")
+            volatility = _finite(regime.get("realized_volatility_pct"), "regime realized_volatility_pct")
+            if volatility < 0 or not isinstance(regime.get("methodology"), str) or not regime["methodology"].strip():
+                raise ValueError("validation fold regime methodology or volatility is invalid")
             row = {
                 "experiment_id": experiment.experiment_id,
                 "candidate_fingerprint": experiment.candidate_fingerprint,
@@ -195,6 +217,15 @@ def build_research_dataset(
                 "strategy_net_return_pct": strategy_return,
                 "buy_hold_return_pct": benchmark_return,
                 "excess_return_pct": strategy_return - benchmark_return,
+                "market_regime": {
+                    "trend_state": regime["trend_state"],
+                    "volatility_state": regime["volatility_state"],
+                    "trend_return_pct": trend_return,
+                    "realized_volatility_pct": volatility,
+                    "observations": observations,
+                    "methodology": regime["methodology"],
+                    "orders_authorized": False,
+                },
             }
             rows.append(row)
     if len(ids) != len(set(ids)):
