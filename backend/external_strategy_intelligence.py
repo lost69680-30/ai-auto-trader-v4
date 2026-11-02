@@ -384,3 +384,77 @@ def evaluate_external_candidate(
         research_now=research_now,
         rule_spec=candidate.rule_spec,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyDecayReport:
+    status: str
+    fold_count: int
+    earlier_excess_return_pct: float | None
+    recent_excess_return_pct: float | None
+    change_pct_points: float | None
+    holdout_used: bool = False
+    orders_authorized: bool = False
+
+
+def assess_walk_forward_decay(
+    walk_forward_result: Any,
+    *,
+    recent_folds: int = 2,
+    minimum_folds: int = 4,
+) -> StrategyDecayReport:
+    """Describe changes in validation-fold excess returns without touching holdout.
+
+    This is a drift/decay diagnostic, not a promotion rule or calibrated forecast.
+    A negative change means recent validation folds underperformed earlier folds;
+    it does not by itself prove a strategy is broken.
+    """
+    from backend.walk_forward import WalkForwardResult
+
+    if not isinstance(walk_forward_result, WalkForwardResult):
+        raise ValueError("walk_forward_result must be a WalkForwardResult")
+    for name, value in (("recent_folds", recent_folds), ("minimum_folds", minimum_folds)):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"{name} must be a positive integer")
+    if minimum_folds <= recent_folds:
+        raise ValueError("minimum_folds must exceed recent_folds")
+
+    folds = walk_forward_result.folds
+    if len(folds) < minimum_folds:
+        return StrategyDecayReport(
+            status="INSUFFICIENT_FOLDS",
+            fold_count=len(folds),
+            earlier_excess_return_pct=None,
+            recent_excess_return_pct=None,
+            change_pct_points=None,
+            holdout_used=False,
+            orders_authorized=False,
+        )
+
+    excess_returns = []
+    for fold in folds:
+        strategy = fold.strategy
+        if (
+            not math.isfinite(strategy.initial_equity)
+            or strategy.initial_equity <= 0
+            or not math.isfinite(strategy.net_pnl)
+            or not math.isfinite(fold.buy_hold_return_pct)
+        ):
+            raise ValueError("walk-forward fold contains invalid performance evidence")
+        strategy_return = strategy.net_pnl / strategy.initial_equity * 100.0
+        excess_returns.append(strategy_return - fold.buy_hold_return_pct)
+
+    earlier = excess_returns[:-recent_folds]
+    recent = excess_returns[-recent_folds:]
+    earlier_mean = math.fsum(earlier) / len(earlier)
+    recent_mean = math.fsum(recent) / len(recent)
+    change = recent_mean - earlier_mean
+    return StrategyDecayReport(
+        status="RECENT_EDGE_DETERIORATED" if change < 0 else "NO_DETERIORATION_OBSERVED",
+        fold_count=len(folds),
+        earlier_excess_return_pct=round(earlier_mean, 6),
+        recent_excess_return_pct=round(recent_mean, 6),
+        change_pct_points=round(change, 6),
+        holdout_used=False,
+        orders_authorized=False,
+    )
