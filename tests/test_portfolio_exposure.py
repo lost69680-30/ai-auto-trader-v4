@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -55,7 +55,7 @@ def test_portfolio_exposure_reports_gross_net_and_asset_concentration():
 
 
 def test_portfolio_exposure_rejects_stale_marks_instead_of_assuming_zero():
-    stale = NOW.replace(minute=0)
+    stale = NOW - timedelta(minutes=1)
     with pytest.raises(ValueError, match="stale"):
         calculate_portfolio_exposure(
             [position("BTCUSDT", "LONG", 1.0, 100.0, observed_at=stale)],
