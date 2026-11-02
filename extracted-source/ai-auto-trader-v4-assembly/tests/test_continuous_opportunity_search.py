@@ -145,3 +145,107 @@ def test_continuous_search_rejects_spot_futures_venue_mismatch():
             venue="BINANCE_USDM_TESTNET",
         )
 
+
+
+def test_scan_registers_only_independently_eligible_assessments_when_atr_plan_is_ready():
+    from backend.market_data_adapter import MarketCandle
+    from backend.scanner import Contract
+    from backend.strategy_assessment_engine import StrategyAssessmentRecord
+    from backend.strategy_profiles import DEFAULT_STRATEGY_PROFILES
+
+    class PlanningSource(FakeSource):
+        def fetch_market_universe(self, *, now=None):
+            base = super().fetch_market_universe(now=now)
+            return SimpleNamespace(
+                snapshots=base.snapshots,
+                contracts=(Contract(
+                    "BTCUSDT", "TRADING", "PERPETUAL", "USDT",
+                    tick_size=0.01, quantity_step=0.001, min_quantity=0.001,
+                ),),
+            )
+
+        def fetch_mark_price(self, symbol):
+            return SimpleNamespace(
+                symbol=symbol, mark_price=102.0, observed_at=datetime.now(timezone.utc),
+                market_type="FUTURES", orders_authorized=False,
+            )
+
+        def fetch_klines(self, symbol, *, interval, limit, now=None):
+            self.calls.append((symbol, interval, limit))
+            if interval != "1h":
+                return ()
+            stamp = now or datetime.now(timezone.utc)
+            rows = []
+            for index in range(20):
+                opened = stamp - timedelta(hours=20 - index)
+                close = 100.0 + index * 0.1
+                rows.append(MarketCandle(
+                    symbol=symbol, open_time=opened,
+                    close_time=opened + timedelta(hours=1) - timedelta(seconds=1),
+                    open=close - 0.05, high=close + 0.5, low=close - 0.5,
+                    close=close, volume=100.0, quote_volume=10_000.0,
+                    trades=20, is_closed=True,
+                ))
+            return tuple(rows)
+
+    class EligibleSwingEngine:
+        def assess(self, candidate, evidence, *, now):
+            records = []
+            for profile in DEFAULT_STRATEGY_PROFILES:
+                eligible = profile.strategy_id == "swing"
+                records.append(StrategyAssessmentRecord(
+                    assessment_id=f"scan-{profile.strategy_id}",
+                    opportunity_id=candidate.opportunity_id,
+                    strategy_id=profile.strategy_id,
+                    strategy_version=profile.strategy_version,
+                    assessment_version=candidate.assessment_version,
+                    decision="ELIGIBLE" if eligible else (
+                        "ANALYSIS_ONLY" if profile.analysis_only else "NO_TRADE"
+                    ),
+                    payload={
+                        "strategy_id": profile.strategy_id,
+                        "strategy_version": profile.strategy_version,
+                        "direction": "LONG" if eligible else "NONE",
+                        "required_timeframes": list(profile.required_timeframes),
+                        "analysis_only": profile.analysis_only,
+                        "eligible_for_risk_review": eligible,
+                        "paper_eligible": eligible,
+                        "orders_authorized": False,
+                    },
+                    evidence_refs=list(evidence),
+                    orders_authorized=False,
+                ))
+            return tuple(records)
+
+    class FakeCoordinator:
+        market_type = "FUTURES"
+        venue = "BINANCE_USDM_TESTNET"
+
+        def __init__(self):
+            self.registrations = []
+
+        def register_assessed_opportunity(self, assessment, **kwargs):
+            self.registrations.append((assessment, kwargs))
+            return SimpleNamespace(opportunity_id="opp-test", state="WAITING")
+
+    source = PlanningSource()
+    store = FakeStore()
+    coordinator = FakeCoordinator()
+    handler = continuous_opportunity_search(
+        store, source, policies("BTCUSDT"), market_type="FUTURES",
+        strategy_engine=EligibleSwingEngine(),
+        opportunity_coordinator=coordinator,
+    )
+
+    result = handler({"scope": "continuous_opportunity_search"}, "auto-register-run")
+
+    assert result.opportunities_registered_count == 1
+    assert result.opportunity_plan_failure_count == 0
+    assert len(coordinator.registrations) == 1
+    assessment, kwargs = coordinator.registrations[0]
+    assert assessment.strategy_id == "swing"
+    assert kwargs["timeframe"] == "1h"
+    assert kwargs["market_type"] == "FUTURES"
+    assert kwargs["venue"] == "BINANCE_USDM_TESTNET"
+    assert kwargs["price_plan_result"].status == "READY"
+    assert kwargs["price_plan_result"].orders_authorized is False
