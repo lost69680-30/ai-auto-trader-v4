@@ -22,10 +22,10 @@ research harness.
 ## Supported reproducible rules
 
 The bounded rule DSL currently supports:
-- `SMA_CROSS`: integer fast and slow periods, fast smaller than slow.
-- `MOMENTUM`: integer lookback and positive return threshold.
-- `BREAKOUT`: integer lookback and non-negative breakout buffer.
-- `RSI_THRESHOLD`: integer period and ordered oversold/overbought levels.
+- `SMA_CROSS`: simple moving averages over integer fast/slow periods; fast is smaller than slow.
+- `MOMENTUM`: close-to-close percentage return over an integer lookback and a positive threshold.
+- `BREAKOUT`: close beyond the previous lookback window's high/low with a non-negative percentage buffer.
+- `RSI_THRESHOLD`: integer period and ordered oversold/overbought levels using a simple arithmetic gain/loss average (not Wilder smoothing).
 
 The current simulator supports only an explicitly declared `ONE_BAR` exit
 policy for external candidates. Other published exit rules are rejected rather
