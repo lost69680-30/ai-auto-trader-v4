@@ -496,7 +496,7 @@ class BinanceSpotMarketDataAdapter(BinanceUsdMFuturesAdapter):
     it is not a futures mark price or index price. It has no trading interface.
     """
 
-    SPOT_BASE_URL = "https://data-api.binance.vision"
+    SPOT_BASE_URL = "https://testnet.binance.vision"
 
     def __init__(self, *, base_url: str | None = None, timeout_seconds: float = 5.0,
                  transport: Transport | None = None) -> None:
