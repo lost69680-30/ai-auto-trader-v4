@@ -22,7 +22,7 @@ def assess_capacity(*, used_bytes: int, quota_bytes: int) -> dict[str, Any]:
     usage_percent = round((used_bytes / quota_bytes) * 100, 2)
     if used_bytes >= quota_bytes:
         status = "CAPACITY_EXHAUSTED"
-        action = "Pause new paper proposals if required records cannot be persisted; alert immediately."
+        action = "Escalate immediately; verify database write capability and pause paper workflows if ledger or audit writes fail."
     elif usage_percent >= 95:
         status = "EMERGENCY"
         action = "Stop nonessential ingestion and investigate capacity immediately; preserve ledger and audit data."
@@ -41,8 +41,7 @@ def assess_capacity(*, used_bytes: int, quota_bytes: int) -> dict[str, Any]:
         "usage_percent": usage_percent,
         "status": status,
         "recommended_action": action,
-        # This is an advisory guardrail, not an order authorization.
-        "allow_new_paper_proposals": used_bytes < quota_bytes,
+        "capacity_limit_reached": used_bytes >= quota_bytes,
     }
 
 
