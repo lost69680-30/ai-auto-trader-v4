@@ -170,6 +170,10 @@ class ExternalStrategyCandidate:
     candidate_id: str
     candidate_fingerprint: str
     source_provenance_id: str
+    source_name: str
+    source_url: str
+    source_record_id: str
+    captured_at: datetime
     title: str
     rule_spec: ExternalRuleSpec
     market_types: tuple[str, ...]
@@ -279,6 +283,10 @@ def assess_external_strategy(
             candidate_id="external-" + fingerprint[:32],
             candidate_fingerprint=fingerprint,
             source_provenance_id=provenance_id,
+            source_name=record.source_name,
+            source_url=record.source_url,
+            source_record_id=record.source_record_id,
+            captured_at=captured,
             title=record.title,
             rule_spec=record.rules,
             market_types=record.market_types,
@@ -507,6 +515,13 @@ def persist_external_strategy_experiment(
     assumptions_payload = dict(assumptions)
     if assumptions_payload.get("orders_authorized", False) is not False:
         raise ValueError("assumptions.orders_authorized must be false")
+    assumptions_payload["source_provenance"] = {
+        "source_name": candidate.source_name,
+        "source_url": candidate.source_url,
+        "source_record_id": candidate.source_record_id,
+        "captured_at": _aware(candidate.captured_at, "candidate captured_at").isoformat(),
+    }
+    assumptions_payload["strategy_title"] = candidate.title
     assumptions_payload["external_rule_spec"] = {
         "family": candidate.rule_spec.family,
         "parameters": dict(candidate.rule_spec.parameters),
