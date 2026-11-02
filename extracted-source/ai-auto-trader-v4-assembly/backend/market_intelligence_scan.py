@@ -3,12 +3,13 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 import math
 from typing import Any, Iterable, Mapping
 
+from app.engines.price_planner import PricePlanRequest, PricePlanningConfig, plan_prices
 from backend.adaptive_strategy import select_strategy
 from backend.strategy_assessment_engine import MultiStrategyAssessmentEngine, StrategyCandidate
 from backend.market_assessment import TIMEFRAME_ORDER, assess_market
@@ -20,6 +21,11 @@ from backend.timeframe_aggregation import aggregate_complete_yearly_candles
 logger = logging.getLogger(__name__)
 SCAN_INTERVALS = ("1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M")
 DEFAULT_CANDLE_LIMIT = 200
+OPPORTUNITY_TIMEFRAME_MAX_AGE_SECONDS = {
+    "1m": 180, "5m": 600, "15m": 1800, "30m": 3600,
+    "1h": 7200, "4h": 28800, "1d": 172800,
+    "1w": 1209600, "1M": 2678400,
+}
 
 
 def _json_safe(value: Any) -> Any:
@@ -65,6 +71,8 @@ def market_intelligence_scan(
     max_snapshot_age_seconds: float = 120.0,
     max_fetch_workers: int = 12,
     strategy_engine: MultiStrategyAssessmentEngine | None = None,
+    opportunity_coordinator: Any | None = None,
+    plan_lifetime_seconds: float | None = None,
 ):
     """Create a durable-scheduler handler for market assessment and strategy ranking.
 
@@ -94,6 +102,20 @@ def market_intelligence_scan(
     if len(set(symbols)) != len(symbols):
         raise ValueError("market intelligence symbol policies must be unique")
 
+    if opportunity_coordinator is not None and (
+        getattr(opportunity_coordinator, "market_type", None) != market_type
+        or getattr(opportunity_coordinator, "venue", None) != venue
+        or not callable(getattr(opportunity_coordinator, "register_assessed_opportunity", None))
+    ):
+        raise ValueError("opportunity coordinator must match this scan's isolated Testnet venue")
+    if plan_lifetime_seconds is not None and (
+        isinstance(plan_lifetime_seconds, bool)
+        or not isinstance(plan_lifetime_seconds, (int, float))
+        or not math.isfinite(plan_lifetime_seconds)
+        or not 30 <= plan_lifetime_seconds <= 86400
+    ):
+        raise ValueError("plan_lifetime_seconds must be between 30 and 86400 seconds")
+
     engine = strategy_engine or MultiStrategyAssessmentEngine()
 
     def handle(payload: dict[str, Any], idempotency_key: str) -> dict[str, Any]:
@@ -106,6 +128,11 @@ def market_intelligence_scan(
         universe = source.fetch_market_universe(now=now)
         snapshot_counts: dict[str, int] = {}
         snapshot_by_symbol: dict[str, Any] = {}
+        contract_counts: dict[str, int] = {}
+        contract_by_symbol: dict[str, Any] = {}
+        for contract in getattr(universe, "contracts", ()):
+            contract_counts[contract.symbol] = contract_counts.get(contract.symbol, 0) + 1
+            contract_by_symbol[contract.symbol] = contract
         for snapshot in universe.snapshots:
             snapshot_counts[snapshot.symbol] = snapshot_counts.get(snapshot.symbol, 0) + 1
             snapshot_by_symbol[snapshot.symbol] = snapshot
@@ -203,15 +230,139 @@ def market_intelligence_scan(
                     spread_bps=spread,
                     quote_volume_24h=volume,
                     estimated_round_trip_cost_bps=cost_bps,
-                    assessment_version=1,
+                    assessment_version=max(1, int(now.timestamp() * 1000)),
                     orders_authorized=False,
                     indicator_assessments=indicator_assessments,
                 ),
                 evidence_refs,
                 now=now,
             )
+            opportunity_registrations: list[dict[str, Any]] = []
+            if opportunity_coordinator is not None:
+                contract = contract_by_symbol.get(symbol) if contract_counts.get(symbol) == 1 else None
+                for strategy_assessment in independent_assessments:
+                    if (
+                        strategy_assessment.decision != "ELIGIBLE"
+                        or strategy_assessment.payload.get("eligible_for_risk_review") is not True
+                        or strategy_assessment.payload.get("paper_eligible") is not True
+                        or strategy_assessment.payload.get("analysis_only") is True
+                    ):
+                        continue
+                    required = strategy_assessment.payload.get("required_timeframes")
+                    timeframe = required[0] if isinstance(required, list) and required else None
+                    timeframe_age = OPPORTUNITY_TIMEFRAME_MAX_AGE_SECONDS.get(timeframe)
+                    if (
+                        contract is None
+                        or getattr(contract, "status", None) != "TRADING"
+                        or not isinstance(getattr(contract, "tick_size", None), (int, float))
+                        or isinstance(getattr(contract, "tick_size", None), bool)
+                        or not math.isfinite(float(contract.tick_size))
+                        or float(contract.tick_size) <= 0
+                        or timeframe_age is None
+                        or not candle_map.get(timeframe)
+                        or not snapshot_fresh
+                        or cost_pct is None
+                    ):
+                        opportunity_registrations.append({
+                            "strategy_id": strategy_assessment.strategy_id,
+                            "status": "NO_PLAN",
+                            "reason": "required contract, liquidity, cost or closed-candle evidence is unavailable",
+                            "orders_authorized": False,
+                        })
+                        continue
+                    try:
+                        price_snapshot = source.fetch_mark_price(symbol)
+                        reference_price = getattr(price_snapshot, "mark_price", None)
+                        reference_at = getattr(price_snapshot, "observed_at", None)
+                        reference_age = (
+                            (now - reference_at.astimezone(timezone.utc)).total_seconds()
+                            if isinstance(reference_at, datetime)
+                            and reference_at.tzinfo is not None
+                            and reference_at.utcoffset() is not None
+                            else math.inf
+                        )
+                        if (
+                            getattr(price_snapshot, "symbol", None) != symbol
+                            or getattr(price_snapshot, "market_type", None) != market_type
+                            or getattr(price_snapshot, "orders_authorized", None) is not False
+                            or not isinstance(reference_price, (int, float))
+                            or isinstance(reference_price, bool)
+                            or not math.isfinite(reference_price)
+                            or reference_price <= 0
+                            or reference_age < -2
+                            or reference_age > 30
+                        ):
+                            raise ValueError("reference price failed venue or freshness validation")
+                        latest_candle = candle_map[timeframe][-1]
+                        signal_material = "|".join((
+                            market_type, venue, symbol, strategy_assessment.strategy_id,
+                            str(strategy_assessment.payload["direction"]), timeframe,
+                            latest_candle.close_time.astimezone(timezone.utc).isoformat(),
+                            format(float(reference_price), ".12g"),
+                        ))
+                        signal_id = "signal-" + hashlib.sha256(
+                            signal_material.encode("utf-8")
+                        ).hexdigest()[:40]
+                        lifetime = (
+                            float(plan_lifetime_seconds)
+                            if plan_lifetime_seconds is not None
+                            else float(min(86400, max(900, timeframe_age)))
+                        )
+                        plan_result = plan_prices(
+                            PricePlanRequest(
+                                signal_id=signal_id,
+                                symbol=symbol,
+                                direction=strategy_assessment.payload["direction"],
+                                reference_price=float(reference_price),
+                                reference_price_at=reference_at,
+                                candles=tuple(candle_map[timeframe]),
+                                now=now,
+                                expires_at=now + timedelta(seconds=lifetime),
+                                estimated_round_trip_cost_pct=float(cost_pct),
+                                tick_size=float(contract.tick_size),
+                            ),
+                            PricePlanningConfig(max_candle_age_seconds=timeframe_age),
+                        )
+                        if plan_result.status != "READY":
+                            opportunity_registrations.append({
+                                "strategy_id": strategy_assessment.strategy_id,
+                                "status": "NO_PLAN",
+                                "reason": plan_result.reason,
+                                "orders_authorized": False,
+                            })
+                            continue
+                        saved_opportunity = opportunity_coordinator.register_assessed_opportunity(
+                            strategy_assessment,
+                            price_plan_result=plan_result,
+                            symbol=symbol,
+                            market_type=market_type,
+                            venue=venue,
+                            timeframe=timeframe,
+                            evidence_refs=evidence_refs,
+                            now=now,
+                        )
+                        opportunity_registrations.append({
+                            "strategy_id": strategy_assessment.strategy_id,
+                            "status": "REGISTERED",
+                            "opportunity_id": saved_opportunity.opportunity_id,
+                            "state": saved_opportunity.state,
+                            "orders_authorized": False,
+                        })
+                    except Exception as exc:
+                        logger.warning(
+                            "opportunity registration failed closed symbol=%s strategy=%s error=%s",
+                            symbol, strategy_assessment.strategy_id, type(exc).__name__,
+                        )
+                        opportunity_registrations.append({
+                            "strategy_id": strategy_assessment.strategy_id,
+                            "status": "REGISTRATION_FAILED",
+                            "reason": type(exc).__name__,
+                            "orders_authorized": False,
+                        })
+
             reports.append({
                 "symbol": symbol,
+                "opportunity_registrations": opportunity_registrations,
                 "assessment": assessment,
                 "indicator_assessments": indicator_assessments,
                 "selection": selection,
