@@ -781,12 +781,14 @@ class PaperServiceApplication:
 
     def __init__(self, *, config: PaperServiceConfig, worker: MarketDataWorker,
                  ledger: SQLitePaperLedger, protection: PaperProtectionEngine,
-                 runtime: PaperRuntime[PaperServiceAnalysisResult]) -> None:
+                 runtime: PaperRuntime[PaperServiceAnalysisResult],
+                 analysis_handler: PaperServiceAnalysisHandler | None = None) -> None:
         self.config = config
         self.worker = worker
         self.ledger = ledger
         self.protection = protection
         self.runtime = runtime
+        self._analysis_handler = analysis_handler
         self._closed = False
 
     @classmethod
@@ -848,7 +850,10 @@ class PaperServiceApplication:
                 fee_rate=config.fee_rate, slippage_bps=config.slippage_bps,
                 max_market_age_seconds=config.max_market_age_seconds,
             )
-            return cls(config=config, worker=worker, ledger=ledger, protection=protection, runtime=runtime)
+            return cls(
+                config=config, worker=worker, ledger=ledger, protection=protection,
+                runtime=runtime, analysis_handler=handler,
+            )
         except Exception:
             ledger.close()
             raise
@@ -863,6 +868,19 @@ class PaperServiceApplication:
         # data only; this application has no credentials or exchange-order client.
         source = BinanceUsdMFuturesAdapter(testnet=testnet)
         return cls.create(source=source, config=config, clock=clock)
+
+    def process_validated_handoff(
+        self, *, candidate: object, handoff: object, tick: MarketTick,
+        contract: Contract, now: datetime,
+    ):
+        """Use the same configured Risk Guardian and paper ledger as normal analysis."""
+        if self._closed:
+            raise RuntimeError("paper service application is closed")
+        if self._analysis_handler is None:
+            raise RuntimeError("validated paper handoff handler is unavailable")
+        return self._analysis_handler.process_validated_handoff(
+            candidate=candidate, handoff=handoff, tick=tick, contract=contract, now=now,
+        )
 
     def process_poll(self, poll: MarketPollResult, *, now: float) -> PaperRuntimeReport[PaperServiceAnalysisResult]:
         if self._closed:
