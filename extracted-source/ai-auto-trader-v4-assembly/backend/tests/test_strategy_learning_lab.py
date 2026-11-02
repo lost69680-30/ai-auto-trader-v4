@@ -28,9 +28,9 @@ def experiment(*, status="EVALUATED", holdout_used=False, nested_holdout_used=Fa
         outcomes={
             "validation_folds": [
                 {"strategy_net_return_pct": 2.0, "buy_hold_return_pct": 1.0,
-                 "market_regime": {"trend_state": "UP", "volatility_state": "LOW", "observations": 39, "orders_authorized": False}},
+                 "market_regime": {"trend_state": "UP", "volatility_state": "LOW", "trend_return_pct": 2.0, "realized_volatility_pct": 0.1, "observations": 39, "methodology": "test methodology", "orders_authorized": False}},
                 {"strategy_net_return_pct": 3.0, "buy_hold_return_pct": 1.0,
-                 "market_regime": {"trend_state": "DOWN", "volatility_state": "HIGH", "observations": 39, "orders_authorized": False}},
+                 "market_regime": {"trend_state": "DOWN", "volatility_state": "HIGH", "trend_return_pct": -2.0, "realized_volatility_pct": 1.2, "observations": 39, "methodology": "test methodology", "orders_authorized": False}},
             ],
             "untouched_holdout": {"strategy_net_return_pct": 1.0, "used_for_selection": nested_holdout_used},
             "holdout_used_for_selection": holdout_used,
