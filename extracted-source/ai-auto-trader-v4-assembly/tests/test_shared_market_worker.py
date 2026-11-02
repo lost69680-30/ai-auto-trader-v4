@@ -81,7 +81,7 @@ def test_opportunity_reassessment_handler_uses_venue_scoped_read_only_price_sour
     def reassess_due(*, now, market_update_provider, limit):
         seen["limit"] = limit
         seen["now"] = now
-        tick = market_update_provider("BTCUSDT", now)
+        tick = market_update_provider("BTCUSDT", "1h", now)
         seen["tick"] = tick
         return SimpleNamespace(evaluated_count=1, failed_count=0, orders_authorized=False)
 
@@ -95,6 +95,12 @@ def test_opportunity_reassessment_handler_uses_venue_scoped_read_only_price_sour
                 orders_authorized=False, market_type="SPOT",
             )
 
+        def fetch_klines(self, symbol, *, interval, limit, now):
+            seen["candle_request"] = (symbol, interval, limit)
+            return (SimpleNamespace(
+                symbol=symbol, close_time=now, close=123.1, is_closed=True,
+            ),)
+
     handler = opportunity_reassessment_handler(coordinator, SpotSource())
     handler(
         {"scope": "opportunity_reassessment", "market_type": "SPOT",
@@ -105,6 +111,8 @@ def test_opportunity_reassessment_handler_uses_venue_scoped_read_only_price_sour
     assert seen["limit"] == 50
     assert seen["tick"].symbol == "BTCUSDT"
     assert seen["tick"].price == 123.4
+    assert seen["tick"].candle_close == 123.1
+    assert seen["candle_request"] == ("BTCUSDT", "1h", 2)
 
 
 def test_opportunity_reassessment_handler_rejects_cross_venue_job_payload():
