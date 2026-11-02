@@ -320,3 +320,31 @@ def test_external_rule_metadata_must_match_published_indicators():
 
     assert assessment.status == "RULE_METADATA_MISMATCH"
     assert assessment.candidate is None
+
+
+def test_external_rule_spec_freezes_parameters_after_fingerprinting_inputs():
+    parameters = {"fast_period": 10, "slow_period": 30}
+    rules = ExternalRuleSpec("SMA_CROSS", parameters, "ONE_BAR")
+
+    parameters["fast_period"] = 20
+
+    assert rules.parameters["fast_period"] == 10
+    with pytest.raises(TypeError):
+        rules.parameters["fast_period"] = 5
+
+
+def test_published_external_metrics_are_immutable_source_evidence():
+    metrics = {"return_pct": 12.0}
+    evidence = ExternalPerformanceEvidence(
+        sample_size=50,
+        backtest_start=NOW - timedelta(days=90),
+        backtest_end=NOW - timedelta(days=10),
+        published_metrics=metrics,
+        methodology="documented",
+    )
+
+    metrics["return_pct"] = 999.0
+
+    assert evidence.published_metrics["return_pct"] == 12.0
+    with pytest.raises(TypeError):
+        evidence.published_metrics["return_pct"] = 1.0
