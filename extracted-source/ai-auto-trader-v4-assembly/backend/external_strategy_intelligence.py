@@ -662,6 +662,8 @@ def persist_external_strategy_experiment(
     )
 
     def window_metrics(window: Any) -> dict[str, Any]:
+        from backend.evaluation_metrics import calculate_risk_adjusted_metrics
+
         result = window.strategy
         if (
             not math.isfinite(result.initial_equity)
@@ -671,6 +673,7 @@ def persist_external_strategy_experiment(
             or not math.isfinite(result.max_drawdown_pct)
         ):
             raise ValueError("walk-forward result contains non-finite performance metrics")
+        risk_adjusted = calculate_risk_adjusted_metrics(result)
         return {
             "name": window.name,
             "strategy_net_return_pct": round(result.net_pnl / result.initial_equity * 100.0, 6),
@@ -678,6 +681,13 @@ def persist_external_strategy_experiment(
             "trade_count": result.trade_count,
             "total_costs": result.total_costs,
             "max_drawdown_pct": result.max_drawdown_pct,
+            "risk_adjusted": {
+                "net_return_pct": risk_adjusted.net_return_pct,
+                "max_drawdown_pct": risk_adjusted.max_drawdown_pct,
+                "return_to_drawdown_ratio": risk_adjusted.return_to_drawdown_ratio,
+                "status": risk_adjusted.status,
+                "orders_authorized": False,
+            },
             "used_for_selection": window.used_for_selection,
             "orders_authorized": False,
         }
