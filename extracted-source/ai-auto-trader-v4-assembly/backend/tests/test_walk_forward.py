@@ -70,3 +70,21 @@ def test_walk_forward_rejects_short_or_irregular_data_without_trades():
 def test_walk_forward_rejects_holdout_smaller_than_minimum():
     with pytest.raises(ValueError, match="holdout"):
         WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=5, step_bars=40)
+
+
+def test_walk_forward_records_descriptive_market_regime_for_each_window():
+    rows = make_candles(360, drift=0.05)
+    result = evaluate_walk_forward(
+        "BTCUSDT", rows,
+        config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40),
+        research_now=NOW,
+    )
+
+    assert result.folds
+    for fold in result.folds:
+        assert fold.market_regime.trend_state == "UP"
+        assert fold.market_regime.volatility_state == "LOW"
+        assert fold.market_regime.observations == 39
+        assert fold.market_regime.orders_authorized is False
+    assert result.holdout.market_regime.trend_state == "UP"
+    assert result.holdout.market_regime.orders_authorized is False
