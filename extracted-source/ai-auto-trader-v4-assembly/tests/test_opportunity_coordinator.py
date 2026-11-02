@@ -170,7 +170,7 @@ def test_valid_assessment_and_explicit_price_plan_create_durable_waiting_opportu
     ]
 
 
-def test_same_setup_is_idempotent_but_distinct_price_triggers_create_separate_opportunities():
+def test_price_changes_refresh_the_same_closed_candle_setup_without_duplicate_opportunities():
     reset_registry()
     now = datetime.now(timezone.utc)
     store = PostgresOpportunityStore(DSN)
@@ -178,11 +178,22 @@ def test_same_setup_is_idempotent_but_distinct_price_triggers_create_separate_op
 
     first = register(engine, store, now=now)
     repeated = register(engine, store, now=now)
-    second = register(engine, store, trigger=103.0, signal_id="signal-2", now=now)
+    refreshed = register(engine, store, trigger=103.0, signal_id="signal-2", now=now)
 
     assert repeated.opportunity_id == first.opportunity_id
-    assert second.opportunity_id != first.opportunity_id
-    assert len(store.list_opportunities(symbol="BTCUSDT", limit=20).items) == 2
+    assert refreshed.opportunity_id == first.opportunity_id
+    assert refreshed.state == "WAITING"
+    assert refreshed.version == first.version + 1
+    assert refreshed.metadata["price_plan"]["trigger_price"] == 103.0
+    watch = store.get_watch_condition(first.opportunity_id)
+    assert watch is not None
+    assert watch.trigger_price == 103.0
+    assert len(store.list_opportunities(symbol="BTCUSDT", limit=20).items) == 1
+    refresh_events = [
+        event for event in store.list_events(first.opportunity_id)
+        if "replaced the waiting price plan" in event.reason
+    ]
+    assert len(refresh_events) == 1
 
 
 def test_long_term_analysis_and_noneligible_assessments_cannot_create_watches():
