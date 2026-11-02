@@ -329,6 +329,27 @@ class OpportunityCoordinator:
                 now=stamp,
             )
 
+        # The explicit price plan is decision evidence in its own right. Keep it
+        # separately addressable so an opportunity can be audited without
+        # reconstructing the plan from mutable metadata.
+        price_plan_reference = f"price-plan:{plan.signal_id}"
+        price_plan_hash = hashlib.sha256(
+            f"{opportunity_id}|{price_plan_reference}".encode("utf-8")
+        ).hexdigest()[:40]
+        self.store.append_evidence(
+            OpportunityEvidenceRecord(
+                evidence_id="evidence-" + price_plan_hash,
+                opportunity_id=opportunity_id,
+                evidence_type="PRICE_PLAN",
+                reference_id=price_plan_reference,
+                observed_at=market_data_at,
+                payload=_price_plan_payload(plan),
+                orders_authorized=False,
+            ),
+            idempotency_key=f"evidence:{opportunity_id}:{price_plan_hash}",
+            now=stamp,
+        )
+
         if saved.state == "DISCOVERED":
             saved = self.store.transition(
                 opportunity_id, expected_version=saved.version, to_state="ASSESSING",
