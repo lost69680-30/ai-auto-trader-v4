@@ -192,3 +192,30 @@ def test_scan_ranks_eligible_opportunities_across_symbols():
         if item["selection"]["eligible_for_risk_review"]
     ]
     assert sorted(ranked) == [1, 2]
+
+def test_scheduled_scan_supports_spot_testnet_with_explicit_venue_identity():
+    source = FakeSource()
+    store = FakeStore()
+    handler = market_intelligence_scan(
+        store, source, (policy(),), market_type="SPOT",
+        venue="BINANCE_SPOT_TESTNET", candle_limit=100,
+    )
+
+    handler({"scope": "market_intelligence"}, "spot-market-scan-1")
+
+    assert store.payload["market_type"] == "SPOT"
+    assert store.payload["venue"] == "BINANCE_SPOT_TESTNET"
+    assert store.payload["environment"] == "TESTNET"
+    assert store.payload["orders_authorized"] is False
+    assert len(store.payload["symbols"][0]["strategy_assessments"]) == 5
+
+
+def test_spot_scan_rejects_futures_venue_identity():
+    import pytest
+
+    with pytest.raises(ValueError, match="venue"):
+        market_intelligence_scan(
+            FakeStore(), FakeSource(), (policy(),), market_type="SPOT",
+            venue="BINANCE_USDM_TESTNET",
+        )
+
