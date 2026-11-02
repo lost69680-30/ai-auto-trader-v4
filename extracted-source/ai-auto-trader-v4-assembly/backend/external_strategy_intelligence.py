@@ -422,6 +422,100 @@ def evaluate_external_candidate(
 
 
 @dataclass(frozen=True, slots=True)
+class WalkForwardQualityReport:
+    status: str
+    fold_count: int
+    total_validation_trades: int
+    mean_excess_return_pct: float | None
+    positive_fold_pct: float | None
+    maximum_fold_drawdown_pct: float | None
+    failure_reasons: tuple[str, ...]
+    holdout_used: bool = False
+    orders_authorized: bool = False
+
+
+def assess_walk_forward_quality(
+    walk_forward_result: Any,
+    *,
+    minimum_folds: int = 4,
+    minimum_total_trades: int = 30,
+    minimum_positive_fold_pct: float = 50.0,
+    maximum_fold_drawdown_pct: float = 25.0,
+) -> WalkForwardQualityReport:
+    """Reject weak or under-sampled validation results using validation folds only."""
+    from backend.walk_forward import WalkForwardResult
+
+    if not isinstance(walk_forward_result, WalkForwardResult) or walk_forward_result.orders_authorized is not False:
+        raise ValueError("a paper-only WalkForwardResult is required")
+    for name, value in (("minimum_folds", minimum_folds), ("minimum_total_trades", minimum_total_trades)):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"{name} must be a positive integer")
+    positive_threshold = _finite_number(minimum_positive_fold_pct, "minimum_positive_fold_pct")
+    drawdown_threshold = _finite_number(maximum_fold_drawdown_pct, "maximum_fold_drawdown_pct")
+    if not 0 <= positive_threshold <= 100:
+        raise ValueError("minimum_positive_fold_pct must be between 0 and 100")
+    if not 0 < drawdown_threshold <= 100:
+        raise ValueError("maximum_fold_drawdown_pct must be in (0, 100]")
+
+    folds = walk_forward_result.folds
+    trades = 0
+    excess_returns: list[float] = []
+    drawdowns: list[float] = []
+    for fold in folds:
+        result = fold.strategy
+        if (
+            isinstance(result.trade_count, bool)
+            or not isinstance(result.trade_count, int)
+            or result.trade_count < 0
+            or not math.isfinite(result.initial_equity)
+            or result.initial_equity <= 0
+            or not math.isfinite(result.net_pnl)
+            or not math.isfinite(result.max_drawdown_pct)
+            or not 0 <= result.max_drawdown_pct <= 100
+            or not math.isfinite(fold.buy_hold_return_pct)
+        ):
+            raise ValueError("walk-forward validation fold contains invalid metrics")
+        trades += result.trade_count
+        strategy_return = result.net_pnl / result.initial_equity * 100.0
+        excess_returns.append(strategy_return - fold.buy_hold_return_pct)
+        drawdowns.append(result.max_drawdown_pct)
+
+    if not folds or len(folds) < minimum_folds or trades < minimum_total_trades:
+        status = "INSUFFICIENT_DATA"
+        reasons = ("Validation folds or simulated trade count are below the minimum evidence threshold.",)
+    else:
+        mean_excess = math.fsum(excess_returns) / len(excess_returns)
+        positive_pct = sum(value > 0 for value in excess_returns) / len(excess_returns) * 100.0
+        maximum_drawdown = max(drawdowns, default=0.0)
+        reasons_list = []
+        if mean_excess <= 0:
+            reasons_list.append("Mean validation-fold excess return did not beat the cost-adjusted buy-and-hold baseline.")
+        if positive_pct < positive_threshold:
+            reasons_list.append("Too few validation folds produced positive excess returns.")
+        if maximum_drawdown > drawdown_threshold:
+            reasons_list.append("Maximum validation-fold drawdown exceeded the configured research threshold.")
+        status = "REJECTED" if reasons_list else "EVALUATED"
+        reasons = tuple(reasons_list)
+    mean_value = math.fsum(excess_returns) / len(excess_returns) if excess_returns else None
+    positive_value = (
+        sum(value > 0 for value in excess_returns) / len(excess_returns) * 100.0
+        if excess_returns else None
+    )
+    maximum_value = max(drawdowns, default=None)
+    return WalkForwardQualityReport(
+        status=status,
+        fold_count=len(folds),
+        total_validation_trades=trades,
+        mean_excess_return_pct=round(mean_value, 6) if mean_value is not None else None,
+        positive_fold_pct=round(positive_value, 4) if positive_value is not None else None,
+        maximum_fold_drawdown_pct=round(maximum_value, 4) if maximum_value is not None else None,
+        failure_reasons=reasons,
+        holdout_used=False,
+        orders_authorized=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class StrategyDecayReport:
     status: str
     fold_count: int
@@ -587,24 +681,36 @@ def persist_external_strategy_experiment(
             "orders_authorized": False,
         }
 
+    quality = assess_walk_forward_quality(walk_forward_result)
     decay = assess_walk_forward_decay(walk_forward_result)
     folds = [window_metrics(window) for window in walk_forward_result.folds]
     holdout = window_metrics(walk_forward_result.holdout)
-    status = (
-        "INSUFFICIENT_DATA" if decay.status == "INSUFFICIENT_FOLDS"
-        else "DRIFT_FLAGGED" if decay.status == "RECENT_EDGE_DETERIORATED"
-        else "EVALUATED"
-    )
-    failure_reasons = (
-        ("Recent validation-fold excess returns deteriorated versus earlier folds.",)
-        if status == "DRIFT_FLAGGED" else ()
-    )
+    if quality.status in {"INSUFFICIENT_DATA", "REJECTED"}:
+        status = quality.status
+        failure_reasons = quality.failure_reasons
+    elif decay.status == "RECENT_EDGE_DETERIORATED":
+        status = "DRIFT_FLAGGED"
+        failure_reasons = ("Recent validation-fold excess returns deteriorated versus earlier folds.",)
+    else:
+        status = "EVALUATED"
+        failure_reasons = ()
     outcomes = {
         "validation_folds": folds,
         "untouched_holdout": holdout,
         "holdout_used_for_selection": False,
         "promotion_decision": "NOT_PROMOTED",
         "market_regime_evidence": regime_evidence,
+        "quality": {
+            "status": quality.status,
+            "fold_count": quality.fold_count,
+            "total_validation_trades": quality.total_validation_trades,
+            "mean_excess_return_pct": quality.mean_excess_return_pct,
+            "positive_fold_pct": quality.positive_fold_pct,
+            "maximum_fold_drawdown_pct": quality.maximum_fold_drawdown_pct,
+            "failure_reasons": list(quality.failure_reasons),
+            "holdout_used": False,
+            "orders_authorized": False,
+        },
         "decay": {
             "status": decay.status,
             "fold_count": decay.fold_count,
