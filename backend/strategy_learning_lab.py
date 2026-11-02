@@ -19,6 +19,8 @@ _AGENT_KINDS = {"PPO", "RL", "GAT", "SPECIALIST"}
 _FORBIDDEN_WEIGHT_TERMS = {
     "risk", "leverage", "loss", "allocation", "order", "position",
     "orders_authorized", "stop", "take_profit", "takeprofit",
+    "capital", "exposure", "equity", "drawdown", "margin", "notional",
+    "quantity", "collateral", "liquidation", "portfolio",
 }
 
 
