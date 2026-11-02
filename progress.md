@@ -36,8 +36,18 @@ Task 3: complete (search handler implemented; worker activation is Task 5)
 - The new handler is not yet registered in the shared worker scheduler; that is Task 5. Continuous runtime is not active until worker integration and a verified always-on host.
 
 
-Task 4: not started
-Task 5: not started
+Task 4: complete (durable multi-opportunity coordinator implemented and CI verified)
+
+- Implemented durable same-symbol/multi-symbol independent watches, explicit trigger and invalidation conditions, expiry, cancellation, expected-version transitions and append-only audit events.
+- Added worker leases with exclusive concurrent claims and safe expiry/reclaim behavior.
+- Stale updates, invalid price plans, missing evidence, non-numeric ticks and provider failures fail closed.
+- Long-term analysis cannot enter the paper-eligible waiting/trigger lifecycle.
+- Explicit price-plan evidence is persisted separately from market-snapshot/candle references.
+- PostgreSQL tests verify concurrency and lease reclamation. The ledger lifecycle test verifies `PAPER_OPEN` is rejected without a ledger-confirmed position; risk-approved intent remains `INTENT_RECORDED`.
+- Latest full backend suite: 526 passed; PostgreSQL ledger/opportunity integration, ASGI and read-only market-data/safety checks passed.
+- Coordinator remains inactive until Task 5 registers it with the supervised worker and connects fresh validation, Risk Guardian, ledger and read-only API.
+
+Task 5: not started (worker, fresh validation, risk/ledger and read-only API integration).
 
 ---
 
