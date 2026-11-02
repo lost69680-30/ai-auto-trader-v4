@@ -418,3 +418,80 @@ def test_paper_open_requires_ledger_confirmation_after_risk_approved_intent():
     )
     assert opened.opportunity.state == "PAPER_OPEN"
     assert opened.opportunity.orders_authorized is False
+
+
+def test_waiting_opportunity_refresh_atomically_replaces_plan_watch_and_appends_audit_evidence():
+    apply_migrations_and_reset()
+    now = datetime.now(timezone.utc)
+    record = make_opportunity(
+        metadata={"price_plan": {"signal_id": "old-signal", "orders_authorized": False},
+                  "orders_authorized": False},
+    )
+    store = PostgresOpportunityStore(DSN)
+    _create_waiting_opportunity(store, record, key="refresh", now=now)
+    original_watch = WatchConditionRecord(
+        watch_id="watch-old", opportunity_id=record.opportunity_id,
+        trigger_rule="AT_OR_ABOVE", trigger_price=101.0,
+        invalidation_price=95.0, timeframe="4h",
+        expires_at=record.expires_at,
+        payload={"signal_id": "old-signal", "orders_authorized": False},
+        orders_authorized=False,
+    )
+    store.save_watch_condition(original_watch, idempotency_key="watch-old", now=now)
+
+    refreshed_watch = WatchConditionRecord(
+        watch_id="watch-new", opportunity_id=record.opportunity_id,
+        trigger_rule="CANDLE_CLOSE_ABOVE", trigger_price=102.0,
+        invalidation_price=96.0, timeframe="4h",
+        expires_at=now + timedelta(hours=2),
+        payload={"signal_id": "new-signal", "entry_price": 101.0,
+                 "stop_price": 96.0, "target_price": 111.0,
+                 "orders_authorized": False},
+        orders_authorized=False,
+    )
+    refreshed_metadata = {
+        "price_plan": {
+            "signal_id": "new-signal", "entry_price": 101.0,
+            "stop_price": 96.0, "target_price": 111.0,
+            "orders_authorized": False,
+        },
+        "orders_authorized": False,
+    }
+    refreshed_evidence = OpportunityEvidenceRecord(
+        evidence_id="evidence-new-price-plan", opportunity_id=record.opportunity_id,
+        evidence_type="PRICE_PLAN", reference_id="price-plan:new-signal",
+        observed_at=now, payload={"signal_id": "new-signal", "orders_authorized": False},
+        orders_authorized=False,
+    )
+
+    refreshed = store.refresh_waiting_opportunity(
+        record.opportunity_id, expected_version=2,
+        metadata=refreshed_metadata, expires_at=refreshed_watch.expires_at,
+        watch=refreshed_watch, evidence=refreshed_evidence,
+        idempotency_key="refresh-plan-v2", event_id="refresh-plan-event-v2",
+        reason="fresh closed-candle plan replaced the stale waiting plan",
+        evidence_version="fresh-evidence-v2", now=now + timedelta(seconds=5),
+    )
+
+    assert refreshed.version == 3
+    assert refreshed.state == "WAITING"
+    assert refreshed.metadata == refreshed_metadata
+    assert refreshed.expires_at == refreshed_watch.expires_at
+    assert store.get_watch_condition(record.opportunity_id) == refreshed_watch
+    assert [item.reference_id for item in store.list_evidence(record.opportunity_id)
+            if item.evidence_type == "PRICE_PLAN"] == ["price-plan:new-signal"]
+    events = store.list_events(record.opportunity_id)
+    assert events[-1].to_state == "WAITING"
+    assert events[-1].opportunity_version == 3
+    assert events[-1].reason == "fresh closed-candle plan replaced the stale waiting plan"
+    assert refreshed.orders_authorized is False
+
+    # A stale worker cannot overwrite the refreshed plan.
+    with pytest.raises((ValueError, RuntimeError), match="version|state|conflict"):
+        store.refresh_waiting_opportunity(
+            record.opportunity_id, expected_version=2,
+            metadata=refreshed_metadata, expires_at=refreshed_watch.expires_at,
+            watch=refreshed_watch, evidence=refreshed_evidence,
+            idempotency_key="refresh-plan-stale", event_id="refresh-plan-stale-event",
+            reason="stale refresh", evidence_version="stale", now=now + timedelta(seconds=6),
+        )
