@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -98,22 +99,18 @@ def test_invalid_provenance_and_backtest_windows_are_rejected():
     item = record(rules=valid_rules())
     with pytest.raises(ValueError, match="source"):
         assess_external_strategy(
-            ExternalStrategyRecord(
-                **{**item.__dict__, "source_url": "not-a-url"}
-            )
+            replace(item, source_url="not-a-url")
         )
     with pytest.raises(ValueError, match="window"):
         assess_external_strategy(
-            ExternalStrategyRecord(
-                **{
-                    **item.__dict__,
-                    "performance": ExternalPerformanceEvidence(
-                        sample_size=80,
-                        backtest_start=NOW,
-                        backtest_end=NOW - timedelta(days=1),
-                        published_metrics={},
-                        methodology="method",
-                    ),
-                }
+            replace(
+                item,
+                performance=ExternalPerformanceEvidence(
+                    sample_size=80,
+                    backtest_start=NOW,
+                    backtest_end=NOW - timedelta(days=1),
+                    published_metrics={},
+                    methodology="method",
+                ),
             )
         )
