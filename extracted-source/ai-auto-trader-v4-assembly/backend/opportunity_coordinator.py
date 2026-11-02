@@ -38,7 +38,7 @@ class CoordinatorRunResult:
     orders_authorized: bool = False
 
 
-MarketUpdateProvider = Callable[[str, datetime], MarketTick]
+MarketUpdateProvider = Callable[[str, str, datetime], MarketTick]
 
 
 def _utc(value: datetime, name: str = "timestamp") -> datetime:
@@ -581,7 +581,7 @@ class OpportunityCoordinator:
             owner=self.owner, now=stamp, limit=limit, lease_seconds=self.lease_seconds,
             market_type=self.market_type, venue=self.venue,
         )
-        grouped: dict[str, list[OpportunityRecord]] = {}
+        grouped: dict[tuple[str, str], list[OpportunityRecord]] = {}
         results: list[OpportunityEvaluation] = []
         for record in claimed:
             if record.expires_at is not None and record.expires_at <= stamp:
@@ -609,12 +609,12 @@ class OpportunityCoordinator:
                         None, False,
                     ))
             else:
-                grouped.setdefault(record.symbol, []).append(record)
+                grouped.setdefault((record.symbol, record.timeframe), []).append(record)
 
         try:
-            for symbol, records in grouped.items():
+            for (symbol, timeframe), records in grouped.items():
                 try:
-                    tick = market_update_provider(symbol, stamp)
+                    tick = market_update_provider(symbol, timeframe, stamp)
                     if not isinstance(tick, MarketTick) or tick.symbol != symbol:
                         raise ValueError("market update provider returned a mismatched symbol")
                     results.extend(self._evaluate_records(records, tick, now=stamp))
