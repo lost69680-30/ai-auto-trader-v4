@@ -191,9 +191,13 @@ def summarize_portfolio_correlations(
                 pair.observations < report.min_observations
                 or isinstance(pair.correlation, bool)
                 or not isinstance(pair.correlation, (int, float))
-                or not math.isfinite(pair.correlation)
-                or not -1 <= pair.correlation <= 1
             ):
+                raise ValueError("portfolio correlation value is invalid")
+            try:
+                correlation_value = float(pair.correlation)
+            except (OverflowError, TypeError, ValueError) as exc:
+                raise ValueError("portfolio correlation value is invalid") from exc
+            if not math.isfinite(correlation_value) or not -1 <= correlation_value <= 1:
                 raise ValueError("portfolio correlation value is invalid")
         elif pair.status == "INSUFFICIENT_OVERLAP":
             if pair.observations >= report.min_observations or pair.correlation is not None:
