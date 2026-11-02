@@ -82,16 +82,17 @@ def test_missing_methodology_blocks_candidate_even_when_rules_are_present():
 
 
 @pytest.mark.parametrize(
-    "rules",
+    ("family", "parameters"),
     [
-        ExternalRuleSpec(family="SMA_CROSS", parameters={"fast_period": 30, "slow_period": 10}),
-        ExternalRuleSpec(family="MOMENTUM", parameters={"lookback": 0, "threshold_pct": 1.0}),
-        ExternalRuleSpec(family="UNKNOWN", parameters={}),
-        ExternalRuleSpec(family="RSI_THRESHOLD", parameters={"period": 14, "oversold": 60, "overbought": 40}),
+        ("SMA_CROSS", {"fast_period": 30, "slow_period": 10}),
+        ("MOMENTUM", {"lookback": 0, "threshold_pct": 1.0}),
+        ("UNKNOWN", {}),
+        ("RSI_THRESHOLD", {"period": 14, "oversold": 60, "overbought": 40}),
     ],
 )
-def test_invalid_or_unsupported_rule_specs_are_rejected(rules):
+def test_invalid_or_unsupported_rule_specs_are_rejected(family, parameters):
     with pytest.raises(ValueError):
+        rules = ExternalRuleSpec(family=family, parameters=parameters)
         assess_external_strategy(record(rules=rules))
 
 
