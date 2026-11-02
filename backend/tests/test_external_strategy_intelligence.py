@@ -139,6 +139,7 @@ def test_explicit_external_rules_are_evaluated_with_costs_and_untouched_holdout(
     result = evaluate_external_candidate(
         assessment.candidate,
         rows,
+        symbol="BTCUSDT",
         walk_forward_config=WalkForwardConfig(
             train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40,
         ),
