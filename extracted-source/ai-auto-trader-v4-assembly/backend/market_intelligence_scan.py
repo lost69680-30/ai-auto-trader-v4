@@ -12,6 +12,7 @@ from typing import Any, Iterable, Mapping
 from backend.adaptive_strategy import select_strategy
 from backend.strategy_assessment_engine import MultiStrategyAssessmentEngine, StrategyCandidate
 from backend.market_assessment import TIMEFRAME_ORDER, assess_market
+from backend.indicator_intelligence import assess_indicators
 from backend.market_data_adapter import MarketCandle
 from backend.timeframe_aggregation import aggregate_complete_yearly_candles
 
@@ -153,6 +154,10 @@ def market_intelligence_scan(
             candle_map["1Y"] = _yearly_candles(symbol, candle_map.get("1M", ()))
 
             assessment = assess_market(symbol, candle_map, now=now)
+            indicator_assessments = {
+                interval: assess_indicators(symbol, interval, rows, now=now)
+                for interval, rows in candle_map.items()
+            }
             snapshot = snapshot_by_symbol.get(symbol) if snapshot_counts.get(symbol) == 1 else None
             snapshot_fresh = False
             if snapshot is not None:
@@ -207,6 +212,7 @@ def market_intelligence_scan(
             reports.append({
                 "symbol": symbol,
                 "assessment": assessment,
+                "indicator_assessments": indicator_assessments,
                 "selection": selection,
                 "strategy_assessments": independent_assessments,
                 "liquidity_evidence": {
