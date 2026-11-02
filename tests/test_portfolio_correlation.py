@@ -3,6 +3,8 @@ import pytest
 from app.engines.portfolio_correlation import (
     calculate_pairwise_correlations,
     summarize_portfolio_correlations,
+    PairwiseCorrelation,
+    PortfolioCorrelationReport,
 )
 
 
@@ -111,3 +113,23 @@ def test_portfolio_correlation_summary_rejects_invalid_thresholds(threshold):
 
     with pytest.raises(ValueError, match="threshold"):
         summarize_portfolio_correlations(report, high_correlation_threshold=threshold)
+
+
+@pytest.mark.parametrize(
+    "pair",
+    [
+        PairwiseCorrelation("BTCUSDT", "ETHUSDT", 30, float("nan"), "OK"),
+        PairwiseCorrelation("BTCUSDT", "ETHUSDT", 30, 1.5, "OK"),
+        PairwiseCorrelation("BTCUSDT", "ETHUSDT", 30, None, "OK"),
+        PairwiseCorrelation("BTCUSDT", "ETHUSDT", 30, 0.5, "UNKNOWN"),
+        PairwiseCorrelation("BTCUSDT", "BTCUSDT", 30, 0.5, "OK"),
+    ],
+)
+def test_portfolio_summary_rejects_forged_or_malformed_pair_records(pair):
+    report = PortfolioCorrelationReport(
+        min_observations=30,
+        pairs=(pair,),
+        orders_authorized=False,
+    )
+    with pytest.raises(ValueError, match="report|pair|correlation"):
+        summarize_portfolio_correlations(report, high_correlation_threshold=0.9)
