@@ -131,6 +131,13 @@ def test_scheduled_scan_publishes_assessment_and_adaptive_strategy_without_order
     assert indicators["1h"]["atr_14"] is not None
     assert indicators["1h"]["calibration_status"] == "NOT_CALIBRATED"
     assert indicators["1h"]["orders_authorized"] is False
+    strategy_assessments = item["strategy_assessments"]
+    assert len(strategy_assessments) == 5
+    for strategy_assessment in strategy_assessments:
+        evidence = strategy_assessment["payload"]["indicator_assessments"]
+        assert evidence["1h"]["status"] == "HEALTHY"
+        assert evidence["1h"]["rsi_14"] is not None
+        assert evidence["1h"]["orders_authorized"] is False
 
 
 def test_scheduled_scan_records_in_progress_candles_but_excludes_them_from_confirmed_analysis():
