@@ -263,7 +263,7 @@ def main() -> None:
                 opportunity_coordinator=spot_coordinator,
             )
             intelligence_handlers["opportunity_reassessment_futures"] = opportunity_reassessment_handler(
-                futures_coordinator, app.worker.source,
+                futures_coordinator, app.worker.source, paper_service=app,
             )
             intelligence_handlers["opportunity_reassessment_spot"] = opportunity_reassessment_handler(
                 spot_coordinator, spot_source,
