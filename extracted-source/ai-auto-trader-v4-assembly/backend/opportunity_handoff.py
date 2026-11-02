@@ -124,6 +124,7 @@ def process_triggered_opportunity(
     source: Any,
     paper_service: Any,
     now: datetime,
+    strategy_engine: Any | None = None,
 ) -> dict[str, Any]:
     """Revalidate all five strategies, then hand Futures through the existing paper cycle."""
     if not isinstance(coordinator, OpportunityCoordinator):
@@ -358,9 +359,8 @@ def process_triggered_opportunity(
             orders_authorized=False,
             indicator_assessments=indicators,
         )
-        assessments = MultiStrategyAssessmentEngine().assess(
-            strategy_candidate, refs, now=stamp,
-        )
+        engine = strategy_engine or MultiStrategyAssessmentEngine()
+        assessments = engine.assess(strategy_candidate, refs, now=stamp)
         target = next((item for item in assessments if item.strategy_id == record.strategy_id), None)
         evidence_version = _append_revalidation_evidence(
             coordinator, record, refs=refs, assessments=assessments,
