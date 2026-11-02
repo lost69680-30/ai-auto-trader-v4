@@ -58,13 +58,23 @@ class PaperLedgerClientTest {
     fun parsesPostgresIntegerMarksFreshValues() {
         val fresh = JSONObject().put("orders_authorized", false)
             .put("open_position_count", 0)
-            .put("latest_snapshot", JSONObject().put("account_equity", 1000.0).put("marks_fresh", 1))
+            .put("latest_snapshot", JSONObject().put("account_equity", 1000.0).put("marks_fresh", 1)
+                .put("snapshot_at", System.currentTimeMillis() / 1000.0))
         val stale = JSONObject().put("orders_authorized", false)
             .put("open_position_count", 0)
-            .put("latest_snapshot", JSONObject().put("account_equity", 1000.0).put("marks_fresh", 0))
+            .put("latest_snapshot", JSONObject().put("account_equity", 1000.0).put("marks_fresh", 0)
+                .put("snapshot_at", System.currentTimeMillis() / 1000.0))
 
         assertTrue(parsePaperRisk(fresh).marksFresh!!)
         assertFalse(parsePaperRisk(stale).marksFresh!!)
+    }
+
+    @Test
+    fun treatsOldOrMissingSnapshotTimeAsNotFresh() {
+        assertTrue(paperSnapshotMarksFresh("700", true, 1000.0)!!)
+        assertFalse(paperSnapshotMarksFresh("639", true, 1000.0)!!)
+        assertFalse(paperSnapshotMarksFresh("700", false, 1000.0)!!)
+        assertNull(paperSnapshotMarksFresh(null, true, 1000.0))
     }
 
     @Test
