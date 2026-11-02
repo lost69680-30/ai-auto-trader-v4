@@ -194,11 +194,23 @@ def main() -> None:
             intelligence_interval = max(
                 300, int(os.environ.get("PAPER_MARKET_INTELLIGENCE_INTERVAL_SECONDS", "900"))
             )
+            opportunity_store = PostgresOpportunityStore(dsn)
+            futures_coordinator = OpportunityCoordinator(
+                opportunity_store,
+                owner=f"{worker_id[:72]}-futures-opportunities",
+                market_type="FUTURES", venue="BINANCE_USDM_TESTNET",
+            )
+            spot_coordinator = OpportunityCoordinator(
+                opportunity_store,
+                owner=f"{worker_id[:72]}-spot-opportunities",
+                market_type="SPOT", venue="BINANCE_SPOT_TESTNET",
+            )
             intelligence_handlers["market_intelligence_scan"] = continuous_opportunity_search(
                 store, app.worker.source, app.config.symbols,
                 market_type="FUTURES", venue="BINANCE_USDM_TESTNET",
                 candle_limit=intelligence_candle_limit,
                 max_fetch_workers=intelligence_fetch_workers,
+                opportunity_coordinator=futures_coordinator,
             )
             # Spot uses its own public Testnet adapter and scan identity. It does
             # not share Futures mark/funding semantics or the paper runtime's
@@ -215,17 +227,7 @@ def main() -> None:
                 market_type="SPOT", venue="BINANCE_SPOT_TESTNET",
                 candle_limit=intelligence_candle_limit,
                 max_fetch_workers=intelligence_fetch_workers,
-            )
-            opportunity_store = PostgresOpportunityStore(dsn)
-            futures_coordinator = OpportunityCoordinator(
-                opportunity_store,
-                owner=f"{worker_id[:72]}-futures-opportunities",
-                market_type="FUTURES", venue="BINANCE_USDM_TESTNET",
-            )
-            spot_coordinator = OpportunityCoordinator(
-                opportunity_store,
-                owner=f"{worker_id[:72]}-spot-opportunities",
-                market_type="SPOT", venue="BINANCE_SPOT_TESTNET",
+                opportunity_coordinator=spot_coordinator,
             )
             intelligence_handlers["opportunity_reassessment_futures"] = opportunity_reassessment_handler(
                 futures_coordinator, app.worker.source,
