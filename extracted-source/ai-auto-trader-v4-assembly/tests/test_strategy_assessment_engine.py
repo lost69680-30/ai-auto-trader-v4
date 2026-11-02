@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from backend.market_assessment import MarketAssessment, TimeframeAssessment
+from backend.indicator_intelligence import IndicatorAssessment
 from backend.opportunity_store import StrategyAssessmentRecord
 from backend.strategy_assessment_engine import (
     DEFAULT_STRATEGY_PROFILES,
@@ -206,3 +207,49 @@ def test_assessor_failure_is_recorded_without_discarding_other_results():
     assert "RuntimeError" in " ".join(results[0].payload["reasons"])
     assert "sensitive connector detail" not in str(results[0].payload)
     assert results[1].decision == "ELIGIBLE"
+
+def test_indicator_evidence_is_preserved_when_one_strategy_assessor_fails():
+    indicator = IndicatorAssessment(
+        symbol="BTCUSDT",
+        timeframe="1h",
+        status="HEALTHY",
+        latest_close_time=NOW,
+        ema_20=101.0,
+        ema_50=100.0,
+        rsi_14=72.0,
+        macd_line=1.0,
+        macd_signal=1.2,
+        macd_histogram=-0.2,
+        bollinger_mid=100.0,
+        bollinger_upper=105.0,
+        bollinger_lower=95.0,
+        atr_14=2.0,
+        atr_percent=2.0,
+        vwap=100.5,
+        relative_volume_20=1.5,
+        trend="BULLISH",
+        momentum="MIXED",
+        confluence="MIXED",
+        reasons=("trend and momentum conflict",),
+        calibration_status="NOT_CALIBRATED",
+        orders_authorized=False,
+    )
+    profile = StrategyProfile("scalping", "SCALPING", ("1h",), "1.0.0")
+
+    def fail(candidate, evidence, profile, now):
+        raise RuntimeError("private connector detail")
+
+    result = MultiStrategyAssessmentEngine(
+        profiles=(profile,),
+        assessors={"scalping": fail},
+    ).assess(
+        candidate(indicator_assessments={"1h": indicator}),
+        ["snapshot:BTCUSDT:latest"],
+        now=NOW,
+    )[0]
+
+    assert result.decision == "REQUEST_MORE_EVIDENCE"
+    assert result.payload["indicator_assessments"]["1h"]["rsi_14"] == 72.0
+    assert result.payload["indicator_conflicts"] == ["1h"]
+    assert result.payload["indicator_evidence_status"] == "AVAILABLE"
+    assert result.payload["orders_authorized"] is False
