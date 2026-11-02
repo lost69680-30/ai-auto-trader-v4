@@ -135,3 +135,31 @@ def test_opportunity_reassessment_handler_rejects_cross_venue_job_payload():
              "venue": "BINANCE_USDM_TESTNET"},
             "wrong-venue-job",
         )
+
+
+def test_opportunity_reassessment_handler_rejects_price_snapshot_without_market_type():
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from backend.opportunity_coordinator import OpportunityCoordinator
+    from backend.shared_market_worker import opportunity_reassessment_handler
+
+    coordinator = object.__new__(OpportunityCoordinator)
+    coordinator.market_type = "SPOT"
+    coordinator.venue = "BINANCE_SPOT_TESTNET"
+    coordinator.reassess_due = lambda **kwargs: None
+
+    class IncompleteSource:
+        def fetch_mark_price(self, symbol):
+            return SimpleNamespace(
+                symbol=symbol, mark_price=123.4,
+                observed_at=datetime.now(timezone.utc), orders_authorized=False,
+            )
+
+    handler = opportunity_reassessment_handler(coordinator, IncompleteSource())
+    with pytest.raises(ValueError, match="mismatched"):
+        handler(
+            {"scope": "opportunity_reassessment", "market_type": "SPOT",
+             "venue": "BINANCE_SPOT_TESTNET"},
+            "spot-missing-market-type",
+        )
