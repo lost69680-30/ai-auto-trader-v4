@@ -76,7 +76,7 @@ def test_equity_snapshot_runner_uses_configured_baseline_and_stops_cleanly():
         def mark_to_market_risk_report(self, **kwargs):
             calls.append(kwargs)
             stop.set()
-            return type("Report", (), {"marks_fresh": True, "account_equity": 10_000.0})()
+            return type("Report", (), {"marks_fresh": True, "account_equity": 10_000.0, "open_position_count": 0})()
 
     shared_market_worker.run_equity_snapshot_scheduler(
         stop, Ledger(), initial_equity=10_000.0,
