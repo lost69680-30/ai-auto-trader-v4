@@ -14,6 +14,7 @@ import math
 from collections.abc import Mapping
 from urllib.parse import urlsplit
 from typing import Any
+from types import MappingProxyType
 
 
 _SUPPORTED_RULE_FAMILIES = {
@@ -70,6 +71,7 @@ class ExternalPerformanceEvidence:
             _finite_number(value, f"published metric {key}")
         if self.methodology is not None and not isinstance(self.methodology, str):
             raise ValueError("methodology must be text or None")
+        object.__setattr__(self, "published_metrics", MappingProxyType(dict(self.published_metrics)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +123,7 @@ class ExternalRuleSpec:
             overbought = self.parameters["overbought"]
             if not 0 < oversold < overbought < 100:
                 raise ValueError("RSI thresholds must satisfy 0 < oversold < overbought < 100")
+        object.__setattr__(self, "parameters", MappingProxyType(dict(self.parameters)))
 
 
 @dataclass(frozen=True, slots=True)
