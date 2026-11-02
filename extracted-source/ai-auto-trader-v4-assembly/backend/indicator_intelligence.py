@@ -224,17 +224,26 @@ def assess_indicators(
         rsi_direction = "BULLISH" if rsi14 >= 55.0 else "BEARISH" if rsi14 <= 45.0 else "NEUTRAL"
     if macd_line is not None and macd_signal is not None:
         macd_direction = "BULLISH" if macd_line > macd_signal else "BEARISH" if macd_line < macd_signal else "NEUTRAL"
-    if rsi_direction is not None and macd_direction is not None:
-        momentum = rsi_direction if rsi_direction == macd_direction else "MIXED"
+    directional_momentum = [
+        item for item in (rsi_direction, macd_direction)
+        if item in {"BULLISH", "BEARISH"}
+    ]
+    if len(directional_momentum) == 2 and directional_momentum[0] != directional_momentum[1]:
+        momentum = "MIXED"
+    elif directional_momentum:
+        momentum = directional_momentum[0]
+    elif rsi_direction == "NEUTRAL" and macd_direction == "NEUTRAL":
+        momentum = "NEUTRAL"
 
-    directional = {trend, momentum}
-    if trend in {"BULLISH", "BEARISH"} and momentum == trend:
-        confluence = trend
-    elif trend in {"BULLISH", "BEARISH"} and momentum in {"BULLISH", "BEARISH"} and momentum != trend:
+    directional = [
+        item for item in (trend, rsi_direction, macd_direction)
+        if item in {"BULLISH", "BEARISH"}
+    ]
+    if len(directional) >= 2 and all(item == directional[0] for item in directional):
+        confluence = directional[0]
+    elif len(set(directional)) > 1:
         confluence = "MIXED"
         reasons.append("Trend and momentum indicators conflict")
-    elif len(directional.intersection({"BULLISH", "BEARISH"})) > 1:
-        confluence = "MIXED"
     else:
         confluence = "INSUFFICIENT_DATA"
 
