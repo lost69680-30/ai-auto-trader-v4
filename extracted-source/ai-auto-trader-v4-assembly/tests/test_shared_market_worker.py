@@ -135,3 +135,65 @@ def test_opportunity_reassessment_handler_rejects_cross_venue_job_payload():
              "venue": "BINANCE_USDM_TESTNET"},
             "wrong-venue-job",
         )
+
+
+
+def test_futures_reassessment_handler_hands_off_triggers_and_reconciles_ledger(monkeypatch):
+    from types import SimpleNamespace
+    from datetime import datetime, timezone
+
+    from backend.opportunity_coordinator import OpportunityCoordinator
+    from backend.shared_market_worker import opportunity_reassessment_handler
+
+    record = SimpleNamespace(opportunity_id="opp-triggered", state="TRIGGERED")
+    seen = {"handoff": [], "reconcile": 0, "states": None}
+
+    class Store:
+        def list_opportunities(self, **kwargs):
+            seen["states"] = kwargs["states"]
+            return SimpleNamespace(items=(record,), next_cursor=None)
+
+    coordinator = object.__new__(OpportunityCoordinator)
+    coordinator.market_type = "FUTURES"
+    coordinator.venue = "BINANCE_USDM_TESTNET"
+    coordinator.store = Store()
+    coordinator.reassess_due = lambda **kwargs: SimpleNamespace(
+        evaluated_count=1, failed_count=0, orders_authorized=False,
+    )
+
+    def process(engine, opportunity, *, source, paper_service, now):
+        seen["handoff"].append((opportunity.opportunity_id, paper_service))
+        return {"status": "INTENT_RECORDED", "orders_authorized": False}
+
+    def reconcile(engine, ledger, *, now):
+        seen["reconcile"] += 1
+        return ({"state": "INTENT_RECORDED", "orders_authorized": False},)
+
+    monkeypatch.setattr(
+        "backend.opportunity_handoff.process_triggered_opportunity", process,
+    )
+    monkeypatch.setattr(
+        "backend.opportunity_handoff.reconcile_paper_intents", reconcile,
+    )
+
+    class FuturesSource:
+        def fetch_mark_price(self, symbol):
+            return SimpleNamespace(
+                symbol=symbol, mark_price=150.0,
+                observed_at=datetime.now(timezone.utc),
+                orders_authorized=False, market_type="FUTURES",
+            )
+
+    paper_service = SimpleNamespace(ledger=object())
+    handler = opportunity_reassessment_handler(
+        coordinator, FuturesSource(), paper_service=paper_service,
+    )
+    handler(
+        {"scope": "opportunity_reassessment", "market_type": "FUTURES",
+         "venue": "BINANCE_USDM_TESTNET"},
+        "futures-reassessment-1",
+    )
+
+    assert seen["states"] == ("TRIGGERED", "RISK_CHECK")
+    assert seen["handoff"] == [("opp-triggered", paper_service)]
+    assert seen["reconcile"] == 1
