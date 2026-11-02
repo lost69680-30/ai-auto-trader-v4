@@ -289,7 +289,7 @@ class PostgresOpportunityStore:
 
     def create_or_get_opportunity(
         self, record: OpportunityRecord, *, idempotency_key: str,
-        now: datetime | None = None,
+        now: datetime | None = None, max_active_per_symbol: int | None = None,
     ) -> OpportunityRecord:
         if not isinstance(record, OpportunityRecord) or record.orders_authorized is not False:
             raise ValueError("opportunity record must deny order authorization")
@@ -298,7 +298,40 @@ class PostgresOpportunityStore:
         key = self._idempotency(idempotency_key)
         stamp = _utc(now)
         metadata = _json(record.metadata, "metadata")
+        if max_active_per_symbol is not None and (
+            isinstance(max_active_per_symbol, bool)
+            or not isinstance(max_active_per_symbol, int)
+            or not 1 <= max_active_per_symbol <= 100
+        ):
+            raise ValueError("max_active_per_symbol must be between 1 and 100")
         with self._connect() as conn:
+            if max_active_per_symbol is not None:
+                # Serialize cap checks per venue/symbol so two scan workers cannot
+                # both observe the final slot and overfill the active registry.
+                cap_lock_key = f"opportunity-cap:{record.market_type}:{record.venue}:{record.symbol}"
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (cap_lock_key,),
+                )
+                existing_identity = conn.execute(
+                    """SELECT opportunity_id FROM paper_ledger.opportunities
+                       WHERE market_type = %s AND symbol = %s
+                         AND strategy_id = %s AND setup_fingerprint = %s""",
+                    (record.market_type, record.symbol, record.strategy_id, record.setup_fingerprint),
+                ).fetchone()
+                if existing_identity is None:
+                    active = conn.execute(
+                        """SELECT count(*) AS active_count
+                           FROM paper_ledger.opportunities
+                           WHERE market_type = %s AND venue = %s AND symbol = %s
+                             AND state IN (
+                               'DISCOVERED', 'ASSESSING', 'WAITING', 'REASSESSING',
+                               'TRIGGERED', 'RISK_CHECK', 'INTENT_RECORDED'
+                             )""",
+                        (record.market_type, record.venue, record.symbol),
+                    ).fetchone()
+                    if int(active["active_count"]) >= max_active_per_symbol:
+                        raise ValueError("active opportunity limit reached for symbol and venue")
             inserted = conn.execute(
                 """INSERT INTO paper_ledger.opportunities
                    (opportunity_id, idempotency_key, symbol, market_type, venue,
