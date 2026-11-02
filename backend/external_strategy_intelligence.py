@@ -464,7 +464,8 @@ def assess_walk_forward_quality(
     for fold in folds:
         result = fold.strategy
         if (
-            isinstance(result.trade_count, bool)
+            result.orders_authorized is not False
+            or isinstance(result.trade_count, bool)
             or not isinstance(result.trade_count, int)
             or result.trade_count < 0
             or not math.isfinite(result.initial_equity)
