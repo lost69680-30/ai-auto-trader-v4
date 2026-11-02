@@ -58,3 +58,10 @@ def test_single_asset_report_has_no_pairs():
     report = calculate_pairwise_correlations({"BTCUSDT": {1: 0.1, 2: -0.1}})
     assert report.pairs == ()
     assert report.orders_authorized is False
+
+def test_extreme_finite_returns_fail_closed_when_correlation_arithmetic_overflows():
+    with pytest.raises(ValueError, match="finite"):
+        calculate_pairwise_correlations({
+            "BTCUSDT": {1: 1e308, 2: -1e308, 3: 1e308},
+            "ETHUSDT": {1: -1e308, 2: 1e308, 3: -1e308},
+        }, min_observations=3)
