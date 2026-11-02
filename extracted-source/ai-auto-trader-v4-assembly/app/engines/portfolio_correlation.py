@@ -163,6 +163,47 @@ def summarize_portfolio_correlations(
     if not isinstance(report, PortfolioCorrelationReport) or report.orders_authorized is not False:
         raise ValueError("a paper-only PortfolioCorrelationReport is required")
     if (
+        isinstance(report.min_observations, bool)
+        or not isinstance(report.min_observations, int)
+        or report.min_observations < 2
+        or not isinstance(report.pairs, tuple)
+    ):
+        raise ValueError("portfolio correlation report metadata is invalid")
+    seen_pairs: set[tuple[str, str]] = set()
+    for pair in report.pairs:
+        if not isinstance(pair, PairwiseCorrelation):
+            raise ValueError("portfolio correlation report contains an invalid pair record")
+        if (
+            not _valid_symbol(pair.symbol_a)
+            or not _valid_symbol(pair.symbol_b)
+            or pair.symbol_a >= pair.symbol_b
+            or isinstance(pair.observations, bool)
+            or not isinstance(pair.observations, int)
+            or pair.observations < 0
+        ):
+            raise ValueError("portfolio correlation pair metadata is invalid")
+        pair_key = (pair.symbol_a, pair.symbol_b)
+        if pair_key in seen_pairs:
+            raise ValueError("portfolio correlation report contains duplicate pairs")
+        seen_pairs.add(pair_key)
+        if pair.status == "OK":
+            if (
+                pair.observations < report.min_observations
+                or isinstance(pair.correlation, bool)
+                or not isinstance(pair.correlation, (int, float))
+                or not math.isfinite(pair.correlation)
+                or not -1 <= pair.correlation <= 1
+            ):
+                raise ValueError("portfolio correlation value is invalid")
+        elif pair.status == "INSUFFICIENT_OVERLAP":
+            if pair.observations >= report.min_observations or pair.correlation is not None:
+                raise ValueError("insufficient-overlap pair record is inconsistent")
+        elif pair.status == "ZERO_VARIANCE":
+            if pair.observations < report.min_observations or pair.correlation is not None:
+                raise ValueError("zero-variance pair record is inconsistent")
+        else:
+            raise ValueError("portfolio correlation pair status is invalid")
+    if (
         isinstance(high_correlation_threshold, bool)
         or not isinstance(high_correlation_threshold, (int, float))
     ):
