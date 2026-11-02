@@ -80,3 +80,14 @@ def test_chart_candle_refreshes_pause_when_android_app_enters_background():
     assert "val isForeground = BackendSession.appInForeground.value" in analysis_screen
     assert "LaunchedEffect(sessionToken, selectedMarket?.symbol, candleSymbolKey, isForeground)" in analysis_screen
     assert "if (isForeground && sessionToken.length >= 32" in analysis_screen
+
+def test_valid_market_instrument_is_retained_when_inline_candles_are_empty():
+    source = SOURCE.read_text(encoding="utf-8")
+    parser = source.split("private fun parseMarketItems(", 1)[1].split(
+        "private data class TimeframeSnapshot", 1
+    )[0]
+
+    # Per-symbol candle history is fetched separately by the chart screen.
+    # An empty inline snapshot must not remove the instrument and block that fetch.
+    assert "result += MarketInstrument(" in parser
+    assert "if (candles.isNotEmpty())" not in parser
