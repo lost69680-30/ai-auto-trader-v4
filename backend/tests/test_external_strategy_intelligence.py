@@ -308,7 +308,9 @@ def test_external_strategy_evaluation_is_written_to_research_memory_without_auth
     assert memory.experiment.outcomes["orders_authorized"] is False
     assert memory.experiment.outcomes["holdout_used_for_selection"] is False
     assert memory.experiment.outcomes["promotion_decision"] == "NOT_PROMOTED"
-    assert memory.experiment.outcomes["market_regime_evidence"]["status"] == "NOT_AVAILABLE"
+    assert memory.experiment.outcomes["market_regime_evidence"]["status"] == "AVAILABLE"
+    assert memory.experiment.outcomes["market_regime_evidence"]["validation_folds"][0]["trend_state"] == "UP"
+    assert memory.experiment.outcomes["market_regime_evidence"]["holdout"]["used_for_selection"] is False
     assert "risk_adjusted" in memory.experiment.outcomes["validation_folds"][0]
     assert memory.experiment.outcomes["validation_folds"][0]["risk_adjusted"]["orders_authorized"] is False
     assert memory.experiment.assumptions["external_rule_spec"]["family"] == "SMA_CROSS"
