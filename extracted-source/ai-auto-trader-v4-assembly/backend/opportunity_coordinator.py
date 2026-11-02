@@ -300,7 +300,10 @@ class OpportunityCoordinator:
             orders_authorized=False,
         )
         saved = self.store.create_or_get_opportunity(
-            record, idempotency_key=f"opportunity:{fingerprint}", now=stamp,
+            record,
+            idempotency_key=f"opportunity:{fingerprint}",
+            now=stamp,
+            max_active_per_symbol=self.max_active_opportunities_per_symbol,
         )
         if saved.state in {"TRIGGERED", "RISK_CHECK", "INTENT_RECORDED", "PAPER_OPEN",
                            "REJECTED", "INVALIDATED", "EXPIRED", "CANCELLED", "BLOCKED", "NO_TRADE"}:
