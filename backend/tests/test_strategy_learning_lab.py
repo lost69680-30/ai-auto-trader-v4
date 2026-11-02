@@ -14,7 +14,7 @@ from backend.strategy_learning_lab import (
 NOW = datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc)
 
 
-def experiment(*, status="EVALUATED", holdout_used=False):
+def experiment(*, status="EVALUATED", holdout_used=False, nested_holdout_used=False):
     return StrategyResearchExperiment(
         experiment_id="exp-001",
         candidate_id="candidate-001",
@@ -30,7 +30,7 @@ def experiment(*, status="EVALUATED", holdout_used=False):
                 {"strategy_net_return_pct": 2.0, "buy_hold_return_pct": 1.0},
                 {"strategy_net_return_pct": 3.0, "buy_hold_return_pct": 1.0},
             ],
-            "untouched_holdout": {"strategy_net_return_pct": 1.0, "used_for_selection": False},
+            "untouched_holdout": {"strategy_net_return_pct": 1.0, "used_for_selection": nested_holdout_used},
             "holdout_used_for_selection": holdout_used,
             "orders_authorized": False,
         },
@@ -66,6 +66,7 @@ def test_learning_dataset_uses_only_validated_folds_and_excludes_holdout():
     [
         experiment(status="DRIFT_FLAGGED"),
         experiment(holdout_used=True),
+        experiment(nested_holdout_used=True),
     ],
 )
 def test_learning_dataset_rejects_unapproved_or_leaked_experiments(item):
