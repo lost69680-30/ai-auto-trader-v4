@@ -117,3 +117,19 @@ Task 5: not started (worker, fresh validation, risk/ledger and read-only API int
 - Synchronized root/assembly mirrored market adapter and worker files. CI caught a missing root mirror for the new search module and a premature import; both were corrected. The latest observed ASGI workflow passed; full test/build, PostgreSQL and read-only safety workflows were still running at the latest check.
 - **Important limitation:** this is scheduled dual-venue market intelligence/opportunity research, not yet a fully active durable opportunity lifecycle. The coordinator is not yet wired to venue-scoped reassessment/price-plan refresh, and triggered opportunities are not yet connected end-to-end to fresh strategy revalidation, the independent Risk Guardian, the existing paper signal cycle/ledger, and authenticated read-only opportunity APIs. The current coordinator's reassessment provider groups by symbol without venue identity, so running Spot and Futures reassessment together would risk evaluating a watch against the wrong venue. This must be fixed before calling the Continuous Opportunity Engine operational.
 - No Supabase migration was applied, no deployment or hosting change was made, and no exchange permissions or order-authority settings were changed. All research outputs continue to require `orders_authorized=false`.
+
+
+## Venue-isolated opportunity runtime and read-only API — verified checkpoint (2026-11-02)
+
+This checkpoint supersedes the earlier limitation above that venue-scoped reassessment and the opportunity API were not yet wired.
+
+- `OpportunityCoordinator` now has an explicit venue scope. A Spot coordinator can register/list/claim only `SPOT / BINANCE_SPOT_TESTNET` records; a Futures coordinator can register/list/claim only `FUTURES / BINANCE_USDM_TESTNET` records.
+- PostgreSQL `list_opportunities` and `claim_due_opportunities` support strict market-type/venue filters. Partial or mismatched venue pairs are rejected.
+- The shared supervised worker now registers separate durable reassessment jobs and handlers for Spot and Futures. Each handler is bound to its own read-only market source and checks the job's venue identity before fetching data.
+- Reassessment now groups by symbol **and timeframe**. The provider fetches the latest closed candle for the exact opportunity timeframe, validates its age, and supplies its close to the watcher. This allows candle-close triggers to be evaluated against the intended timeframe rather than an unrelated 1-minute candle.
+- Added authenticated GET-only opportunity endpoints: `/api/v1/opportunities`, `/api/v1/opportunities/{id}`, and per-opportunity `/events`, `/assessments`, and `/evidence`. Venue filters must be supplied as a valid pair. The API exposes no opportunity mutation route.
+- Added worker, venue isolation, timeframe-specific reassessment, and API authentication/read-only tests.
+- Root and packaged-assembly mirrors were synchronized.
+- GitHub checks on commit `165749c386a8cc8d9c8d9e72a7b2d10866854488` passed: `test`, `postgres-ledger-tests`, `asgi-runtime`, `Read-only market data and analysis safety tests`, and `Offline backtest tests and safety checks`.
+- **Part 5 is not yet accepted as complete.** The scheduled search currently publishes independent strategy assessments; it does not yet automatically convert eligible assessments into durable opportunities with validated price plans. Existing waiting opportunities are reassessed by venue/timeframe, but automatic plan refresh/replacement, crash-safe refresh evidence, and triggered-opportunity revalidation through the existing paper signal cycle and independent Risk Guardian remain outstanding. Those are required before claiming end-to-end opportunity activation.
+- No deployment, Supabase migration, credential change, paid provisioning, or exchange-permission change was made. Both venues remain read-only; all research/coordinator outputs must keep `orders_authorized=false`.
