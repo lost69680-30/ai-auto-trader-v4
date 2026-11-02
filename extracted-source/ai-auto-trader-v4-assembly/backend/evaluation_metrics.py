@@ -35,6 +35,16 @@ def _finite_metric(value: object, name: str) -> float:
     return result
 
 
+def _finite_sum(values: Iterable[float], name: str) -> float:
+    try:
+        result = math.fsum(values)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError(f"{name} aggregate metrics are not finite") from exc
+    if not math.isfinite(result):
+        raise ValueError(f"{name} aggregate metrics are not finite")
+    return result
+
+
 def calculate_evaluation_metrics(
     trades: Iterable[SimulatedTrade],
 ) -> EvaluationMetrics:
@@ -58,16 +68,18 @@ def calculate_evaluation_metrics(
         costs_values.append(costs)
 
     count = len(net_values)
-    total_net = math.fsum(net_values)
-    total_costs = math.fsum(costs_values)
+    total_net = _finite_sum(net_values, "net PnL")
+    total_costs = _finite_sum(costs_values, "cost")
     winners = [value for value in net_values if value > 0]
     losers = [value for value in net_values if value < 0]
-    gross_wins = math.fsum(winners)
-    gross_losses_abs = math.fsum(abs(value) for value in losers)
+    gross_wins = _finite_sum(winners, "gross wins")
+    gross_losses_abs = _finite_sum((abs(value) for value in losers), "gross losses")
 
-    profit_factor = (
-        gross_wins / gross_losses_abs if gross_losses_abs > 0 else None
-    )
+    profit_factor = None
+    if gross_losses_abs > 0:
+        profit_factor = gross_wins / gross_losses_abs
+        if not math.isfinite(profit_factor):
+            raise ValueError("profit factor is not finite")
     max_loss_streak = 0
     current_loss_streak = 0
     for value in net_values:
