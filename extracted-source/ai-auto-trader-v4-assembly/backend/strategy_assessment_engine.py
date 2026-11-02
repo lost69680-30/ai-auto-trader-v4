@@ -313,8 +313,13 @@ class MultiStrategyAssessmentEngine:
                     raise ValueError("indicator evidence violated the paper-only contract")
                 results.append(result)
             except Exception as exc:
-                results.append(self._failure_record(
+                failure = self._failure_record(
                     candidate, profile, refs, stamp,
                     f"assessment failed closed ({type(exc).__name__})",
-                ))
+                )
+                failure = replace(
+                    failure,
+                    payload={**failure.payload, **_indicator_context(candidate)},
+                )
+                results.append(failure)
         return tuple(results)
