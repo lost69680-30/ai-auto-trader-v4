@@ -458,3 +458,116 @@ def assess_walk_forward_decay(
         holdout_used=False,
         orders_authorized=False,
     )
+
+
+def persist_external_strategy_experiment(
+    memory: Any,
+    candidate: ExternalStrategyCandidate,
+    walk_forward_result: Any,
+    *,
+    dataset_start: datetime,
+    dataset_end: datetime,
+    configuration_version: str,
+    experiment_version: int,
+    assumptions: Mapping[str, Any],
+    idempotency_key: str,
+):
+    """Append an auditable OOS experiment; never promote or authorize its strategy."""
+    from backend.strategy_research_memory import StrategyResearchExperiment
+    from backend.walk_forward import WalkForwardResult
+
+    if not isinstance(candidate, ExternalStrategyCandidate) or candidate.orders_authorized is not False:
+        raise ValueError("a paper-only external strategy candidate is required")
+    if not isinstance(walk_forward_result, WalkForwardResult) or walk_forward_result.orders_authorized is not False:
+        raise ValueError("a paper-only walk-forward result is required")
+    if not callable(getattr(memory, "append", None)):
+        raise ValueError("an append-only strategy research memory is required")
+    start = _aware(dataset_start, "dataset_start")
+    end = _aware(dataset_end, "dataset_end")
+    if start >= end:
+        raise ValueError("dataset window must have start before end")
+    configuration_version = _text(configuration_version, "configuration_version", 120)
+    idempotency_key = _text(idempotency_key, "idempotency_key", 200)
+    if isinstance(experiment_version, bool) or not isinstance(experiment_version, int) or experiment_version < 1:
+        raise ValueError("experiment_version must be a positive integer")
+    if not isinstance(assumptions, Mapping):
+        raise ValueError("assumptions must be a mapping")
+    assumptions_payload = dict(assumptions)
+    if assumptions_payload.get("orders_authorized", False) is not False:
+        raise ValueError("assumptions.orders_authorized must be false")
+    assumptions_payload["orders_authorized"] = False
+
+    def window_metrics(window: Any) -> dict[str, Any]:
+        result = window.strategy
+        if (
+            not math.isfinite(result.initial_equity)
+            or result.initial_equity <= 0
+            or not math.isfinite(result.net_pnl)
+            or not math.isfinite(result.total_costs)
+            or not math.isfinite(result.max_drawdown_pct)
+        ):
+            raise ValueError("walk-forward result contains non-finite performance metrics")
+        return {
+            "name": window.name,
+            "strategy_net_return_pct": round(result.net_pnl / result.initial_equity * 100.0, 6),
+            "buy_hold_return_pct": window.buy_hold_return_pct,
+            "trade_count": result.trade_count,
+            "total_costs": result.total_costs,
+            "max_drawdown_pct": result.max_drawdown_pct,
+            "used_for_selection": window.used_for_selection,
+            "orders_authorized": False,
+        }
+
+    decay = assess_walk_forward_decay(walk_forward_result)
+    folds = [window_metrics(window) for window in walk_forward_result.folds]
+    holdout = window_metrics(walk_forward_result.holdout)
+    status = (
+        "INSUFFICIENT_DATA" if decay.status == "INSUFFICIENT_FOLDS"
+        else "DRIFT_FLAGGED" if decay.status == "RECENT_EDGE_DETERIORATED"
+        else "EVALUATED"
+    )
+    failure_reasons = (
+        ("Recent validation-fold excess returns deteriorated versus earlier folds.",)
+        if status == "DRIFT_FLAGGED" else ()
+    )
+    outcomes = {
+        "validation_folds": folds,
+        "untouched_holdout": holdout,
+        "holdout_used_for_selection": False,
+        "decay": {
+            "status": decay.status,
+            "fold_count": decay.fold_count,
+            "earlier_excess_return_pct": decay.earlier_excess_return_pct,
+            "recent_excess_return_pct": decay.recent_excess_return_pct,
+            "change_pct_points": decay.change_pct_points,
+            "holdout_used": False,
+            "orders_authorized": False,
+        },
+        "orders_authorized": False,
+    }
+    experiment_material = "|".join((
+        candidate.candidate_fingerprint,
+        str(experiment_version),
+        configuration_version,
+        start.isoformat(),
+        end.isoformat(),
+    ))
+    experiment_id = "experiment-" + hashlib.sha256(
+        experiment_material.encode("utf-8")
+    ).hexdigest()[:40]
+    experiment = StrategyResearchExperiment(
+        experiment_id=experiment_id,
+        candidate_id=candidate.candidate_id,
+        candidate_fingerprint=candidate.candidate_fingerprint,
+        source_provenance_id=candidate.source_provenance_id,
+        experiment_version=experiment_version,
+        dataset_start=start,
+        dataset_end=end,
+        configuration_version=configuration_version,
+        assumptions=assumptions_payload,
+        outcomes=outcomes,
+        status=status,
+        failure_reasons=failure_reasons,
+        orders_authorized=False,
+    )
+    return memory.append(experiment, idempotency_key=idempotency_key)
