@@ -91,3 +91,14 @@ def test_staging_apk_uses_the_deployed_staging_api_with_paper_ledger_endpoints()
     assert staging_api in workflow
     assert "solo-futures-websocket-staging.onrender.com" not in workflow
     assert "ai-auto-trader-v4-backend.onrender.com" not in workflow
+
+def test_valid_market_instrument_is_retained_when_inline_candles_are_empty():
+    source = SOURCE.read_text(encoding="utf-8")
+    parser = source.split("private fun parseMarketItems(", 1)[1].split(
+        "private data class TimeframeSnapshot", 1
+    )[0]
+
+    # Per-symbol candle history is fetched separately by the chart screen.
+    # An empty inline snapshot must not remove the instrument and block that fetch.
+    assert "result += MarketInstrument(" in parser
+    assert "if (candles.isNotEmpty())" not in parser
