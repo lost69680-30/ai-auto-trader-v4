@@ -86,3 +86,12 @@ def test_empty_portfolio_has_undefined_concentration_not_fabricated_zero():
     assert report.top_asset_share_pct is None
     assert report.concentration_hhi is None
     assert report.orders_authorized is False
+
+
+def test_portfolio_exposure_rejects_non_finite_derived_percentages():
+    with pytest.raises(ValueError, match="derived"):
+        calculate_portfolio_exposure(
+            [position("BTCUSDT", "LONG", 1e308, 1.0)],
+            equity=1e-308,
+            now=NOW,
+        )
