@@ -95,3 +95,21 @@ def test_portfolio_exposure_rejects_non_finite_derived_percentages():
             equity=1e-308,
             now=NOW,
         )
+
+
+def test_portfolio_concentration_uses_unrounded_asset_notionals():
+    report = calculate_portfolio_exposure(
+        [
+            position("BTCUSDT", "LONG", 1.4e-8, 1.0),
+            position("ETHUSDT", "LONG", 1.6e-8, 1.0),
+        ],
+        equity=1.0,
+        now=NOW,
+    )
+
+    assert report.exposure_by_symbol[0].gross_notional == 1e-8
+    assert report.exposure_by_symbol[1].gross_notional == 2e-8
+    assert report.exposure_by_symbol[0].gross_share_pct == pytest.approx(46.666667)
+    assert report.exposure_by_symbol[1].gross_share_pct == pytest.approx(53.333333)
+    assert report.top_asset_share_pct == pytest.approx(53.333333)
+    assert report.concentration_hhi == pytest.approx(0.50222222)
