@@ -137,6 +137,8 @@ class OpportunityCoordinator:
         watcher_config: WatcherConfig | None = None,
         lease_seconds: float = 60.0,
         max_active_opportunities_per_symbol: int = 100,
+        market_type: str = "FUTURES",
+        venue: str = "BINANCE_USDM_TESTNET",
     ) -> None:
         if not isinstance(store, PostgresOpportunityStore):
             raise ValueError("a PostgreSQL opportunity store is required")
@@ -150,6 +152,7 @@ class OpportunityCoordinator:
             or not 1 <= max_active_opportunities_per_symbol <= 100
         ):
             raise ValueError("max_active_opportunities_per_symbol must be between 1 and 100")
+        self.market_type, self.venue = validate_opportunity_venue(market_type, venue)
         self.lease_seconds = float(lease_seconds)
         self.max_active_opportunities_per_symbol = max_active_opportunities_per_symbol
         self.watcher_config = watcher_config or WatcherConfig()
@@ -187,6 +190,8 @@ class OpportunityCoordinator:
         if symbol != symbol.upper():
             raise ValueError("symbol must be uppercase")
         validate_opportunity_venue(market_type, venue)
+        if (market_type, venue) != (self.market_type, self.venue):
+            raise ValueError("opportunity venue does not match this coordinator's isolated venue scope")
         timeframe = _required_text(timeframe, "timeframe", 12)
         required_timeframes = assessment.payload.get("required_timeframes")
         if not isinstance(required_timeframes, list) or timeframe not in required_timeframes:
@@ -409,6 +414,8 @@ class OpportunityCoordinator:
         page = self.store.list_opportunities(
             states=("WAITING", "REASSESSING"),
             symbol=symbol,
+            market_type=self.market_type,
+            venue=self.venue,
             limit=self.max_active_opportunities_per_symbol,
         )
         if page.next_cursor is not None:
@@ -572,6 +579,7 @@ class OpportunityCoordinator:
             raise ValueError("market_update_provider must be callable")
         claimed = self.store.claim_due_opportunities(
             owner=self.owner, now=stamp, limit=limit, lease_seconds=self.lease_seconds,
+            market_type=self.market_type, venue=self.venue,
         )
         grouped: dict[str, list[OpportunityRecord]] = {}
         results: list[OpportunityEvaluation] = []
