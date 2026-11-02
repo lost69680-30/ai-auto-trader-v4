@@ -78,6 +78,7 @@ def test_rule_backed_strategy_with_methodology_becomes_reproducible_candidate():
     assert assessment.candidate.rule_spec == valid_rules()
     assert assessment.candidate.source_provenance_id == assessment.provenance_id
     assert assessment.candidate.candidate_fingerprint
+    assert assessment.candidate.indicators == ("SMA", "ATR")
     assert assessment.calibration_status == "NOT_CALIBRATED"
     assert assessment.orders_authorized is False
 
