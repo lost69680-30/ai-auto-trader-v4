@@ -75,3 +75,22 @@ Task 5: not started
 - Task 4: integrate supervised scheduled jobs, fresh trigger validation, read-only API visibility and the existing independent Risk Guardian/paper ledger boundary.
 - Task 5: end-to-end restart, duplicate-delivery, fail-closed, API and worker recovery verification.
 - Continuous runtime remains inactive until worker integration and an approved, verified always-on host.
+
+## Task 2 — Indicator-aware Nexus strategy evidence: implementation and CI verified
+
+- Extended `StrategyCandidate` to accept validated per-timeframe `IndicatorAssessment` records and reject mismatched symbols/timeframes or unsafe order-authority flags.
+- The scheduled market-intelligence scan now passes its indicator assessments to the five independent strategy profiles: scalping, day, swing, position and long-term.
+- Each strategy assessment payload retains compact indicator evidence, calibration status, unavailable reasons and mixed-timeframe indicator conflicts.
+- Indicator evidence is context, not a majority vote. It does not overwrite a strategy's independent decision or bypass the Risk Guardian.
+- Fail-closed strategy assessment records also preserve the indicator evidence available when an assessor throws an exception.
+- TDD RED observed: the integration test initially failed with `KeyError: '1h'` because the market scan had not yet passed indicator evidence into `StrategyCandidate`. The scan handoff was then implemented.
+- A separate failure-record evidence test was added before the failure-path fix; a distinct red CI run for that test was not captured. The subsequent full suite passed.
+- Latest verified CI at this checkpoint: full backend suite **526 passed**; PostgreSQL ledger/opportunity integration tests passed; ASGI and read-only market-data/safety checks passed.
+- No deployment, Supabase migration, secrets, hosting, billing or trading-permission changes were made.
+
+## Remaining Part 5 work
+
+- Task 3: complete and verify the durable multi-opportunity lifecycle, including fresh trigger validation and explicit price-plan lifecycle semantics.
+- Task 4: integrate supervised scheduled jobs, fresh trigger validation, read-only API visibility and the independent Risk Guardian/paper-ledger boundary.
+- Task 5: end-to-end restart, duplicate-delivery, fail-closed, API and worker-recovery verification.
+- Continuous runtime remains inactive until worker integration and an approved, verified always-on host.
