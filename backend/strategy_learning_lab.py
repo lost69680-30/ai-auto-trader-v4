@@ -17,8 +17,8 @@ from backend.strategy_research_memory import StrategyResearchExperiment
 
 _AGENT_KINDS = {"PPO", "RL", "GAT", "SPECIALIST"}
 _FORBIDDEN_WEIGHT_TERMS = {
-    "risk", "leverage", "daily_loss", "allocation", "orders_authorized",
-    "max_positions", "position_size", "stop_loss", "take_profit",
+    "risk", "leverage", "loss", "allocation", "order", "position",
+    "orders_authorized", "stop", "take_profit", "takeprofit",
 }
 
 
@@ -143,7 +143,12 @@ def build_research_dataset(
         if experiment.status != "EVALUATED" or experiment.orders_authorized is not False:
             raise ValueError("only evaluated, paper-only experiments may enter learning datasets")
         outcomes = experiment.outcomes
-        if outcomes.get("holdout_used_for_selection") is not False:
+        holdout = outcomes.get("untouched_holdout")
+        if (
+            outcomes.get("holdout_used_for_selection") is not False
+            or not isinstance(holdout, dict)
+            or holdout.get("used_for_selection") is not False
+        ):
             raise ValueError("final holdout must remain untouched")
         folds = outcomes.get("validation_folds")
         if not isinstance(folds, list) or not folds:
@@ -165,6 +170,8 @@ def build_research_dataset(
                 "excess_return_pct": strategy_return - benchmark_return,
             }
             rows.append(row)
+    if len(ids) != len(set(ids)):
+        raise ValueError("duplicate experiment IDs are not allowed in a learning dataset")
     ordered_ids = tuple(sorted(ids))
     canonical_rows = sorted(rows, key=lambda row: (row["experiment_id"], row["fold_index"]))
     material = json.dumps(
