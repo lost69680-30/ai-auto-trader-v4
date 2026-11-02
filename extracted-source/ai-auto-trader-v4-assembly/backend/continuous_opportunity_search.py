@@ -43,8 +43,12 @@ def continuous_opportunity_search(
     """
     if environment != "TESTNET":
         raise ValueError("continuous opportunity search is Testnet-only")
-    if market_type != "FUTURES" or venue != "BINANCE_USDM_TESTNET":
-        raise ValueError("continuous opportunity search currently supports Binance USD-M Futures Testnet only")
+    expected_venue = {
+        "SPOT": "BINANCE_SPOT_TESTNET",
+        "FUTURES": "BINANCE_USDM_TESTNET",
+    }.get(market_type)
+    if expected_venue is None or venue != expected_venue:
+        raise ValueError("market_type and venue must be an explicit Binance Spot or USD-M Futures Testnet pair")
 
     scan_handler = market_intelligence_scan(
         store,
