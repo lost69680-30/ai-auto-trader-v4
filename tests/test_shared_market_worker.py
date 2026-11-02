@@ -147,7 +147,16 @@ def test_opportunity_reassessment_handler_rejects_price_snapshot_without_market_
     coordinator = object.__new__(OpportunityCoordinator)
     coordinator.market_type = "SPOT"
     coordinator.venue = "BINANCE_SPOT_TESTNET"
-    coordinator.reassess_due = lambda **kwargs: None
+    seen = {}
+
+    def reassess_due(*, now, market_update_provider, limit):
+        try:
+            market_update_provider("BTCUSDT", "1h", now)
+        except ValueError as exc:
+            seen["error"] = str(exc)
+        return SimpleNamespace(orders_authorized=False)
+
+    coordinator.reassess_due = reassess_due
 
     class IncompleteSource:
         def fetch_mark_price(self, symbol):
@@ -157,9 +166,10 @@ def test_opportunity_reassessment_handler_rejects_price_snapshot_without_market_
             )
 
     handler = opportunity_reassessment_handler(coordinator, IncompleteSource())
-    with pytest.raises(ValueError, match="mismatched"):
-        handler(
-            {"scope": "opportunity_reassessment", "market_type": "SPOT",
-             "venue": "BINANCE_SPOT_TESTNET"},
-            "spot-missing-market-type",
-        )
+    handler(
+        {"scope": "opportunity_reassessment", "market_type": "SPOT",
+         "venue": "BINANCE_SPOT_TESTNET"},
+        "spot-missing-market-type",
+    )
+
+    assert "mismatched" in seen["error"]
