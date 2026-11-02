@@ -356,6 +356,7 @@ def evaluate_external_candidate(
     candidate: ExternalStrategyCandidate,
     candles: Any,
     *,
+    symbol: str,
     walk_forward_config: Any,
     backtest_config: Any = None,
     research_config: Any = None,
@@ -366,10 +367,13 @@ def evaluate_external_candidate(
         raise ValueError("a paper-only external strategy candidate is required")
     if not isinstance(candidate.rule_spec, ExternalRuleSpec):
         raise ValueError("candidate does not contain explicit reproducible rules")
+    symbol = _text(symbol, "evaluation symbol", 30)
+    if candidate.symbols and symbol not in candidate.symbols:
+        raise ValueError("evaluation symbol is outside the candidate's published market scope")
     from backend.walk_forward import evaluate_walk_forward
 
     return evaluate_walk_forward(
-        next(iter(candidate.symbols), "UNKNOWN"),
+        symbol,
         candles,
         config=walk_forward_config,
         backtest_config=backtest_config,
