@@ -70,7 +70,10 @@ def calculate_risk_adjusted_metrics(result: BacktestResult) -> RiskAdjustedMetri
 def _finite_metric(value: object, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be finite numeric data")
-    result = float(value)
+    try:
+        result = float(value)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be finite numeric data") from exc
     if not math.isfinite(result):
         raise ValueError(f"{name} must be finite numeric data")
     return result
