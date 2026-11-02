@@ -351,3 +351,65 @@ def test_published_external_metrics_are_immutable_source_evidence():
     assert evidence.published_metrics["return_pct"] == 12.0
     with pytest.raises(TypeError):
         evidence.published_metrics["return_pct"] = 1.0
+
+
+def test_walk_forward_quality_rejects_weak_or_high_drawdown_candidates():
+    from dataclasses import replace
+    from backend.external_strategy_intelligence import assess_walk_forward_quality
+    from backend.walk_forward import evaluate_walk_forward
+
+    rows = []
+    start = NOW - timedelta(minutes=359)
+    price = 100.0
+    for index in range(360):
+        price *= 1.0005
+        rows.append(Candle("BTCUSDT", start + timedelta(minutes=index), price,
+                           price * 1.002, price * 0.998, price, 1000.0))
+    baseline = evaluate_walk_forward(
+        "BTCUSDT", rows,
+        config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40),
+        research_now=NOW,
+    )
+    weak_folds = tuple(
+        replace(fold, strategy=replace(
+            fold.strategy, trade_count=10, net_pnl=-100.0, max_drawdown_pct=30.0,
+        ))
+        for fold in baseline.folds
+    )
+    report = assess_walk_forward_quality(replace(baseline, folds=weak_folds))
+
+    assert report.status == "REJECTED"
+    assert report.total_validation_trades == 50
+    assert report.maximum_fold_drawdown_pct == 30.0
+    assert report.failure_reasons
+    assert report.holdout_used is False
+    assert report.orders_authorized is False
+
+
+def test_walk_forward_quality_marks_low_trade_sample_insufficient():
+    from dataclasses import replace
+    from backend.external_strategy_intelligence import assess_walk_forward_quality
+    from backend.walk_forward import evaluate_walk_forward
+
+    rows = []
+    start = NOW - timedelta(minutes=359)
+    price = 100.0
+    for index in range(360):
+        price *= 1.0005
+        rows.append(Candle("BTCUSDT", start + timedelta(minutes=index), price,
+                           price * 1.002, price * 0.998, price, 1000.0))
+    baseline = evaluate_walk_forward(
+        "BTCUSDT", rows,
+        config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40),
+        research_now=NOW,
+    )
+    sparse_folds = tuple(
+        replace(fold, strategy=replace(fold.strategy, trade_count=1))
+        for fold in baseline.folds
+    )
+    report = assess_walk_forward_quality(replace(baseline, folds=sparse_folds))
+
+    assert report.status == "INSUFFICIENT_DATA"
+    assert report.total_validation_trades == len(sparse_folds)
+    assert report.holdout_used is False
+    assert report.orders_authorized is False
