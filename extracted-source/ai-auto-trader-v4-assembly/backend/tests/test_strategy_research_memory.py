@@ -130,3 +130,20 @@ def test_memory_rejects_authorized_or_invalid_experiment_data():
             failure_reasons=("invalid sample",),
             orders_authorized=False,
         )
+
+
+def test_database_enforces_append_only_research_history():
+    import psycopg
+
+    _apply_migration()
+    record = _record()
+    PostgresStrategyResearchMemory(DSN).append(
+        record, idempotency_key="append-only-" + uuid.uuid4().hex,
+    )
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        with pytest.raises(psycopg.Error, match="append-only"):
+            conn.execute(
+                """UPDATE paper_ledger.strategy_research_experiments
+                   SET status = 'REJECTED' WHERE experiment_id = %s""",
+                (record.experiment_id,),
+            )
