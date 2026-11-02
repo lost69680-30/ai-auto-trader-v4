@@ -657,25 +657,36 @@ class PostgresOpportunityStore:
     def claim_due_opportunities(
         self, *, owner: str, now: datetime | None = None,
         limit: int = 20, lease_seconds: float = 60.0,
+        market_type: str | None = None, venue: str | None = None,
     ) -> tuple[OpportunityRecord, ...]:
         owner = _required_text(owner, "owner", 120)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
         if not math.isfinite(lease_seconds) or lease_seconds < 5:
             raise ValueError("lease_seconds must be finite and at least 5 seconds")
+        if (market_type is not None or venue is not None):
+            if market_type not in _VENUES or venue != _VENUES.get(market_type):
+                raise ValueError("claim scope must be an explicit Spot or Futures Testnet venue pair")
         stamp = _utc(now)
         expiry = stamp + timedelta(seconds=float(lease_seconds))
         claimed: list[OpportunityRecord] = []
+        scope_sql = ""
+        query_params: list[Any] = [stamp]
+        if market_type is not None:
+            scope_sql = " AND o.market_type = %s AND o.venue = %s"
+            query_params.extend((market_type, venue))
+        query_params.append(limit)
         with self._connect() as conn:
             rows = conn.execute(
-                """SELECT o.* FROM paper_ledger.opportunities o
+                f"""SELECT o.* FROM paper_ledger.opportunities o
                    LEFT JOIN paper_ledger.opportunity_claims c
                      ON c.opportunity_id = o.opportunity_id
                    WHERE o.state IN ('WAITING', 'REASSESSING')
                      AND (c.opportunity_id IS NULL OR c.lease_expires_at <= %s)
+                     {scope_sql}
                    ORDER BY o.updated_at, o.opportunity_id
                    FOR UPDATE OF o SKIP LOCKED LIMIT %s""",
-                (stamp, limit),
+                query_params,
             ).fetchall()
             for row in rows:
                 lease = conn.execute(
