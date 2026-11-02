@@ -134,7 +134,7 @@ def register(engine, store, *, result=None, trigger=101.0, signal_id="signal-1",
         market_type=market_type,
         venue=venue,
         timeframe=timeframe,
-        evidence_refs=["snapshot:BTCUSDT:latest", "candle:BTCUSDT:1h:closed"],
+        evidence_refs=["snapshot:BTCUSDT:latest", f"candle:BTCUSDT:{timeframe}:closed"],
         now=now,
     )
 
@@ -234,7 +234,10 @@ def test_multiple_watches_for_same_symbol_are_evaluated_independently():
     store = PostgresOpportunityStore(DSN)
     engine = coordinator(store)
     first = register(engine, store, trigger=101.0, signal_id="signal-first", now=now)
-    second = register(engine, store, trigger=105.0, signal_id="signal-second", now=now)
+    second = register(
+        engine, store, result=assessment(strategy_id="day"),
+        trigger=105.0, signal_id="signal-second", timeframe="5m", now=now,
+    )
 
     results = engine.evaluate_market_update(
         "BTCUSDT", MarketTick("BTCUSDT", 102.0, now, candle_close=102.0), now=now,
