@@ -655,11 +655,7 @@ def persist_external_strategy_experiment(
     assumptions_payload["orders_authorized"] = False
     if market_regime_evidence is not None and not isinstance(market_regime_evidence, Mapping):
         raise ValueError("market_regime_evidence must be a mapping or None")
-    regime_evidence = (
-        dict(market_regime_evidence)
-        if market_regime_evidence is not None
-        else {"status": "NOT_AVAILABLE"}
-    )
+    regime_context = dict(market_regime_evidence) if market_regime_evidence is not None else None
 
     def window_metrics(window: Any) -> dict[str, Any]:
         from backend.evaluation_metrics import calculate_risk_adjusted_metrics
@@ -688,6 +684,15 @@ def persist_external_strategy_experiment(
                 "status": risk_adjusted.status,
                 "orders_authorized": False,
             },
+            "market_regime": {
+                "trend_state": window.market_regime.trend_state,
+                "volatility_state": window.market_regime.volatility_state,
+                "trend_return_pct": window.market_regime.trend_return_pct,
+                "realized_volatility_pct": window.market_regime.realized_volatility_pct,
+                "observations": window.market_regime.observations,
+                "methodology": window.market_regime.methodology,
+                "orders_authorized": False,
+            },
             "used_for_selection": window.used_for_selection,
             "orders_authorized": False,
         }
@@ -696,6 +701,22 @@ def persist_external_strategy_experiment(
     decay = assess_walk_forward_decay(walk_forward_result)
     folds = [window_metrics(window) for window in walk_forward_result.folds]
     holdout = window_metrics(walk_forward_result.holdout)
+    regime_evidence = {
+        "status": "AVAILABLE",
+        "methodology": "Descriptive close-to-close trend and realized-volatility thresholds; not a forecast or trade signal.",
+        "validation_folds": [
+            {"window": fold["name"], **fold["market_regime"]}
+            for fold in folds
+        ],
+        "holdout": {
+            "window": holdout["name"],
+            **holdout["market_regime"],
+            "used_for_selection": False,
+        },
+        "orders_authorized": False,
+    }
+    if regime_context is not None:
+        regime_evidence["additional_context"] = regime_context
     if quality.status in {"INSUFFICIENT_DATA", "REJECTED"}:
         status = quality.status
         failure_reasons = quality.failure_reasons
