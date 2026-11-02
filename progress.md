@@ -38,3 +38,40 @@ Task 3: complete (search handler implemented; worker activation is Task 5)
 
 Task 4: not started
 Task 5: not started
+
+---
+
+# Part 5 — Indicator Intelligence progress
+
+**Plan:** Solo Parts 5–7 architecture and Part 5 implementation plan reviewed in ChatGPT.  
+**Branch:** `feat/continuous-opportunity-engine` (rebased/merged with latest `fix/futures-context-mainline`; no longer behind).
+
+## Task 0 — Existing opportunity engine reconciliation: complete
+
+- Reconciled the feature branch with the latest integration branch. The branch is now ahead by its feature commits and behind by zero commits.
+- Inspected PR #74 and the complete-backend CI failure.
+- Fixed the missing durable price-plan evidence record. Each waiting opportunity now stores an idempotent `PRICE_PLAN` evidence record with the explicit entry, stop, target, trigger and cost payload; `orders_authorized=false`.
+- Strengthened the PostgreSQL coordinator test to verify the explicit price-plan evidence.
+- Verification before the integration-branch reconciliation: full backend suite 522 passed; PostgreSQL ledger and opportunity registry integration checks passed; ASGI and read-only safety checks passed.
+- After merging the latest integration branch, full backend tests, PostgreSQL integration tests, ASGI checks, read-only market-data/safety checks, offline backtest/safety checks, and Android debug APK build all passed.
+- No Supabase migration was applied; no deployment, hosting, secret, billing or trading-permission changes were made.
+
+## Task 1 — Deterministic Indicator Intelligence: implementation and CI verified
+
+- Added `backend/indicator_intelligence.py` with validated closed-candle input and deterministic EMA20/50, RSI14, MACD 12/26/9, Bollinger Bands, ATR14, ATR percentage, VWAP and relative volume (prior 20 candles).
+- Added explicit per-indicator history requirements and unavailable reasons. Invalid, stale, incomplete or gapped candle series fail closed.
+- Added directional evidence and confluence reporting that preserves disagreements; neutral readings do not automatically cancel agreement from other directional indicators.
+- All outputs are marked `NOT_CALIBRATED` and `orders_authorized=false`.
+- Integrated per-timeframe indicator assessments into the existing scheduled market-intelligence report using the existing shared market-data feed. No second exchange client or polling loop was added.
+- Added tests for numerical outputs, insufficient history, invalid candle sequences, paper-only flags and scheduled-scan report integration.
+- TDD RED observed: initial test run failed collection because `backend.indicator_intelligence` did not exist. An intermediate confluence test also exposed an invalid constant-slope fixture; the fixture was corrected to represent accelerating momentum rather than weakening MACD momentum.
+- Latest verified CI for the integrated change: full backend suite **525 passed**; PostgreSQL integration, ASGI runtime and read-only market-data/safety checks passed.
+- This is CI verification only. No live deployment or Android phone verification was performed for the new indicator report fields.
+
+## Remaining Part 5 work
+
+- Task 2: feed indicator evidence into independent Nexus strategy assessments without majority-voting away disagreements.
+- Task 3: finish and verify durable multi-opportunity lifecycle behavior and price-plan/trigger validation.
+- Task 4: integrate supervised scheduled jobs, fresh trigger validation, read-only API visibility and the existing independent Risk Guardian/paper ledger boundary.
+- Task 5: end-to-end restart, duplicate-delivery, fail-closed, API and worker recovery verification.
+- Continuous runtime remains inactive until worker integration and an approved, verified always-on host.
