@@ -55,6 +55,19 @@ class PaperLedgerClientTest {
     }
 
     @Test
+    fun parsesPostgresIntegerMarksFreshValues() {
+        val fresh = JSONObject().put("orders_authorized", false)
+            .put("open_position_count", 0)
+            .put("latest_snapshot", JSONObject().put("account_equity", 1000.0).put("marks_fresh", 1))
+        val stale = JSONObject().put("orders_authorized", false)
+            .put("open_position_count", 0)
+            .put("latest_snapshot", JSONObject().put("account_equity", 1000.0).put("marks_fresh", 0))
+
+        assertTrue(parsePaperRisk(fresh).marksFresh!!)
+        assertFalse(parsePaperRisk(stale).marksFresh!!)
+    }
+
+    @Test
     fun rejectsRiskResponseWithoutExplicitPaperOnlyFlag() {
         assertThrows(IllegalArgumentException::class.java) {
             parsePaperRisk(JSONObject().put("open_position_count", 0))
