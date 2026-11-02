@@ -438,3 +438,37 @@ def test_walk_forward_quality_rejects_fold_that_claims_order_authorization():
 
     with pytest.raises(ValueError, match="invalid metrics"):
         assess_walk_forward_quality(forged)
+
+
+def test_walk_forward_quality_accepts_consistent_cost_adjusted_validation_evidence():
+    from dataclasses import replace
+    from backend.external_strategy_intelligence import assess_walk_forward_quality
+    from backend.walk_forward import evaluate_walk_forward
+
+    rows = []
+    start = NOW - timedelta(minutes=359)
+    price = 100.0
+    for index in range(360):
+        price *= 1.0005
+        rows.append(Candle("BTCUSDT", start + timedelta(minutes=index), price,
+                           price * 1.002, price * 0.998, price, 1000.0))
+    baseline = evaluate_walk_forward(
+        "BTCUSDT", rows,
+        config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40),
+        research_now=NOW,
+    )
+    strong_folds = tuple(
+        replace(fold, strategy=replace(
+            fold.strategy, trade_count=10, net_pnl=500.0, max_drawdown_pct=5.0,
+        ))
+        for fold in baseline.folds
+    )
+    report = assess_walk_forward_quality(replace(baseline, folds=strong_folds))
+
+    assert report.status == "EVALUATED"
+    assert report.total_validation_trades == 50
+    assert report.mean_excess_return_pct > 0
+    assert report.positive_fold_pct == 100.0
+    assert report.maximum_fold_drawdown_pct == 5.0
+    assert report.holdout_used is False
+    assert report.orders_authorized is False
