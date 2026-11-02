@@ -118,3 +118,30 @@ def test_search_reuses_existing_source_and_bounds_fetch_concurrency():
     assert result.symbols_scanned == 2
     assert len(source.calls) == 2 * len(SCAN_INTERVALS)
     assert all(call[2] == 200 for call in source.calls)
+
+def test_continuous_search_supports_spot_testnet_as_a_separate_market_type():
+    source = FakeSource()
+    store = FakeStore()
+    handler = continuous_opportunity_search(
+        store, source, policies("BTCUSDT"), market_type="SPOT",
+        venue="BINANCE_SPOT_TESTNET",
+    )
+
+    result = handler({"scope": "continuous_opportunity_search"}, "spot-search-1")
+
+    assert result.symbols_scanned == 1
+    assert store.payload["market_type"] == "SPOT"
+    assert store.payload["venue"] == "BINANCE_SPOT_TESTNET"
+    assert result.orders_authorized is False
+
+
+def test_continuous_search_rejects_spot_futures_venue_mismatch():
+    source = FakeSource()
+    store = FakeStore()
+
+    with pytest.raises(ValueError, match="venue"):
+        continuous_opportunity_search(
+            store, source, policies("BTCUSDT"), market_type="SPOT",
+            venue="BINANCE_USDM_TESTNET",
+        )
+
