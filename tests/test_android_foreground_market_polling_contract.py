@@ -46,14 +46,14 @@ def test_market_analysis_acceptance_apk_is_staging_only_and_never_targets_produc
         workflow_path = root.parents[1] / ".github/workflows/build-market-analysis-apk.yml"
     workflow = workflow_path.read_text(encoding="utf-8")
 
-    staging_url = "https://solo-futures-websocket-staging.onrender.com"
+    staging_url = "https://solo-ai-auto-trader-staging-api.onrender.com"
     assert f'PAPER_API_BASE_URL="{staging_url}"' in workflow
     assert staging_url in workflow
-    assert "Unexpected staging worker API target" in workflow
+    assert "Unexpected staging API target" in workflow
     assert '-PpaperApiBaseUrl="$PAPER_API_BASE_URL"' in workflow
     assert "No bearer or exchange credentials are embedded" in workflow
     assert 'PAPER_API_BASE_URL="https://ai-auto-trader-v4-backend.onrender.com"' not in workflow
-    assert 'PAPER_API_BASE_URL="https://solo-ai-auto-trader-staging-api.onrender.com"' not in workflow
+    assert 'PAPER_API_BASE_URL="https://solo-futures-websocket-staging.onrender.com"' not in workflow
 
 def test_futures_index_funding_and_next_funding_are_validated_and_displayed():
     source = SOURCE.read_text(encoding="utf-8")
@@ -80,3 +80,27 @@ def test_chart_candle_refreshes_pause_when_android_app_enters_background():
     assert "val isForeground = BackendSession.appInForeground.value" in analysis_screen
     assert "LaunchedEffect(sessionToken, selectedMarket?.symbol, candleSymbolKey, isForeground)" in analysis_screen
     assert "if (isForeground && sessionToken.length >= 32" in analysis_screen
+
+
+def test_staging_apk_uses_the_deployed_staging_api_with_paper_ledger_endpoints():
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github/workflows/build-market-analysis-apk.yml").read_text(encoding="utf-8")
+    staging_api = "https://solo-ai-auto-trader-staging-api.onrender.com"
+
+    assert f'PAPER_API_BASE_URL="{staging_api}"' in workflow
+    assert staging_api in workflow
+    assert "solo-futures-websocket-staging.onrender.com" not in workflow
+    # The workflow must contain a production-URL rejection guard, not the production URL as its target.
+    assert "Production backend URL found in staging APK configuration" in workflow
+    assert 'PAPER_API_BASE_URL="https://ai-auto-trader-v4-backend.onrender.com"' not in workflow
+
+def test_valid_market_instrument_is_retained_when_inline_candles_are_empty():
+    source = SOURCE.read_text(encoding="utf-8")
+    parser = source.split("private fun parseMarketItems(", 1)[1].split(
+        "private data class TimeframeSnapshot", 1
+    )[0]
+
+    # Per-symbol candle history is fetched separately by the chart screen.
+    # An empty inline snapshot must not remove the instrument and block that fetch.
+    assert "result += MarketInstrument(" in parser
+    assert "if (candles.isNotEmpty())" not in parser
