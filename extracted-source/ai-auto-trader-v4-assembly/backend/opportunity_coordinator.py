@@ -53,6 +53,20 @@ def _required_text(value: str, name: str, maximum: int = 240) -> str:
     return value
 
 
+def validate_opportunity_venue(market_type: str, venue: str) -> tuple[str, str]:
+    """Accept only explicit Binance Spot or USD-M Futures Testnet pairings."""
+    allowed = {
+        ("SPOT", "BINANCE_SPOT_TESTNET"),
+        ("FUTURES", "BINANCE_USDM_TESTNET"),
+    }
+    pair = (market_type, venue)
+    if pair not in allowed:
+        raise ValueError(
+            "opportunity market must use Binance Spot Testnet or Binance USD-M Futures Testnet"
+        )
+    return pair
+
+
 def _paper_safe(value: Any) -> bool:
     if isinstance(value, dict):
         for key, item in value.items():
@@ -172,8 +186,7 @@ class OpportunityCoordinator:
         symbol = _required_text(symbol, "symbol", 30)
         if symbol != symbol.upper():
             raise ValueError("symbol must be uppercase")
-        if market_type != "FUTURES" or venue != "BINANCE_USDM_TESTNET":
-            raise ValueError("opportunity waiting is currently restricted to Binance USD-M Futures Testnet")
+        validate_opportunity_venue(market_type, venue)
         timeframe = _required_text(timeframe, "timeframe", 12)
         required_timeframes = assessment.payload.get("required_timeframes")
         if not isinstance(required_timeframes, list) or timeframe not in required_timeframes:
