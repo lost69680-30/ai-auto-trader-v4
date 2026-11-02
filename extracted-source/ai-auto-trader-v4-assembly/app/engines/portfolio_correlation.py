@@ -26,6 +26,18 @@ class PortfolioCorrelationReport:
     orders_authorized: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class PortfolioCorrelationSummary:
+    pair_count: int
+    defined_pair_count: int
+    undefined_pair_count: int
+    coverage_pct: float | None
+    max_abs_correlation: float | None
+    high_correlation_pairs: tuple[PairwiseCorrelation, ...]
+    high_correlation_threshold: float
+    orders_authorized: bool = False
+
+
 def _valid_symbol(symbol: object) -> bool:
     return (
         isinstance(symbol, str)
@@ -138,5 +150,44 @@ def calculate_pairwise_correlations(
     return PortfolioCorrelationReport(
         min_observations=min_observations,
         pairs=tuple(pairs),
+        orders_authorized=False,
+    )
+
+
+def summarize_portfolio_correlations(
+    report: PortfolioCorrelationReport,
+    *,
+    high_correlation_threshold: float,
+) -> PortfolioCorrelationSummary:
+    """Summarize observed correlation coverage; undefined pairs stay undefined."""
+    if not isinstance(report, PortfolioCorrelationReport) or report.orders_authorized is not False:
+        raise ValueError("a paper-only PortfolioCorrelationReport is required")
+    if (
+        isinstance(high_correlation_threshold, bool)
+        or not isinstance(high_correlation_threshold, (int, float))
+        or not math.isfinite(high_correlation_threshold)
+        or not 0 <= high_correlation_threshold <= 1
+    ):
+        raise ValueError("high_correlation_threshold must be finite and between 0 and 1")
+    defined = tuple(
+        pair for pair in report.pairs
+        if pair.status == "OK" and pair.correlation is not None
+    )
+    undefined_count = len(report.pairs) - len(defined)
+    pair_count = len(report.pairs)
+    coverage = (len(defined) / pair_count * 100.0) if pair_count else None
+    max_abs = max((abs(pair.correlation) for pair in defined), default=None)
+    high_pairs = tuple(
+        pair for pair in defined
+        if abs(pair.correlation) >= float(high_correlation_threshold)
+    )
+    return PortfolioCorrelationSummary(
+        pair_count=pair_count,
+        defined_pair_count=len(defined),
+        undefined_pair_count=undefined_count,
+        coverage_pct=round(coverage, 4) if coverage is not None else None,
+        max_abs_correlation=round(max_abs, 8) if max_abs is not None else None,
+        high_correlation_pairs=high_pairs,
+        high_correlation_threshold=float(high_correlation_threshold),
         orders_authorized=False,
     )
