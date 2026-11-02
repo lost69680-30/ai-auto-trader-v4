@@ -480,6 +480,7 @@ def persist_external_strategy_experiment(
     experiment_version: int,
     assumptions: Mapping[str, Any],
     idempotency_key: str,
+    market_regime_evidence: Mapping[str, Any] | None = None,
 ):
     """Append an auditable OOS experiment; never promote or authorize its strategy."""
     from backend.strategy_research_memory import StrategyResearchExperiment
@@ -504,7 +505,25 @@ def persist_external_strategy_experiment(
     assumptions_payload = dict(assumptions)
     if assumptions_payload.get("orders_authorized", False) is not False:
         raise ValueError("assumptions.orders_authorized must be false")
+    assumptions_payload["external_rule_spec"] = {
+        "family": candidate.rule_spec.family,
+        "parameters": dict(candidate.rule_spec.parameters),
+        "exit_policy": candidate.rule_spec.exit_policy,
+    }
+    assumptions_payload["market_scope"] = {
+        "market_types": list(candidate.market_types),
+        "symbols": list(candidate.symbols),
+        "timeframes": list(candidate.timeframes),
+        "indicators": list(candidate.rule_spec.parameters.keys()),
+    }
     assumptions_payload["orders_authorized"] = False
+    if market_regime_evidence is not None and not isinstance(market_regime_evidence, Mapping):
+        raise ValueError("market_regime_evidence must be a mapping or None")
+    regime_evidence = (
+        dict(market_regime_evidence)
+        if market_regime_evidence is not None
+        else {"status": "NOT_AVAILABLE"}
+    )
 
     def window_metrics(window: Any) -> dict[str, Any]:
         result = window.strategy
@@ -543,6 +562,8 @@ def persist_external_strategy_experiment(
         "validation_folds": folds,
         "untouched_holdout": holdout,
         "holdout_used_for_selection": False,
+        "promotion_decision": "NOT_PROMOTED",
+        "market_regime_evidence": regime_evidence,
         "decay": {
             "status": decay.status,
             "fold_count": decay.fold_count,
