@@ -398,19 +398,46 @@ def test_paper_open_requires_ledger_confirmation_after_risk_approved_intent():
             reason="paper-only lifecycle test", event_id=event, actor=actor,
             evidence_version=evidence, now=now,
         )
+    with pytest.raises(ValueError, match="ledger-confirmed intent evidence"):
+        store.transition(
+            record.opportunity_id, expected_version=4, to_state="INTENT_RECORDED",
+            reason="risk manager approved paper intent", event_id="paper-intent-without-ledger",
+            actor="risk_manager", evidence_version="paper-intent-123", now=now,
+        )
+
+    store.append_evidence(
+        OpportunityEvidenceRecord(
+            evidence_id="paper-intent-evidence", opportunity_id=record.opportunity_id,
+            evidence_type="PAPER_INTENT", reference_id="paper-intent-123",
+            observed_at=now, payload={"proposal_id": "paper-intent-123",
+                                      "risk_approved": True, "orders_authorized": False},
+            orders_authorized=False,
+        ),
+        idempotency_key="paper-intent-evidence-key", now=now,
+    )
     store.transition(
         record.opportunity_id, expected_version=4, to_state="INTENT_RECORDED",
         reason="risk manager approved paper intent", event_id="paper-intent-approved",
-        actor="risk_manager", evidence_version="risk-evidence-v1", now=now,
+        actor="risk_manager", evidence_version="paper-intent-123", now=now,
     )
 
-    with pytest.raises(ValueError, match="ledger-confirmed"):
+    with pytest.raises(ValueError, match="ledger-confirmed position evidence"):
         store.transition(
             record.opportunity_id, expected_version=5, to_state="PAPER_OPEN",
             reason="unconfirmed open", event_id="paper-open-unconfirmed",
-            actor="risk_manager", evidence_version="risk-evidence-v1", now=now,
+            actor="paper_ledger", evidence_version="paper-position-123", now=now,
         )
 
+    store.append_evidence(
+        OpportunityEvidenceRecord(
+            evidence_id="paper-position-evidence", opportunity_id=record.opportunity_id,
+            evidence_type="PAPER_POSITION", reference_id="paper-position-123",
+            observed_at=now, payload={"position_id": "paper-position-123",
+                                      "status": "OPEN", "orders_authorized": False},
+            orders_authorized=False,
+        ),
+        idempotency_key="paper-position-evidence-key", now=now,
+    )
     opened = store.transition(
         record.opportunity_id, expected_version=5, to_state="PAPER_OPEN",
         reason="paper ledger confirms simulated position", event_id="paper-open-confirmed",
