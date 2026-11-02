@@ -585,6 +585,144 @@ class PostgresOpportunityStore:
             ).fetchone()
         return self._watch(row) if row else None
 
+    def refresh_waiting_opportunity(
+        self, opportunity_id: str, *, expected_version: int,
+        metadata: dict[str, Any], expires_at: datetime,
+        watch: WatchConditionRecord, evidence: OpportunityEvidenceRecord,
+        idempotency_key: str, event_id: str, reason: str,
+        evidence_version: str, now: datetime | None = None,
+    ) -> OpportunityRecord:
+        """Atomically replace a waiting plan, watch, evidence and audit version.
+
+        This operation is deliberately limited to WAITING/REASSESSING records.
+        The opportunity row is locked and version-checked before any write; all
+        related writes share one PostgreSQL transaction.
+        """
+        _required_text(opportunity_id, "opportunity_id", 160)
+        key = self._idempotency(idempotency_key)
+        _required_text(event_id, "event_id", 200)
+        _required_text(reason, "reason", 1000)
+        _required_text(evidence_version, "evidence_version", 160)
+        if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer")
+        if not isinstance(metadata, dict):
+            raise ValueError("metadata must be a JSON object")
+        metadata_json = _json(metadata, "metadata")
+        if not isinstance(watch, WatchConditionRecord) or watch.orders_authorized is not False:
+            raise ValueError("refreshed watch must deny order authorization")
+        if watch.opportunity_id != opportunity_id:
+            raise ValueError("refreshed watch belongs to a different opportunity")
+        if not isinstance(evidence, OpportunityEvidenceRecord) or evidence.orders_authorized is not False:
+            raise ValueError("refreshed evidence must deny order authorization")
+        if evidence.opportunity_id != opportunity_id or evidence.evidence_type != "PRICE_PLAN":
+            raise ValueError("refresh evidence must be a PRICE_PLAN for this opportunity")
+        expiry, stamp = _utc(expires_at, field_name="expires_at"), _utc(now)
+        if expiry <= stamp or _utc(watch.expires_at, field_name="watch expires_at") != expiry:
+            raise ValueError("refreshed watch and opportunity expiry must match and remain in the future")
+        watch_json = _json(watch.payload, "watch payload")
+        evidence_json = _json(evidence.payload, "evidence payload")
+        with self._connect() as conn:
+            duplicate = conn.execute(
+                "SELECT * FROM paper_ledger.opportunity_events WHERE event_id = %s",
+                (event_id,),
+            ).fetchone()
+            if duplicate is not None:
+                if (
+                    duplicate["opportunity_id"] != opportunity_id
+                    or duplicate["reason"] != reason
+                    or duplicate["actor"] != "opportunity_coordinator"
+                ):
+                    raise ValueError("event_id was already used for a different refresh")
+                current = conn.execute(
+                    "SELECT * FROM paper_ledger.opportunities WHERE opportunity_id = %s",
+                    (opportunity_id,),
+                ).fetchone()
+                if current is None:
+                    raise RuntimeError("opportunity disappeared after a recorded refresh")
+                return self._opportunity(current)
+
+            current = conn.execute(
+                "SELECT * FROM paper_ledger.opportunities WHERE opportunity_id = %s FOR UPDATE",
+                (opportunity_id,),
+            ).fetchone()
+            if current is None:
+                raise ValueError("opportunity does not exist")
+            if current["version"] != expected_version:
+                raise RuntimeError("stale opportunity version conflict")
+            if current["state"] not in {"WAITING", "REASSESSING"}:
+                raise ValueError("price-plan refresh requires WAITING or REASSESSING state")
+            if current["strategy_id"] == "long_term":
+                raise ValueError("long-term analysis cannot receive a paper watch refresh")
+            if watch.timeframe != current["timeframe"]:
+                raise ValueError("refreshed watch timeframe must match the opportunity")
+            if current["expires_at"] is not None and expiry > current["expires_at"]:
+                raise ValueError("refresh cannot extend the opportunity's original expiry")
+
+            updated = conn.execute(
+                """UPDATE paper_ledger.opportunities
+                   SET metadata = %s::jsonb, expires_at = %s,
+                       version = version + 1, updated_at = %s
+                   WHERE opportunity_id = %s AND version = %s
+                   RETURNING *""",
+                (metadata_json, expiry, stamp, opportunity_id, expected_version),
+            ).fetchone()
+            if updated is None:
+                raise RuntimeError("stale opportunity version conflict")
+
+            watch_row = conn.execute(
+                """INSERT INTO paper_ledger.opportunity_watch_conditions
+                   (watch_id, opportunity_id, idempotency_key, trigger_rule,
+                    trigger_price, invalidation_price, timeframe, expires_at,
+                    payload, orders_authorized, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, false, %s)
+                   ON CONFLICT (opportunity_id) DO UPDATE SET
+                     watch_id = EXCLUDED.watch_id,
+                     idempotency_key = EXCLUDED.idempotency_key,
+                     trigger_rule = EXCLUDED.trigger_rule,
+                     trigger_price = EXCLUDED.trigger_price,
+                     invalidation_price = EXCLUDED.invalidation_price,
+                     timeframe = EXCLUDED.timeframe,
+                     expires_at = EXCLUDED.expires_at,
+                     payload = EXCLUDED.payload,
+                     orders_authorized = false
+                   RETURNING *""",
+                (watch.watch_id, opportunity_id, key, watch.trigger_rule,
+                 watch.trigger_price, watch.invalidation_price, watch.timeframe,
+                 expiry, watch_json, stamp),
+            ).fetchone()
+            if watch_row is None:
+                raise RuntimeError("atomic watch refresh did not return a stored watch")
+
+            evidence_row = conn.execute(
+                """INSERT INTO paper_ledger.opportunity_evidence
+                   (evidence_id, opportunity_id, idempotency_key, evidence_type,
+                    reference_id, observed_at, payload, orders_authorized, created_at)
+                   VALUES (%s, %s, %s, 'PRICE_PLAN', %s, %s, %s::jsonb, false, %s)
+                   ON CONFLICT DO NOTHING RETURNING evidence_id""",
+                (evidence.evidence_id, opportunity_id, key + ":evidence",
+                 evidence.reference_id, _utc(evidence.observed_at, field_name="evidence observed_at"),
+                 evidence_json, stamp),
+            ).fetchone()
+            if evidence_row is None:
+                raise ValueError("price-plan evidence idempotency key conflicts with an existing record")
+
+            event_row = conn.execute(
+                """INSERT INTO paper_ledger.opportunity_events
+                   (event_id, opportunity_id, opportunity_version, from_state,
+                    to_state, reason, actor, evidence_version, payload,
+                    occurred_at, orders_authorized)
+                   VALUES (%s, %s, %s, %s, %s, %s, 'opportunity_coordinator',
+                           %s, %s::jsonb, %s, false)
+                   RETURNING *""",
+                (event_id, opportunity_id, updated["version"], current["state"],
+                 current["state"], reason, evidence_version,
+                 _json({"watch_id": watch.watch_id, "price_plan_ref": evidence.reference_id,
+                        "orders_authorized": False}, "refresh event payload"), stamp),
+            ).fetchone()
+            if event_row is None:
+                raise RuntimeError("atomic price-plan refresh did not append its audit event")
+            return self._opportunity(updated)
+
     def transition(
         self, opportunity_id: str, *, expected_version: int, to_state: str,
         reason: str, event_id: str, actor: str, evidence_version: str | None,
