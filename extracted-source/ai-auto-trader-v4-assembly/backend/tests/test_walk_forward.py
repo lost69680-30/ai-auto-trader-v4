@@ -92,16 +92,11 @@ def test_walk_forward_rejects_overlapping_out_of_sample_windows():
 
 
 def test_walk_forward_rejects_candles_after_requested_research_clock():
-    rows = make_candles(360)
-    rows[-1] = Candle(
-        rows[-1].symbol,
-        rows[-1].timestamp + timedelta(minutes=1),
-        rows[-1].open,
-        rows[-1].high,
-        rows[-1].low,
-        rows[-1].close,
-        rows[-1].volume,
-    )
+    rows = [
+        Candle(row.symbol, row.timestamp + timedelta(minutes=1), row.open, row.high,
+               row.low, row.close, row.volume)
+        for row in make_candles(360)
+    ]
     with pytest.raises(ValueError, match="future"):
         evaluate_walk_forward(
             "BTCUSDT", rows,
