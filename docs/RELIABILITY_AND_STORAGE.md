@@ -123,3 +123,34 @@ No Render plan, Supabase plan, database, or paid add-on was upgraded or created.
 The health-probe code was deployed to staging as Render deployment `dep-dbit5f142hec73beeoq0`, which reached `live`. During the rolling replacement, the new worker correctly refused to start while the old worker still held the PostgreSQL lease. The supervisor retried with bounded backoff; after the old process stopped and its lease was released/expired, the new worker started and resumed publishing. The post-recovery database check at 11:40:06 UTC observed worker status `RUNNING`, 10/10 healthy snapshots, all snapshot authorization flags false, 126 successful scheduler jobs, and zero paper orders or positions. This is evidence of one successful rolling-deploy overlap recovery, not proof of repeated fault injection or uninterrupted availability.
 
 A manual GitHub Actions workflow `.github/workflows/solo-staging-health-check.yml` is also available on this staging branch. It checks `/healthz` and waits up to three minutes for `/readyz` to report a healthy shared worker. It is deliberately manual so it does not create keep-alive traffic or mask Render Free suspension. The workflow ran successfully on 2026-10-31 (GitHub Actions run `41198008877`): its live HTTP request to `/healthz` returned the expected PAPER_ONLY liveness payload, and `/readyz` returned ready with worker status `RUNNING`. Both checks verified `orders_authorized=false`. This is an actual end-to-end HTTP check from a GitHub-hosted runner, not merely a unit test.
+
+
+
+## Backup and restore evidence update — 2026-10-31 14:05 UTC
+
+The earlier statement above that the backup and restore workflows were not yet runnable is historical and has been superseded by the following verified run evidence:
+
+- Backup workflow run `41207086389` completed successfully. Its custom-format archive passed `pg_restore --list`, was uploaded as a GitHub Actions artifact, and has SHA-256 `f6c693cf413fc998567ec56a63f9d28626afc2573eb9ccc00abf7048e0643ed0`.
+- Restore drill run `41208295736` completed successfully on 2026-10-31. It downloaded that exact artifact, independently verified the SHA-256 digest, restored it into a disposable PostgreSQL 17 service container, and reported 14 application tables and 433,667 candle rows.
+- The restore job used only the disposable local PostgreSQL service for the restore target. Its log explicitly states that it did not connect to or modify staging or production.
+- This verifies that the selected application-schema archive can be restored into clean PostgreSQL 17. It does not prove recovery of Supabase platform roles, other schemas, secrets, or the complete Supabase project. The artifact must still be downloaded to independent user-controlled storage before its seven-day retention expires.
+
+### Restore validation hardening
+
+The first successful drill had a weak acceptance test: it required only at least one table and one candle row. The restore itself succeeded, but those assertions alone would not detect missing non-candle tables or missing row-level-security/primary-key protections.
+
+A staging-only follow-up change now validates the exact 14-table application schema, verifies that every expected table exists, verifies RLS and a primary key on each table, and requires non-empty candle data. This strengthened workflow is under review on branch `fix/solo-restore-validation`; it has not been merged or run yet. The original successful restore evidence above remains valid, but the stronger validation is not yet proven by a new run.
+
+
+
+## Evidence reconciliation — 2026-10-31
+
+The earlier sections above contain historical status statements that are superseded by inspected GitHub Actions evidence:
+
+- Backup run `41207086389` succeeded. Its job log shows the exact `pg_dump` command used `--enable-row-security --inserts` with the dedicated non-BYPASSRLS backup role, then verified the archive with `pg_restore --list` and uploaded it. The archive artifact is 7,662,239 bytes; the SHA-256 of the artifact ZIP is recorded in the workflow run, while the dump's own checksum is included in the artifact.
+- Restore run `41208295736` succeeded against that artifact in disposable PostgreSQL 17. Its job logs report 14 application tables and 433,667 candle rows, with checksum validation. The restore target was the disposable service container; staging and production were not modified.
+- These results supersede the older statement that no verified backup or restore drill existed. They prove a schema-level backup and isolated restore, not a complete Supabase project recovery or independently retained disaster-recovery copy.
+- The staging branch's backup workflow file was stale relative to the successful backup run: it omitted `--enable-row-security --inserts`. The follow-up branch now aligns the workflow with the command proven by the successful run. Future exports must keep `--enable-row-security`; without it the non-BYPASSRLS role may not export rows protected by RLS.
+- The original restore workflow only checked for at least one table and one candle row. The follow-up branch strengthens this to validate the 14 expected tables, RLS and primary keys, but this stricter version still needs a new workflow run.
+
+The branch `fix/solo-restore-validation` contains these corrections for review. No merge or deployment is implied by these documentation updates.

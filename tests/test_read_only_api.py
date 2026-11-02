@@ -776,3 +776,28 @@ def test_market_assessment_endpoint_rejects_unsafe_provider_payload(tmp_path):
     assert status.startswith("503")
     assert body["items"] == []
     assert body["orders_authorized"] is False
+
+
+def test_fills_endpoint_returns_read_only_ledger_fills(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+
+    status, _, body = request(app, path="/api/v1/fills", auth="Bearer " + TOKEN)
+
+    assert status.startswith("200")
+    assert body["items"] == []
+    assert body["orders_authorized"] is False
+
+
+def test_fills_endpoint_rejects_non_get_methods(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+
+    status, _, body = request(app, path="/api/v1/fills", method="POST", auth="Bearer " + TOKEN)
+
+    assert status.startswith("405")
+    assert body["orders_authorized"] is False
