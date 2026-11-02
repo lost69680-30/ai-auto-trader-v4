@@ -1,4 +1,4 @@
-from app.engines.storage_guardian import assess_capacity, build_storage_report
+from app.engines.storage_guardian import assess_capacity, build_storage_report, collect_storage_report
 
 
 def test_capacity_is_healthy_below_warning_threshold():
@@ -69,3 +69,63 @@ def test_report_does_not_treat_missing_object_storage_inventory_as_zero_usage():
     )
     assert report["object_storage"]["status"] == "NOT_INSPECTED"
     assert report["object_storage"]["object_count"] is None
+
+
+class _Column:
+    def __init__(self, name):
+        self.name = name
+
+
+class _Cursor:
+    def __init__(self, rows, columns=()):
+        self._rows = rows
+        self.description = [_Column(name) for name in columns]
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return self._rows
+
+
+class _ReadOnlyFakeConnection:
+    def __init__(self, fail_object_inventory=False):
+        self.queries = []
+        self.fail_object_inventory = fail_object_inventory
+
+    def execute(self, query):
+        self.queries.append(query)
+        normalized = query.lower()
+        if "pg_database_size" in normalized:
+            return _Cursor([(200,)])
+        if "pg_total_relation_size" in normalized:
+            return _Cursor(
+                [("paper_ledger", "market_candles", 1000, 150, 60, 90)],
+                ("schema_name", "table_name", "estimated_rows", "total_bytes", "heap_bytes", "index_bytes"),
+            )
+        if "storage.buckets" in normalized:
+            if self.fail_object_inventory:
+                raise PermissionError("storage catalog is not readable")
+            return _Cursor(
+                [("bucket-1", "private-backups", False, 10485760, 2, 4096)],
+                ("bucket_id", "bucket_name", "is_public", "file_size_limit", "object_count", "object_bytes"),
+            )
+        raise AssertionError("unexpected SQL statement")
+
+
+def test_database_inventory_uses_select_only_and_reports_object_usage():
+    connection = _ReadOnlyFakeConnection()
+    report = collect_storage_report(connection, quota_bytes=500)
+    assert all(query.lstrip().upper().startswith("SELECT") for query in connection.queries)
+    assert report["largest_tables"][0]["table_name"] == "market_candles"
+    assert report["object_storage"]["object_count"] == 2
+    assert report["object_storage"]["object_bytes"] == 4096
+    assert report["safety"]["mutations_performed"] is False
+
+
+def test_unavailable_storage_catalog_is_not_reported_as_empty():
+    connection = _ReadOnlyFakeConnection(fail_object_inventory=True)
+    report = collect_storage_report(connection, quota_bytes=500)
+    assert report["object_storage"]["status"] == "NOT_INSPECTED"
+    assert report["object_storage"]["object_count"] is None
+    assert all(query.lstrip().upper().startswith("SELECT") for query in connection.queries)
