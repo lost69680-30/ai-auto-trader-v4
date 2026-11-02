@@ -12,11 +12,54 @@ from app.engines.paper_service_app import PaperServiceApplication
 from backend.analysis_job_dispatcher import AnalysisJobDispatcher, market_feed_health_audit
 from backend.durable_scheduler import DurableJobScheduler
 from backend.market_data_adapter import BinanceSpotMarketDataAdapter
+from backend.opportunity_coordinator import OpportunityCoordinator
+from backend.opportunity_store import PostgresOpportunityStore
+from backend.signal_watcher import MarketTick
 from backend.historical_candle_archive import PostgresCandleArchive, archive_is_caught_up, archive_market_poll, backfill_older_symbol_history, backfill_symbol_history
 from backend.shared_market_store import PostgresMarketFeedStore
 
 
 logger = logging.getLogger(__name__)
+
+
+def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source):
+    """Build a venue-bound reassessment job using only public price observations."""
+    if not isinstance(coordinator, OpportunityCoordinator):
+        raise ValueError("a venue-scoped OpportunityCoordinator is required")
+    if not callable(getattr(source, "fetch_mark_price", None)):
+        raise ValueError("market source must provide read-only fetch_mark_price")
+
+    def handle(payload: dict, idempotency_key: str) -> None:
+        if payload.get("scope") != "opportunity_reassessment":
+            raise ValueError("opportunity reassessment requires scope=opportunity_reassessment")
+        if payload.get("market_type") != coordinator.market_type or payload.get("venue") != coordinator.venue:
+            raise ValueError("reassessment job venue does not match its isolated coordinator")
+        now = datetime.now(timezone.utc)
+
+        def update(symbol: str, stamp: datetime) -> MarketTick:
+            snapshot = source.fetch_mark_price(symbol)
+            if (
+                getattr(snapshot, "symbol", None) != symbol
+                or getattr(snapshot, "orders_authorized", None) is not False
+                or getattr(snapshot, "market_type", coordinator.market_type) != coordinator.market_type
+            ):
+                raise ValueError("market source returned an invalid or mismatched paper-only price snapshot")
+            price = getattr(snapshot, "mark_price", None)
+            observed_at = getattr(snapshot, "observed_at", None)
+            return MarketTick(symbol=symbol, price=price, observed_at=observed_at)
+
+        result = coordinator.reassess_due(
+            now=now, market_update_provider=update, limit=50,
+        )
+        if result.orders_authorized is not False:
+            raise RuntimeError("opportunity coordinator violated paper-only authorization boundary")
+        logger.info(
+            "opportunity reassessment completed venue=%s market_type=%s evaluated=%d failed=%d job=%s orders_authorized=False",
+            coordinator.venue, coordinator.market_type, result.evaluated_count,
+            result.failed_count, idempotency_key,
+        )
+
+    return handle
 
 
 def run_scheduled_jobs(stop: threading.Event, scheduler: DurableJobScheduler,
@@ -83,6 +126,29 @@ def main() -> None:
                 first_run_at=datetime.now(timezone.utc) + timedelta(seconds=60),
                 payload={"scope": "continuous_opportunity_search"},
             )
+            opportunity_interval = max(
+                15, int(os.environ.get("PAPER_OPPORTUNITY_REASSESS_INTERVAL_SECONDS", "60"))
+            )
+            scheduler.register_interval(
+                "opportunity_reassessment_futures",
+                interval_seconds=opportunity_interval,
+                first_run_at=datetime.now(timezone.utc) + timedelta(seconds=120),
+                payload={
+                    "scope": "opportunity_reassessment",
+                    "market_type": "FUTURES",
+                    "venue": "BINANCE_USDM_TESTNET",
+                },
+            )
+            scheduler.register_interval(
+                "opportunity_reassessment_spot",
+                interval_seconds=opportunity_interval,
+                first_run_at=datetime.now(timezone.utc) + timedelta(seconds=150),
+                payload={
+                    "scope": "opportunity_reassessment",
+                    "market_type": "SPOT",
+                    "venue": "BINANCE_SPOT_TESTNET",
+                },
+            )
         signal.signal(signal.SIGINT, request_stop)
         signal.signal(signal.SIGTERM, request_stop)
         # Acquire the durable lease before creating the paper runtime: create() performs
@@ -128,6 +194,23 @@ def main() -> None:
                 market_type="SPOT", venue="BINANCE_SPOT_TESTNET",
                 candle_limit=intelligence_candle_limit,
                 max_fetch_workers=intelligence_fetch_workers,
+            )
+            opportunity_store = PostgresOpportunityStore(dsn)
+            futures_coordinator = OpportunityCoordinator(
+                opportunity_store,
+                owner=f"{worker_id[:72]}-futures-opportunities",
+                market_type="FUTURES", venue="BINANCE_USDM_TESTNET",
+            )
+            spot_coordinator = OpportunityCoordinator(
+                opportunity_store,
+                owner=f"{worker_id[:72]}-spot-opportunities",
+                market_type="SPOT", venue="BINANCE_SPOT_TESTNET",
+            )
+            intelligence_handlers["opportunity_reassessment_futures"] = opportunity_reassessment_handler(
+                futures_coordinator, app.worker.source,
+            )
+            intelligence_handlers["opportunity_reassessment_spot"] = opportunity_reassessment_handler(
+                spot_coordinator, spot_source,
             )
         dispatcher = AnalysisJobDispatcher(
             scheduler,
