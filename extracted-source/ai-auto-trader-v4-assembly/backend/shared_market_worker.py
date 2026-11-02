@@ -140,6 +140,11 @@ def main() -> None:
         app = PaperServiceApplication.from_env()
         snapshot_interval = max(60, int(os.environ.get("PAPER_EQUITY_SNAPSHOT_INTERVAL_SECONDS", "300")))
         snapshot_max_mark_age = min(30.0, max(1.0, float(os.environ.get("PAPER_EQUITY_MAX_MARK_AGE_SECONDS", "30"))))
+        testnet = str(os.environ.get("PAPER_MARKET_TESTNET", "true")).strip().lower() in {"1", "true", "yes"}
+        if not testnet:
+            raise SystemExit("shared historical archive is Testnet-only; refusing production market data")
+        if app.config.candle_interval != "1m":
+            raise SystemExit("shared historical archive requires PAPER_CANDLE_INTERVAL=1m")
         snapshot_runner = threading.Thread(
             target=run_equity_snapshot_scheduler,
             args=(stop, app.ledger),
@@ -152,11 +157,6 @@ def main() -> None:
             daemon=True,
         )
         snapshot_runner.start()
-        testnet = str(os.environ.get("PAPER_MARKET_TESTNET", "true")).strip().lower() in {"1", "true", "yes"}
-        if not testnet:
-            raise SystemExit("shared historical archive is Testnet-only; refusing production market data")
-        if app.config.candle_interval != "1m":
-            raise SystemExit("shared historical archive requires PAPER_CANDLE_INTERVAL=1m")
         archive = PostgresCandleArchive(dsn)
         intelligence_handlers = {"market_feed_health_audit": market_feed_health_audit(store)}
         if intelligence_enabled:
