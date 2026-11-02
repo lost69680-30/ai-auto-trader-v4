@@ -396,15 +396,17 @@ private fun parseMarketItems(array: JSONArray): List<MarketInstrument> {
                 candles += MarketCandle(c.optString("open_time"), open, high, low, close, volume)
             }
         }
-        if (candles.isNotEmpty()) {
-            result += MarketInstrument(
-                symbol = symbol,
-                markPrice = price,
-                markObservedAt = observedAt.toString(),
-                marketContext = marketContext,
-                candles = candles.takeLast(100),
-            )
-        }
+        // Keep a valid live instrument selectable even when its snapshot has no
+        // inline candles. The authenticated per-symbol history request below the
+        // chart fetches candles independently; requiring inline candles here
+        // prevented that request from ever running for symbols with empty snapshots.
+        result += MarketInstrument(
+            symbol = symbol,
+            markPrice = price,
+            markObservedAt = observedAt.toString(),
+            marketContext = marketContext,
+            candles = candles.takeLast(100),
+        )
     }
     return result
 }
