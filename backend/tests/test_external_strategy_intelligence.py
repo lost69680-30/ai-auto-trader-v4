@@ -311,6 +311,9 @@ def test_external_strategy_evaluation_is_written_to_research_memory_without_auth
     assert memory.experiment.outcomes["market_regime_evidence"]["status"] == "NOT_AVAILABLE"
     assert memory.experiment.assumptions["external_rule_spec"]["family"] == "SMA_CROSS"
     assert memory.experiment.assumptions["source_provenance"]["source_url"] == "https://example.com/public-strategy/alpha"
+    assert memory.experiment.assumptions["published_performance"]["sample_size"] == 80
+    assert memory.experiment.assumptions["published_performance"]["metrics"]["return_pct"] == 18.4
+    assert memory.experiment.assumptions["published_performance"]["methodology"] == "Published backtest methodology v1"
     assert memory.experiment.orders_authorized is False
 
 
