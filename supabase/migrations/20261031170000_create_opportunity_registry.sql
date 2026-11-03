@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS paper_ledger.opportunities (
     timeframe text NOT NULL CHECK (length(timeframe) BETWEEN 1 AND 12),
     state text NOT NULL CHECK (state IN (
         'DISCOVERED', 'ASSESSING', 'WAITING', 'REASSESSING', 'TRIGGERED',
-        'RISK_CHECK', 'INTENT_RECORDED', 'PAPER_OPEN', 'REJECTED',
+        'RISK_CHECK', 'INTENT_RECORDED', 'PAPER_OPEN', 'PAPER_CLOSED', 'REJECTED',
         'INVALIDATED', 'EXPIRED', 'CANCELLED', 'BLOCKED', 'NO_TRADE'
     )),
     version integer NOT NULL DEFAULT 0 CHECK (version >= 0),
