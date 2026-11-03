@@ -1,28 +1,49 @@
-from app.engines.paper_ledger import SQLitePaperLedger
-from backend.shared_market_worker import persist_equity_snapshot
+import threading
+
+import pytest
+
+from backend.shared_market_worker import run_equity_snapshot_scheduler
 
 
-def test_persist_equity_snapshot_writes_a_fresh_durable_account_snapshot(tmp_path):
-    ledger = SQLitePaperLedger(tmp_path / "paper-ledger.sqlite3")
-    try:
-        snapshot = persist_equity_snapshot(
-            ledger,
-            initial_equity=1_000.0,
-            as_of=1_800_000_000.0,
-            max_mark_age_seconds=30.0,
+def test_equity_snapshot_runner_uses_configured_baseline_and_stops_cleanly():
+    stop = threading.Event()
+    calls = []
+
+    class Ledger:
+        def mark_to_market_risk_report(self, **kwargs):
+            calls.append(kwargs)
+            stop.set()
+            return type("Report", (), {
+                "marks_fresh": True,
+                "account_equity": 10_000.0,
+                "open_position_count": 0,
+            })()
+
+    run_equity_snapshot_scheduler(
+        stop, Ledger(), initial_equity=10_000.0,
+        interval_seconds=60, max_mark_age_seconds=30,
+        clock=lambda: 123.0,
+    )
+
+    assert calls == [{
+        "initial_equity": 10_000.0,
+        "as_of": 123.0,
+        "max_mark_age_seconds": 30.0,
+    }]
+
+
+def test_equity_snapshot_runner_rejects_invalid_baseline_before_writing():
+    class Ledger:
+        called = False
+
+        def mark_to_market_risk_report(self, **kwargs):
+            self.called = True
+
+    ledger = Ledger()
+    with pytest.raises(ValueError, match="initial_equity"):
+        run_equity_snapshot_scheduler(
+            threading.Event(), ledger, initial_equity=0,
+            interval_seconds=60, max_mark_age_seconds=30,
+            clock=lambda: 123.0,
         )
-
-        row = ledger._connection.execute(
-            "SELECT snapshot_at, account_equity, open_position_count, marks_fresh "
-            "FROM paper_equity_snapshots ORDER BY snapshot_at DESC LIMIT 1"
-        ).fetchone()
-
-        assert row is not None
-        assert row["snapshot_at"] == 1_800_000_000.0
-        assert row["account_equity"] == 1_000.0
-        assert row["open_position_count"] == 0
-        assert row["marks_fresh"] == 1
-        assert snapshot.account_equity == 1_000.0
-        assert snapshot.orders_authorized is False
-    finally:
-        ledger.close()
+    assert ledger.called is False
