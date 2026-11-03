@@ -640,7 +640,7 @@ def reconcile_paper_intents(
         raise ValueError("reconciliation clock must be timezone-aware")
     stamp = now.astimezone(timezone.utc)
     page = coordinator.store.list_opportunities(
-        states=("RISK_CHECK", "INTENT_RECORDED"),
+        states=("RISK_CHECK", "INTENT_RECORDED", "PAPER_OPEN"),
         market_type=coordinator.market_type,
         venue=coordinator.venue,
         limit=100,
@@ -690,14 +690,15 @@ def reconcile_paper_intents(
                 evidence_version=proposal_id,
                 now=stamp,
             ).opportunity
-        if current.state == "INTENT_RECORDED" and position is not None:
+        if current.state in {"INTENT_RECORDED", "PAPER_OPEN"} and position is not None:
             position_status = getattr(position, "status", None)
             if position_status not in {"OPEN", "CLOSED"}:
                 continue
+            target_state = "PAPER_OPEN" if position_status == "OPEN" else "PAPER_CLOSED"
             coordinator.store.append_evidence(
                 OpportunityEvidenceRecord(
                     evidence_id="evidence-paper-position-" + hashlib.sha256(
-                        f"{record.opportunity_id}|{proposal_id}".encode("utf-8")
+                        f"{record.opportunity_id}|{proposal_id}|{position_status}".encode("utf-8")
                     ).hexdigest()[:40],
                     opportunity_id=record.opportunity_id,
                     evidence_type="PAPER_POSITION",
@@ -719,21 +720,26 @@ def reconcile_paper_intents(
                     },
                     orders_authorized=False,
                 ),
-                idempotency_key=f"paper-position:{record.opportunity_id}:{proposal_id}",
+                idempotency_key=f"paper-position:{record.opportunity_id}:{proposal_id}:{position_status}",
                 now=stamp,
             )
-            current = coordinator.store.transition(
-                current.opportunity_id,
-                expected_version=current.version,
-                to_state="PAPER_OPEN",
-                reason="durable paper ledger confirms the simulated position was opened",
-                event_id="event-paper-open-" + hashlib.sha256(
-                    f"{record.opportunity_id}|{proposal_id}".encode("utf-8")
-                ).hexdigest()[:40],
-                actor="paper_ledger",
-                evidence_version=proposal_id,
-                now=stamp,
-            ).opportunity
+            if current.state != target_state:
+                current = coordinator.store.transition(
+                    current.opportunity_id,
+                    expected_version=current.version,
+                    to_state=target_state,
+                    reason=(
+                        "durable paper ledger confirms the simulated position was opened"
+                        if target_state == "PAPER_OPEN"
+                        else "durable paper ledger confirms the simulated position was closed"
+                    ),
+                    event_id=f"event-paper-{position_status.lower()}-" + hashlib.sha256(
+                        f"{record.opportunity_id}|{proposal_id}".encode("utf-8")
+                    ).hexdigest()[:40],
+                    actor="paper_ledger",
+                    evidence_version=proposal_id,
+                    now=stamp,
+                ).opportunity
         results.append({
             "opportunity_id": record.opportunity_id,
             "state": current.state,
