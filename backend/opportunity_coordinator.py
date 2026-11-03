@@ -591,9 +591,35 @@ class OpportunityCoordinator:
         for result in watch_results:
             record = by_watch[result.watch_id]
             target_state = result.status
+            evaluation_reason = result.reason
+            if result.status == "TRIGGERED":
+                plan = record.metadata.get("price_plan") if isinstance(record.metadata, dict) else None
+                entry = plan.get("entry_price") if isinstance(plan, dict) else None
+                trigger = plan.get("trigger_price") if isinstance(plan, dict) else None
+                observed = result.observed_price
+                valid_overshoot_inputs = all(
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    and math.isfinite(value)
+                    and value > 0
+                    for value in (entry, trigger, observed)
+                )
+                if not valid_overshoot_inputs or entry == trigger:
+                    target_state = "BLOCKED"
+                    evaluation_reason = "trigger overshoot could not be validated against the stored ATR plan"
+                else:
+                    allowed_overshoot = abs(float(trigger) - float(entry))
+                    actual_overshoot = (
+                        max(0.0, float(observed) - float(trigger))
+                        if record.direction == "LONG"
+                        else max(0.0, float(trigger) - float(observed))
+                    )
+                    if actual_overshoot > allowed_overshoot + max(1e-12, allowed_overshoot * 1e-9):
+                        target_state = "BLOCKED"
+                        evaluation_reason = "trigger overshoot exceeded one original ATR trigger buffer"
             if result.status == "WAITING" and record.state == "REASSESSING":
                 target_state = "WAITING"
-            if target_state in {"TRIGGERED", "INVALIDATED", "EXPIRED"} or (
+            if target_state in {"TRIGGERED", "INVALIDATED", "EXPIRED", "BLOCKED"} or (
                 target_state == "WAITING" and record.state == "REASSESSING"
             ):
                 try:
@@ -601,7 +627,7 @@ class OpportunityCoordinator:
                         record.opportunity_id,
                         expected_version=record.version,
                         to_state=target_state,
-                        reason=result.reason,
+                        reason=evaluation_reason,
                         event_id=self._event_id(record, target_state, tick.observed_at),
                         actor="opportunity_coordinator",
                         evidence_version=tick.observed_at.astimezone(timezone.utc).isoformat(),
@@ -620,7 +646,7 @@ class OpportunityCoordinator:
             else:
                 state = record.state
             evaluations.append(OpportunityEvaluation(
-                record.opportunity_id, result.status, state, result.reason,
+                record.opportunity_id, target_state, state, evaluation_reason,
                 result.observed_price, False,
             ))
         return tuple(evaluations)
