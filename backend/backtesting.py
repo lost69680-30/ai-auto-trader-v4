@@ -24,8 +24,10 @@ class BacktestConfig:
         numeric = (self.initial_equity, self.position_fraction, self.fee_bps_per_side,
                    self.slippage_bps_per_side, self.funding_bps_per_8h,
                    self.minimum_signal_score)
-        if not all(math.isfinite(v) for v in numeric):
-            raise ValueError("backtest configuration values must be finite")
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in numeric):
+            raise ValueError("backtest configuration values must be numeric and finite")
+        if not all(math.isfinite(value) for value in numeric):
+            raise ValueError("backtest configuration values must be numeric and finite")
         if self.initial_equity <= 0:
             raise ValueError("initial_equity must be positive")
         if not 0 < self.position_fraction <= 1:
