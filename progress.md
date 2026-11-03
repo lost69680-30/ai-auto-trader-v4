@@ -183,3 +183,43 @@ Root and extracted-assembly worker, API and new regression-test mirrors were che
 - No live exchange order interface, live trading, secret change, paid hosting, or billing action was introduced.
 
 Do not enable the research or paper-handoff flags as part of CI. Keep both opt-in flags false until the separate operational acceptance gate is satisfied.
+
+## Part 8 — Operational Recovery and End-to-End Validation (2026-11-03)
+
+**Implementation branch:** `feat/solo-part8-operational-recovery`  
+**Draft PR:** [#101 — Part 8 operational recovery](https://github.com/lost69680-30/ai-auto-trader-v4/pull/101)  
+**Base:** PR #97 branch `feat/solo-parts5-7-professional-integration`  
+**Verified code/test head:** `686a13ec404ad8d7a6090af4be0062a3aaa272ae`
+
+### Implemented
+
+- Added a fail-safe worker shutdown helper. If the scheduled-job thread remains alive after its bounded shutdown grace, the process no longer releases the PostgreSQL worker lease or closes the shared paper ledger. The process exits and PostgreSQL lease expiry governs recovery; this prevents a replacement worker from acquiring ownership while the old process may still be executing.
+- Added shutdown regressions for normal shutdown, stuck background thread, no job thread, and lease-release failure. The four tests first failed before the helper existed, then passed after implementation.
+- Added a disposable-PostgreSQL market-worker lease-expiry test: a second owner is blocked before expiry, acquires after expiry, and the old owner cannot heartbeat after ownership changes. Existing durable-scheduler tests already cover expired job-lease reclaim, stale-owner completion rejection, and idempotent retry/completion.
+- Added an end-to-end PostgreSQL paper-service test that asserts the actual `PostgresPaperLedger` backend is selected, a paper-only signal passes through the existing research/Risk Guardian path, Emergency Stop cancels the pending intent, the stop/audit state survives service recreation, and new intents remain blocked after restart.
+- Added a 168-hour deterministic synthetic replay regression: 2,016 intents, fills, protective exits and simulated restarts; zero duplicates; no open positions; Emergency Stop inactive at the end; `orders_authorized=false`.
+- Added the PostgreSQL runtime integration test to the durable-ledger GitHub Actions workflow.
+- Updated `docs/PAPER_SERVICE.md` and the packaged documentation with shutdown/recovery semantics, the 168-hour replay command, and staging-only backup/restore, alerting, real-market soak, deployment, and Android acceptance gates.
+- Kept all relevant root and extracted-assembly source/test/documentation mirrors byte-identical.
+
+### CI verification
+
+All listed results below are for code/test head `686a13ec404ad8d7a6090af4be0062a3aaa272ae`, except the offline backtest workflow, which ran on the preceding root-source commit with no later production-code change.
+
+- [Durable PostgreSQL integration workflow](https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41583879955): 6 PostgreSQL ledger tests passed; 1 PostgreSQL paper-service recovery test passed; 14 opportunity-registry tests passed; full backend suite **606 passed**.
+- [ASGI runtime workflow](https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41583879918): 37 focused tests passed; full suite **545 passed, 48 skipped**.
+- [Market-data and analysis safety workflow](https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41583879924): **108 passed, 14 skipped**; source mirror parity checks passed.
+- [Offline backtest workflow](https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41583661763): 28 focused tests passed; full suite **545 passed, 48 skipped**.
+- The full durable-paper-ledger suite also completed successfully with **606 passed** on the verified code/test head.
+
+The initial PostgreSQL end-to-end scenario first returned `WAITING_FOR_TRIGGER` because the test fixture regenerated a different closed-candle identity. The fixture was corrected to keep the same closed candle while advancing only the mark price; the focused PostgreSQL test then passed. No production runtime behavior change was required for that test-fixture correction.
+
+### Not operationally accepted
+
+- PR #101 remains draft and unmerged. PR #97 remains the Parts 5–7 foundation; no merge or deployment was performed.
+- No Render/Railway or staging deployment, always-on host verification, or real multi-day public-market-data soak.
+- No production Supabase migration, backup/restore rehearsal, migration rollback drill, or alert-delivery verification.
+- The new integration APK has not been installed or phone-tested.
+- No Forex implementation, live exchange order interface, live orders, secret changes, paid provisioning, or billing action.
+
+**Safety state preserved:** paper-only/read-only; `PAPER_ONLY`; `orders_authorized=false`; independent Risk Guardian remains the authorization gate; research and opportunity paper-handoff flags remain disabled by default. Do not enable flags or deploy as part of this PR.
