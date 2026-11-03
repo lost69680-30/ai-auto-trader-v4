@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import math
 from typing import Iterable
 
-from backend.backtesting import SimulatedTrade
+from backend.backtesting import BacktestResult, SimulatedTrade
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,10 +26,54 @@ class EvaluationMetrics:
     orders_authorized: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class RiskAdjustedMetrics:
+    net_return_pct: float
+    max_drawdown_pct: float
+    return_to_drawdown_ratio: float | None
+    status: str
+    orders_authorized: bool = False
+
+
+def calculate_risk_adjusted_metrics(result: BacktestResult) -> RiskAdjustedMetrics:
+    """Report net return relative to maximum drawdown; never infer a zero-risk ratio."""
+    if not isinstance(result, BacktestResult) or result.orders_authorized is not False:
+        raise ValueError("a paper-only BacktestResult is required")
+    initial_equity = _finite_metric(result.initial_equity, "initial_equity")
+    net_pnl = _finite_metric(result.net_pnl, "net_pnl")
+    drawdown = _finite_metric(result.max_drawdown_pct, "max_drawdown_pct")
+    if initial_equity <= 0:
+        raise ValueError("initial_equity must be positive")
+    if not 0 <= drawdown <= 100:
+        raise ValueError("max_drawdown_pct must be between 0 and 100")
+    net_return = net_pnl / initial_equity * 100.0
+    if not math.isfinite(net_return):
+        raise ValueError("net return percentage is not finite")
+    if drawdown == 0:
+        ratio = None
+        status = "ZERO_DRAWDOWN_UNDEFINED"
+    else:
+        ratio = net_return / drawdown
+        if not math.isfinite(ratio):
+            raise ValueError("return-to-drawdown ratio is not finite")
+        ratio = round(ratio, 8)
+        status = "DEFINED"
+    return RiskAdjustedMetrics(
+        net_return_pct=round(net_return, 8),
+        max_drawdown_pct=round(drawdown, 8),
+        return_to_drawdown_ratio=ratio,
+        status=status,
+        orders_authorized=False,
+    )
+
+
 def _finite_metric(value: object, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be finite numeric data")
-    result = float(value)
+    try:
+        result = float(value)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be finite numeric data") from exc
     if not math.isfinite(result):
         raise ValueError(f"{name} must be finite numeric data")
     return result
