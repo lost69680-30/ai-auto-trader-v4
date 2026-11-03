@@ -113,3 +113,29 @@ Before enabling any continuous worker on a hosted environment, require a separat
 8. Install the matching debug APK on the Android device and verify connection, market prices, timeframes, positions, Emergency Stop, and recovery after app/network interruption.
 
 None of these staging deployment, real-market soak, database backup/restore, alert-delivery, production migration, or Android phone-acceptance gates is implied by passing CI. Keep the existing production service, secrets, hosting, and Supabase database unchanged until those gates are explicitly approved.
+
+
+## Staging configuration preflight
+
+Use separate always-on worker and API processes. The worker owns market polling and durable scheduled jobs; the API serves authenticated REST/WebSocket reads and must not start a second poller. Both use the same approved staging PostgreSQL database. Configure the API behind a trusted HTTPS-terminating proxy.
+
+Run the configuration-only checks from the packaged assembly directory after setting the role-specific environment variables:
+
+```bash
+python -m backend.staging_preflight --role worker
+python -m backend.staging_preflight --role api
+```
+
+The worker check requires a parseable `PAPER_DATABASE_URL`, explicit `PAPER_MARKET_TESTNET=true`, and the one-minute candle interval. The API check additionally requires `PAPER_MARKET_ROLE=api`, `PAPER_MARKET_DATA_MODE=futures`, a `PAPER_API_TOKEN` of at least 32 characters, and `PAPER_WEBSOCKET_ENABLED=true`. A non-loopback API bind requires `PAPER_API_HTTPS_TERMINATED=1`.
+
+Both profiles reject enabled `PAPER_MARKET_INTELLIGENCE_ENABLED`, `PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED`, `PAPER_RESEARCH_WORKER_ENABLED`, or `PAPER_MARKET_SUPERVISOR_ENABLED`. Unset flags are treated as disabled. The preflight never prints the database URI or bearer token, opens no connection during configuration-only checks, and always reports `orders_authorized=false`.
+
+After a separately approved staging database has been migrated and backed up, optionally inspect its schema:
+
+```bash
+python -m backend.staging_preflight --role worker --check-database
+```
+
+This optional check opens a PostgreSQL connection using the project's remote-TLS policy and executes only catalog reads inside a `READ ONLY` transaction. It verifies that all 21 required `paper_ledger` tables exist and have row-level security enabled. It does not apply migrations, inspect trading rows, change grants, or repair schema. Run it only against the intended staging database; do not point it at the production Supabase project as part of CI.
+
+The CI workflow applies the repository migrations only to its disposable local PostgreSQL service, then runs the same preflight and read-only schema inspection. This verifies the checker without accessing user-owned infrastructure.
