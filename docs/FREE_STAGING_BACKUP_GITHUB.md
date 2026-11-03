@@ -4,7 +4,19 @@ This is the phone-friendly alternative to Termux. It uses a manually triggered G
 
 ## Important current blocker — do not run yet
 
-The latest read-only catalog check (2026-11-03) found 15 staging tables with RLS enabled, but only 14 have the required `solo_backup_reader_select` policy. `paper_ledger.market_intelligence_reports` has no policy. The workflow deliberately fails before dumping if even one table lacks the dedicated reader policy. Do not weaken RLS or use a privileged database account to bypass this check. First review and add a narrowly scoped SELECT policy for `solo_backup_reader` on that private table, then re-run the read-only catalog check.
+The latest read-only catalog check (2026-11-03) found 15 staging tables, all with RLS, but only 14 have the required `solo_backup_reader_select` policy. The missing table is `market_intelligence_reports`. Additional read-only checks confirmed its owner is `postgres`; `anon`, `authenticated`, and `service_role` have no SELECT grant on it; the private `paper_ledger` schema has no USAGE grant to those roles; and `solo_backup_reader` is not superuser, BYPASSRLS, or INHERIT. It has SELECT on this table but no matching policy, so the workflow refuses to dump.
+
+If the project owner approves granting the dedicated backup role visibility into every row of this report table, the narrowly scoped SQL would be:
+
+```sql
+CREATE POLICY solo_backup_reader_select
+ON paper_ledger.market_intelligence_reports
+FOR SELECT
+TO solo_backup_reader
+USING (true);
+```
+
+This policy would not grant access to `anon`, `authenticated`, or `service_role`, and it adds no write privileges. However, it would let the dedicated login role read all report rows. It has **not** been applied. Do not weaken RLS or use a privileged database account to bypass this check.
 
 The existing GitHub workflow was previously capable of uploading an **unencrypted** dump. It has been replaced with an encrypted, fail-closed workflow. Do not run older workflow versions or download any old plaintext artifact; if one exists, delete it immediately from Actions artifacts and treat its contents as exposed.
 
