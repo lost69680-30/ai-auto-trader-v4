@@ -65,6 +65,14 @@ jobs:
             echo "::error::Backup connection must authenticate as solo_backup_reader; refusing a privileged or unexpected database role."
             exit 1
           fi
+          role_safety="$(psql "$DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 -c "
+            SELECT CASE WHEN rolsuper OR rolbypassrls OR rolinherit OR NOT rolcanlogin
+              THEN 'unsafe' ELSE 'safe' END
+            FROM pg_roles WHERE rolname=current_user")"
+          if [ "$role_safety" != "safe" ]; then
+            echo "::error::Backup role has unsafe role attributes; refusing to continue."
+            exit 1
+          fi
           table_count="$(psql "$DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 -c "
             SELECT count(*) FROM pg_class c
             JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -81,11 +89,23 @@ jobs:
                   AND 'solo_backup_reader'=ANY(p.roles)
                   AND p.cmd IN ('SELECT','ALL')
               ))")"
-          if [ "$table_count" -lt 1 ] || [ "$unsafe_count" -ne 0 ]; then
-            echo "::error::RLS preflight failed: tables=$table_count, tables without the dedicated SELECT policy=$unsafe_count. No dump was started."
+          privilege_violations="$(psql "$DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 -c "
+            SELECT count(*) FROM pg_class c
+            JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname='paper_ledger' AND c.relkind='r'
+              AND (NOT has_table_privilege(current_user,c.oid,'SELECT')
+                OR has_table_privilege(current_user,c.oid,'INSERT')
+                OR has_table_privilege(current_user,c.oid,'UPDATE')
+                OR has_table_privilege(current_user,c.oid,'DELETE')
+                OR has_table_privilege(current_user,c.oid,'TRUNCATE')
+                OR has_table_privilege(current_user,c.oid,'REFERENCES')
+                OR has_table_privilege(current_user,c.oid,'TRIGGER'))")"
+          schema_create="$(psql "$DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 -c "SELECT has_schema_privilege(current_user,'paper_ledger','CREATE')")"
+          if [ "$table_count" -lt 1 ] || [ "$unsafe_count" -ne 0 ] || [ "$privilege_violations" -ne 0 ] || [ "$schema_create" != "f" ]; then
+            echo "::error::Read-only/RLS preflight failed: tables=$table_count, missing RLS policies=$unsafe_count, unsafe table grants=$privilege_violations, schema CREATE=$schema_create. No dump was started."
             exit 1
           fi
-          echo "PASS: dedicated reader role; $table_count tables have RLS and the explicit backup-reader SELECT policy."
+          echo "PASS: non-privileged login role with SELECT-only table grants; $table_count tables have RLS and the explicit backup-reader SELECT policy."
 
       - name: Export only the private paper_ledger schema
         env:
