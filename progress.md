@@ -334,3 +334,13 @@ A second read-only inspection targeted the actual `paper_ledger` schema in `solo
 - Supabase's security advisor returned one INFO finding: `paper_ledger.market_intelligence_reports` has RLS enabled but no policies. Since this is a private server-side schema, do not add a broad policy merely to silence the advisor; verify schema exposure and backend-only access before any change.
 - The performance advisor reported three unused indexes (INFO only). No index or schema changes were made.
 - **Result:** the existing staging database is not yet compatible with the Part 8 preflight. Do not deploy the Part 8 API/worker against it and do not apply migrations until a reviewed migration/backup/rollback plan is ready. Production Supabase remains untouched.
+
+
+### Read-only Supabase storage snapshot (2026-11-03)
+
+Read-only `pg_database_size` queries returned:
+
+- `solo-ai-auto-trader-staging`: **191 MB** total database size (200,251,059 bytes); `paper_ledger` tables total approximately 180 MB across 15 tables.
+- `solo-ai-auto-trader` (production): **11 MB** total database size (11,368,115 bytes), with 9 `paper_ledger` tables.
+- These are point-in-time size readings, not growth forecasts. If the staging project is on Supabase Free, 191 MB is about 38% of its 500 MB database allowance; approximately 309 MB would remain before the nominal limit. The connector did not expose the current billing plan or quota enforcement settings, so verify the plan in the Supabase dashboard before treating that remaining capacity as confirmed.
+- No table data was selected by these size queries; no database writes, migrations, or billing changes were made. Keep production separate and unchanged.
