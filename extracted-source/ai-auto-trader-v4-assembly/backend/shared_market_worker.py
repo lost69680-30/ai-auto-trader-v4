@@ -165,19 +165,48 @@ def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source
     return handle
 
 
-def run_scheduled_jobs(stop: threading.Event, scheduler: DurableJobScheduler,
-                       dispatcher: AnalysisJobDispatcher, *, poll_interval: float = 1.0) -> None:
-    """Run durable analysis jobs off the market-feed polling thread."""
+def run_scheduled_jobs(
+    stop: threading.Event, scheduler: DurableJobScheduler,
+    dispatcher: AnalysisJobDispatcher, *, poll_interval: float = 5.0,
+    health: dict | None = None, health_lock=None,
+) -> None:
+    """Run durable analysis jobs off the feed loop and publish scheduler health."""
     if not isinstance(stop, threading.Event):
         raise ValueError("stop must be a threading.Event")
     if not isinstance(poll_interval, (int, float)) or poll_interval <= 0:
         raise ValueError("poll_interval must be positive")
+    if health is not None and not isinstance(health, dict):
+        raise ValueError("health must be a dictionary when supplied")
+    scheduler_error = None
+
+    def publish_health(**values):
+        if health is None:
+            return
+        if health_lock is None:
+            health.update(values)
+        else:
+            with health_lock:
+                health.update(values)
+
     while not stop.is_set():
         try:
-            scheduler.enqueue_due()
+            enqueued = scheduler.enqueue_due()
             dispatcher.run_once()
-        except Exception:
+            scheduler_error = None
+        except Exception as exc:
+            scheduler_error = type(exc).__name__
             logger.exception("durable read-only analysis scheduler thread failed")
+            enqueued = 0
+        dispatch_status = getattr(dispatcher, "last_run_status", "IDLE")
+        dispatch_error = getattr(dispatcher, "last_error", None)
+        degraded = scheduler_error is not None or dispatch_error is not None or dispatch_status == "LEASE_LOST"
+        publish_health(
+            status="DEGRADED" if degraded else "RUNNING",
+            last_poll_at=datetime.now(timezone.utc).isoformat(),
+            last_error=scheduler_error or dispatch_error,
+            last_dispatch_status=dispatch_status,
+            jobs_enqueued=enqueued,
+        )
         stop.wait(float(poll_interval))
 
 
@@ -335,9 +364,24 @@ def main() -> None:
         )
         last_equity_snapshot_at = 0.0
 
+        scheduler_poll_interval = _bounded_env_int(
+            "PAPER_SCHEDULED_JOB_POLL_INTERVAL_SECONDS", 5,
+            minimum=3, maximum=30,
+        )
+        scheduler_health = {
+            "status": "STARTING", "last_poll_at": None,
+            "last_error": None, "last_dispatch_status": "IDLE",
+            "jobs_enqueued": 0,
+        }
+        scheduler_health_lock = threading.Lock()
         job_runner = threading.Thread(
             target=run_scheduled_jobs,
             args=(stop, scheduler, dispatcher),
+            kwargs={
+                "poll_interval": scheduler_poll_interval,
+                "health": scheduler_health,
+                "health_lock": scheduler_health_lock,
+            },
             name=f"{worker_id[:80]}-scheduled-jobs",
             daemon=True,
         )
@@ -400,14 +444,20 @@ def main() -> None:
                         )
                     else:
                         last_equity_snapshot_at = snapshot_clock
-                heartbeat_status = "DEGRADED" if equity_snapshot_error or analysis_error or cycle_status in {
+                with scheduler_health_lock:
+                    scheduler_health_snapshot = dict(scheduler_health)
+                heartbeat_status = "DEGRADED" if (
+                    equity_snapshot_error or analysis_error
+                    or scheduler_health_snapshot.get("status") == "DEGRADED"
+                    or cycle_status in {
                     "SKIPPED_UNHEALTHY_MARKET_DATA", "FUNDING_SYNC_DEGRADED",
                     "MARKET_UNIVERSE_STALE", "NO_HEALTHY_ALLOWLISTED_SYMBOLS",
                     "NO_ELIGIBLE_SYMBOLS", "ANALYZED_WITH_EXCLUSIONS",
                     "FUNDING_SYNC_ERROR", "MARKET_UNIVERSE_UNAVAILABLE",
                     "MARKET_UNIVERSE_REJECTED", "AUTHORIZATION_FLAG_REJECTED",
                     "ANALYSIS_RESULT_MISSING", "ANALYSIS_ELIGIBILITY_INVALID",
-                } else "RUNNING"
+                    }
+                ) else "RUNNING"
                 store.heartbeat(
                     heartbeat_status,
                     details={
@@ -422,6 +472,7 @@ def main() -> None:
                         "historical_archive_older_candles": older_history_count,
                         "historical_archive_backfill_errors": older_history_errors,
                         "equity_snapshot_error": equity_snapshot_error,
+                        "scheduled_jobs": scheduler_health_snapshot,
                         "orders_authorized": False,
                     },
                 )
