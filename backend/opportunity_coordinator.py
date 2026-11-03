@@ -305,7 +305,7 @@ class OpportunityCoordinator:
             now=stamp,
             max_active_per_symbol=self.max_active_opportunities_per_symbol,
         )
-        if saved.state in {"TRIGGERED", "RISK_CHECK", "INTENT_RECORDED", "PAPER_OPEN",
+        if saved.state in {"TRIGGERED", "RISK_CHECK", "INTENT_RECORDED", "PAPER_OPEN", "PAPER_CLOSED",
                            "REJECTED", "INVALIDATED", "EXPIRED", "CANCELLED", "BLOCKED", "NO_TRADE"}:
             return saved
 
