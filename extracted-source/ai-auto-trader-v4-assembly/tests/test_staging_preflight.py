@@ -12,6 +12,16 @@ def worker_env(**overrides):
         "PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED": "false",
         "PAPER_RESEARCH_WORKER_ENABLED": "false",
         "PAPER_MARKET_SUPERVISOR_ENABLED": "false",
+        "PAPER_SYMBOLS": "BTCUSDT,ETHUSDT",
+        "PAPER_SIMULATED_EQUITY": "1000",
+        "PAPER_RISK_FRACTION": "0.005",
+        "PAPER_MAX_POSITION_NOTIONAL": "100",
+        "PAPER_MAX_DAILY_LOSS": "20",
+        "PAPER_MAX_OPEN_POSITIONS": "2",
+        "PAPER_MAX_RISK_PER_TRADE": "5",
+        "PAPER_ESTIMATED_ROUND_TRIP_COST_PCT": "0.12",
+        "PAPER_FEE_RATE": "0.0004",
+        "PAPER_SLIPPAGE_BPS": "2",
     }
     values.update(overrides)
     return values
@@ -204,3 +214,35 @@ def test_remote_database_preflight_rejects_connection_without_tls():
 
     assert check.passed is False
     assert "TLS" in check.detail
+
+def test_worker_preflight_rejects_runtime_risk_limits_above_safety_caps():
+    report = run_preflight("worker", worker_env(
+        PAPER_MAX_DAILY_LOSS="21",
+        PAPER_MAX_POSITION_NOTIONAL="101",
+    ))
+
+    assert report.passed is False
+    runtime_check = next(check for check in report.checks if check.name == "paper_runtime_configuration")
+    assert runtime_check.passed is False
+    assert "risk limits" in runtime_check.detail.lower()
+
+
+def test_worker_preflight_rejects_missing_required_paper_runtime_settings():
+    values = worker_env()
+    values.pop("PAPER_SYMBOLS")
+    report = run_preflight("worker", values)
+
+    runtime_check = next(check for check in report.checks if check.name == "paper_runtime_configuration")
+    assert runtime_check.passed is False
+    assert "PAPER_*" in runtime_check.detail
+
+
+def test_api_preflight_rejects_market_allowlist_or_archive_interval_mismatch():
+    report = run_preflight("api", api_env(
+        PAPER_MARKET_SYMBOLS="BTCUSDT",
+        PAPER_MARKET_INTERVAL="5m",
+    ))
+
+    assert report.passed is False
+    failed = {check.name for check in report.checks if not check.passed}
+    assert {"market_symbol_allowlist_match", "market_archive_interval_match"} <= failed
