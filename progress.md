@@ -364,3 +364,12 @@ Read-only `pg_database_size` queries returned:
 3. Inspect staging backend DB role and verify it can use the new tables while client-facing roles cannot.
 4. Re-run the Part 8 preflight with `--check-database` against staging; expect it to fail until the six-table migration is applied.
 5. Only after backup and permission checks pass, apply the single reviewed opportunity-registry migration to **staging only**, then verify all 21 required tables and RLS. Production remains untouched.
+
+
+### Android backup runbook prepared (2026-11-03)
+
+- Added `docs/FREE_STAGING_BACKUP_TERMUX.md` for the user's Android/Termux workflow.
+- The runbook installs free `postgresql` and `age` packages, prompts for staging session-pooler details, reads the DB password through a hidden prompt (not shell history), dumps only `paper_ledger`, encrypts the archive with a separate passphrase, verifies it with `pg_restore --list`, checks SHA-256 after copying to Android shared storage, and removes the temporary plaintext dump.
+- The runbook explicitly prohibits production access, credential sharing, public GitHub uploads, and restore/migration commands against staging or production.
+- Archive-list validation is not a restore rehearsal. A successful restore to disposable local PostgreSQL remains mandatory before applying the missing migration.
+- This is documentation only. The user has not yet run it; no backup has been created and no database was changed.
