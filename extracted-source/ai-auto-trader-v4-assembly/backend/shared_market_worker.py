@@ -276,8 +276,9 @@ def main() -> None:
                 "PAPER_MARKET_INTELLIGENCE_FETCH_WORKERS", 3,
                 minimum=1, maximum=6,
             )
-            intelligence_interval = max(
-                300, int(os.environ.get("PAPER_MARKET_INTELLIGENCE_INTERVAL_SECONDS", "900"))
+            intelligence_interval = _bounded_env_int(
+                "PAPER_MARKET_INTELLIGENCE_INTERVAL_SECONDS", 1800,
+                minimum=900, maximum=86400,
             )
             opportunity_store = PostgresOpportunityStore(dsn)
             futures_coordinator = OpportunityCoordinator(
