@@ -280,7 +280,7 @@ No Render or Railway settings were changed.
 
 ### Operational consequence
 
-The existing Free Render setup cannot be accepted as the continuous staging host. The intended topology remains one always-on worker process (`python -m backend.shared_market_worker`) plus one API-only process (`python -m app.engines.read_only_api`), both on the same approved code branch and connected to the approved durable PostgreSQL database. Use paid always-on compute or another persistent-service host. Keep the user's Supabase production database and existing secrets unchanged until a separate staging database/backup and deployment approval are established.
+The existing Free Render setup cannot be accepted as the continuous staging host. This was the earlier paid-host recommendation and is superseded by the user's strict $0 instruction. Do not provision paid compute. The free-only operating decision and limitations are recorded below in “Free-only hosting decision and constraints (2026-11-03).”
 
 
 ## Free-only hosting decision and constraints (2026-11-03)
