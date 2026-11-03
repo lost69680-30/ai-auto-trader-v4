@@ -35,6 +35,20 @@ def _env_bool(name: str, *, default: bool = False) -> bool:
     raise ValueError(f"{name} must be a boolean value")
 
 
+
+def _bounded_env_int(
+    name: str, default: int, *, minimum: int, maximum: int,
+) -> int:
+    """Read a bounded integer setting; reject invalid overrides instead of silently overloading the worker."""
+    raw = os.environ.get(name)
+    try:
+        value = default if raw is None else int(raw.strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an integer between {minimum} and {maximum}") from exc
+    if isinstance(value, bool) or not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be an integer between {minimum} and {maximum}")
+    return value
+
 def persist_equity_snapshot(ledger, *, initial_equity: float, as_of: float,
                             max_mark_age_seconds: float):
     """Persist a durable mark-to-market snapshot without granting order authority."""
@@ -102,7 +116,7 @@ def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source
             )
 
         result = coordinator.reassess_due(
-            now=now, market_update_provider=update, limit=50,
+            now=now, market_update_provider=update, limit=20,
         )
         if result.orders_authorized is not False:
             raise RuntimeError("opportunity coordinator violated paper-only authorization boundary")
@@ -121,7 +135,7 @@ def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source
                     states=("TRIGGERED", "RISK_CHECK"),
                     market_type=coordinator.market_type,
                     venue=coordinator.venue,
-                    limit=50,
+                    limit=20,
                 )
                 if page.next_cursor is not None:
                     raise RuntimeError("trigger handoff exceeded its bounded opportunity page")
@@ -205,8 +219,9 @@ def main() -> None:
         intelligence_enabled = _env_bool("PAPER_MARKET_INTELLIGENCE_ENABLED", default=False)
         paper_handoff_enabled = _env_bool("PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED", default=False)
         if intelligence_enabled:
-            intelligence_interval = max(
-                300, int(os.environ.get("PAPER_MARKET_INTELLIGENCE_INTERVAL_SECONDS", "900"))
+            intelligence_interval = _bounded_env_int(
+                "PAPER_MARKET_INTELLIGENCE_INTERVAL_SECONDS", 1800,
+                minimum=900, maximum=86400,
             )
             scheduler.register_interval(
                 "market_intelligence_scan",
@@ -214,8 +229,9 @@ def main() -> None:
                 first_run_at=datetime.now(timezone.utc) + timedelta(seconds=60),
                 payload={"scope": "continuous_opportunity_search"},
             )
-            opportunity_interval = max(
-                15, int(os.environ.get("PAPER_OPPORTUNITY_REASSESS_INTERVAL_SECONDS", "60"))
+            opportunity_interval = _bounded_env_int(
+                "PAPER_OPPORTUNITY_REASSESS_INTERVAL_SECONDS", 300,
+                minimum=300, maximum=3600,
             )
             scheduler.register_interval(
                 "opportunity_reassessment_futures",
@@ -252,11 +268,13 @@ def main() -> None:
         if intelligence_enabled:
             from backend.continuous_opportunity_search import continuous_opportunity_search
 
-            intelligence_candle_limit = int(
-                os.environ.get("PAPER_MARKET_INTELLIGENCE_CANDLE_LIMIT", "200")
+            intelligence_candle_limit = _bounded_env_int(
+                "PAPER_MARKET_INTELLIGENCE_CANDLE_LIMIT", 100,
+                minimum=30, maximum=500,
             )
-            intelligence_fetch_workers = int(
-                os.environ.get("PAPER_MARKET_INTELLIGENCE_FETCH_WORKERS", "12")
+            intelligence_fetch_workers = _bounded_env_int(
+                "PAPER_MARKET_INTELLIGENCE_FETCH_WORKERS", 3,
+                minimum=1, maximum=6,
             )
             intelligence_interval = max(
                 300, int(os.environ.get("PAPER_MARKET_INTELLIGENCE_INTERVAL_SECONDS", "900"))
