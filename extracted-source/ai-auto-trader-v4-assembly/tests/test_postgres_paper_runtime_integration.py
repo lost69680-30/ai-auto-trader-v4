@@ -15,6 +15,7 @@ from app.engines.paper_service_app import (
     PaperServiceApplication, PaperServiceConfig, PaperSymbolPolicy,
 )
 from app.engines.orchestrator import PaperOrderIntent
+from app.engines.postgres_paper_ledger import PostgresPaperLedger
 from backend.market_data_adapter import MarketCandle, MarketUniverse, MarkPriceSnapshot
 from backend.market_worker import FeedStatus, MarketFrame, MarketPollResult
 from backend.scanner import Contract, MarketSnapshot
@@ -131,6 +132,7 @@ def test_postgres_paper_service_pipeline_emergency_stop_and_restart(monkeypatch,
     )
     proposal_id = None
     try:
+        assert isinstance(app.ledger, PostgresPaperLedger)
         first_candles = source.fetch_klines("BTCUSDT", now=NOW)
         first_price = first_candles[-1].close
         source.current_price = first_price
@@ -181,6 +183,7 @@ def test_postgres_paper_service_pipeline_emergency_stop_and_restart(monkeypatch,
         source=source, config=config, clock=lambda: current_clock[0],
     )
     try:
+        assert isinstance(recovered.ledger, PostgresPaperLedger)
         assert recovered.ledger.emergency_stop_active is True
         assert recovered.ledger.orders_authorized is False
         assert any(
