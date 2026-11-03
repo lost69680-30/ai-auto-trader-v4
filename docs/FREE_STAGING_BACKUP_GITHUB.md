@@ -2,21 +2,11 @@
 
 This is the phone-friendly alternative to Termux. It uses a manually triggered GitHub Actions run to read **only** the Supabase staging `paper_ledger` schema, encrypt the dump to an AgePony key held on your phone, prove an encrypted round-trip and restore into a disposable PostgreSQL service, then upload only the encrypted archive for one day.
 
-## Important current blocker — do not run yet
+## Current staging RLS status — policy applied, verified 2026-11-03
 
-The latest read-only catalog check (2026-11-03) found 15 staging tables, all with RLS, but only 14 have the required `solo_backup_reader_select` policy. The missing table is `market_intelligence_reports`. Additional read-only checks confirmed its owner is `postgres`; `anon`, `authenticated`, and `service_role` have no SELECT grant on it; the private `paper_ledger` schema has no USAGE grant to those roles; and `solo_backup_reader` is not superuser, BYPASSRLS, or INHERIT. It has SELECT on this table but no matching policy, so the workflow refuses to dump.
+The project owner explicitly approved the narrow staging-only policy, and it has now been applied to `paper_ledger.market_intelligence_reports`. A fresh catalog verification confirms 15/15 tables have RLS enabled, 15/15 have the `solo_backup_reader_select` policy, the backup role has SELECT on all 15 and no write privileges, and it is not superuser, BYPASSRLS, or INHERIT. `anon`, `authenticated`, and `service_role` still have no USAGE on the private `paper_ledger` schema. Supabase's security advisor returned no findings after the change.
 
-If the project owner approves granting the dedicated backup role visibility into every row of this report table, the narrowly scoped SQL would be:
-
-```sql
-CREATE POLICY solo_backup_reader_select
-ON paper_ledger.market_intelligence_reports
-FOR SELECT
-TO solo_backup_reader
-USING (true);
-```
-
-This policy would not grant access to `anon`, `authenticated`, or `service_role`, and it adds no write privileges. However, it would let the dedicated login role read all report rows. It has **not** been applied. Do not weaken RLS or use a privileged database account to bypass this check.
+This policy allows only the dedicated backup login role to read all rows of the report table. It grants no access to client roles and adds no write privileges. Production was not changed. The backup workflow still performs its own preflight checks and must not be run until the zero-cost and secret setup gates below are satisfied.
 
 The existing GitHub workflow was previously capable of uploading an **unencrypted** dump. It has been replaced with an encrypted, fail-closed workflow. Do not run older workflow versions or download any old plaintext artifact; if one exists, delete it immediately from Actions artifacts and treat its contents as exposed.
 
@@ -41,9 +31,9 @@ Add:
 
 Never put either secret in a file, issue, chat, workflow input, or commit. Do not send either value to ChatGPT.
 
-## 3. Resolve the RLS blocker before running
+## 3. Confirm the RLS preflight
 
-The current staging catalog has 15 tables, 15 with RLS, but only 14 with the explicit backup-reader SELECT policy. The missing table is `market_intelligence_reports`. Review the existing policy design and create only a narrowly scoped policy for `solo_backup_reader` if authorized. Then confirm every `paper_ledger` table has RLS enabled and the expected `solo_backup_reader_select` SELECT policy. Do not add a broad policy for `anon`, `authenticated`, `service_role`, or `PUBLIC`.
+The staging policy gap has been fixed and verified. Before running, confirm the database still has 15/15 RLS-enabled tables and 15/15 explicit `solo_backup_reader_select` policies, with no write privileges for the backup role. Do not add a broad policy for `anon`, `authenticated`, `service_role`, or `PUBLIC`.
 
 No migration is applied by the backup workflow.
 
