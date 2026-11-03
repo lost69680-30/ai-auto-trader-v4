@@ -176,11 +176,17 @@ def check_database_schema(
 ) -> PreflightCheck:
     """Inspect required private tables and RLS flags in a strictly read-only transaction."""
     try:
+        from psycopg.conninfo import conninfo_to_dict
         from app.engines.postgres_ssl import postgres_connection_ssl_options
+        parameters = conninfo_to_dict(dsn)
+        hosts = [item.strip().lower() for item in parameters.get("host", "localhost").split(",") if item.strip()]
+        remote_database = any(host not in _LOCAL_HOSTS for host in hosts)
         if connect_factory is None:
             import psycopg
             connect_factory = psycopg.connect
         with connect_factory(dsn, **postgres_connection_ssl_options(dsn)) as connection:
+            if remote_database and not getattr(getattr(connection, "info", None), "ssl_in_use", False):
+                raise RuntimeError("TLS is not active for the remote PostgreSQL connection")
             with connection.transaction():
                 connection.execute("SET TRANSACTION READ ONLY")
                 rows = connection.execute(
