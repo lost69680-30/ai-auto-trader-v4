@@ -223,3 +223,39 @@ The initial PostgreSQL end-to-end scenario first returned `WAITING_FOR_TRIGGER` 
 - No Forex implementation, live exchange order interface, live orders, secret changes, paid provisioning, or billing action.
 
 **Safety state preserved:** paper-only/read-only; `PAPER_ONLY`; `orders_authorized=false`; independent Risk Guardian remains the authorization gate; research and opportunity paper-handoff flags remain disabled by default. Do not enable flags or deploy as part of this PR.
+
+
+## Part 8 staging-readiness checkpoint (2026-11-03)
+
+**Branch:** `feat/solo-part8-operational-recovery`  
+**Draft PR:** [#101 — Solo Part 8 operational recovery](https://github.com/lost69680-30/ai-auto-trader-v4/pull/101)  
+**Latest verified PR head:** `6784ddf6960486dca5873749c74760b720d3e65b`
+
+### Implemented
+
+- Added mirrored `backend.staging_preflight` commands for separate `worker` and `api` processes.
+- Worker preflight requires PostgreSQL configuration, explicit Futures Testnet selection, and the 1m archive interval.
+- API preflight requires API-only mode, Futures Testnet, a 32-character minimum bearer token, authenticated WebSocket transport, and loopback binding or declared HTTPS termination.
+- Both profiles fail closed if research, opportunity paper handoff, research-worker, or supervisor opt-in flags are enabled.
+- Added optional `--check-database`: read-only PostgreSQL catalog inspection of all 21 required private tables, row-level security status, and remote TLS negotiation. It does not apply migrations or inspect trading rows.
+- Added staging process commands and a runbook to both root and packaged documentation.
+- CI now applies all repository migrations only to its disposable PostgreSQL service and executes both role preflights plus the read-only database schema check.
+
+### Fresh CI verification on PR head `6784ddf6960486dca5873749c74760b720d3e65b`
+
+- Staging preflight unit tests: **8 passed**.
+- Worker configuration plus PostgreSQL schema/TLS preflight: passed.
+- API configuration preflight: passed.
+- PostgreSQL ledger integration: **6 passed**.
+- PostgreSQL paper-service recovery integration: **1 passed**.
+- Opportunity registry integration: **14 passed**.
+- Full backend suite: **614 passed**.
+- ASGI focused suite: **37 passed**; full suite: **553 passed, 48 skipped**.
+- Market-data/analysis safety suite: **108 passed, 14 skipped**.
+- Root and packaged preflight source, tests and runbook: byte-identical.
+
+### Not performed
+
+No deployment to Render, Railway or another host; no staging or production Supabase migration; no user database backup/restore; no secret or billing changes; no real multi-day market-data soak; no Android installation or phone verification. Live orders remain unavailable and unauthorized.
+
+**Safety state:** paper-only/read-only, `PAPER_ONLY`, `orders_authorized=false`, independent Risk Guardian authority, research and opportunity paper-handoff opt-ins disabled by default.
