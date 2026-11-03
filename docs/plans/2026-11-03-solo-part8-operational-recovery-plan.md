@@ -243,19 +243,19 @@ git commit -m "test: add long-horizon paper recovery replay"
 
 **Implemented behavior:**
 - Configuration-only worker/API preflight opens no network or database connection.
-- Worker requires a parseable PostgreSQL DSN, explicit Futures Testnet selection, and 1m archive interval.
-- API requires API-only role, Futures Testnet mode, a bearer token of at least 32 characters, WebSocket enabled, and loopback binding or explicit trusted HTTPS termination.
+- Worker requires a parseable PostgreSQL DSN, explicit Futures Testnet selection, 1m archive interval, and a successful load of the actual `PaperServiceConfig` so all required settings and equity/risk/exposure constraints are checked before readiness.
+- API requires API-only role, Futures Testnet mode, a bearer token of at least 32 characters, WebSocket enabled, matching API/worker symbol allowlists and 1m intervals, and loopback binding or explicit trusted HTTPS termination.
 - Both roles reject enabled research, opportunity paper handoff, research-worker, and supervisor opt-ins.
 - Optional `--check-database` inspects only PostgreSQL catalogs in a READ ONLY transaction, verifies all 21 required private tables, and requires row-level security on each table. Remote connections must negotiate TLS. DSNs and tokens are redacted from diagnostics.
 - CI applies all repository migrations only to its disposable local PostgreSQL service and then runs worker/API preflight and the read-only schema check.
 
 **Verification record:**
-- `tests/test_staging_preflight.py`: 8 passed.
+- `tests/test_staging_preflight.py`: 11 passed.
 - Disposable PostgreSQL ledger tests: 6 passed; end-to-end paper-service recovery: 1 passed; opportunity registry: 14 passed.
-- Full backend suite: **614 passed**.
-- ASGI focused tests: 37 passed; full suite: **553 passed, 48 skipped**.
+- Full backend suite: **617 passed**.
+- ASGI focused tests: 37 passed; full suite: **556 passed, 48 skipped**.
 - Market-data/analysis safety: **108 passed, 14 skipped**.
-- Latest verified PR head: `6784ddf6960486dca5873749c74760b720d3e65b`.
+- Latest verified code/test head: `e4f3fe326ee6ed0d92b212e09b32a83d999558fa`.
 - Root and packaged preflight source, tests, and runbook were verified byte-identical.
 
 All six migration files were applied only to the disposable GitHub Actions PostgreSQL service. No user-owned database, Render/Railway service, secret, billing setting, or Android installation was accessed or changed.
