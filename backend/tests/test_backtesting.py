@@ -128,5 +128,5 @@ def test_backtest_start_timestamp_uses_prior_candles_only_as_warmup():
     ],
 )
 def test_backtest_config_rejects_non_numeric_boolean_and_non_finite_values(config_kwargs):
-    with pytest.raises(ValueError, match="numeric|finite"):
+    with pytest.raises(ValueError, match="numeric|finite|positive integer"):
         BacktestConfig(**config_kwargs)
