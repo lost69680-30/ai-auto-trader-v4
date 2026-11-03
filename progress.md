@@ -281,3 +281,37 @@ No Render or Railway settings were changed.
 ### Operational consequence
 
 The existing Free Render setup cannot be accepted as the continuous staging host. The intended topology remains one always-on worker process (`python -m backend.shared_market_worker`) plus one API-only process (`python -m app.engines.read_only_api`), both on the same approved code branch and connected to the approved durable PostgreSQL database. Use paid always-on compute or another persistent-service host. Keep the user's Supabase production database and existing secrets unchanged until a separate staging database/backup and deployment approval are established.
+
+
+## Free-only hosting decision and constraints (2026-11-03)
+
+**User instruction:** No payment. Do not upgrade plans, create paid resources, add billing methods, or accept usage that can trigger charges. No infrastructure changes were made as part of this assessment.
+
+### Read-only Supabase status
+
+- The connected Supabase account currently lists two projects: `solo-ai-auto-trader` and `solo-ai-auto-trader-staging`; both reported `ACTIVE_HEALTHY` on 2026-11-03.
+- The staging project currently reports only five applied migrations: paper ledger, shared market data, durable scheduled jobs, candle archive, and market-intelligence reports.
+- The staging project is therefore **not yet proven to contain the Part 5–8 opportunity/recovery schema**. Its public schema table listing was empty; the migration list is the reliable observation here. Do not deploy the Part 8 worker against this database or run migrations until the expected private-schema objects, backup/restore path, and rollback procedure are verified.
+- The connector did not expose the current Supabase billing plan. Project health is not proof of plan, quota, or cost status. No billing settings were inspected or changed.
+- Supabase documents 500 MB database storage on Free and automatic pausing after a week of low activity. A few real requests per day may help but are not guaranteed to prevent pausing. Source: https://supabase.com/kb/faqs/platform/free-project-pausing and https://supabase.com/kb/faqs/platform/database-only-cost
+
+### Free-tier constraints verified from official documentation
+
+- Render Free web services sleep after 15 minutes without inbound traffic, can take about a minute to wake, have ephemeral local filesystems, and cannot run background-worker service types. Free Render Postgres expires 30 days after creation. Source: https://render.com/docs/free
+- Railway Free provides $1 of monthly credit after the initial trial, with 0.5 GB RAM / 1 vCPU service limits. It is not a reliable continuous-worker plan. Source: https://docs.railway.com/pricing/plans
+- GitHub Actions schedules can run no more frequently than every five minutes, but scheduled events can be delayed or dropped during load; public-repository schedules can be disabled after 60 days without repository activity. Use it for CI, manual jobs, and noncritical batch research only—not as a real-time scheduler or always-on worker. Sources: https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax and https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
+- Cloudflare Workers Free allows 10 ms CPU per HTTP or Cron invocation (although Cron has a 15-minute wall-clock ceiling). It is suitable for lightweight routing/automation, not this Python analysis engine or continuous worker. Source: https://developers.cloudflare.com/workers/platform/limits/
+
+### Approved design direction under a strict $0 budget
+
+1. **Persistent data:** Prefer the existing dedicated Supabase staging project for staging only, after its schema, RLS, TLS, backup/restore and migration rollback are verified. Keep the production Supabase project untouched. Do not use the expiring Render Free Postgres instance as the durable ledger.
+2. **Interactive API:** Keep at most one Render Free web service for development/foreground app access. Expect cold starts and intermittent availability. The API must remain API-only; it must not secretly launch the market worker or supervisor.
+3. **Market-data connection:** Treat WebSockets as foreground/best-effort only. Android must reconnect after sleep/network loss, show last-update age, and mark data stale until a fresh validated snapshot arrives. No background worker may infer freshness from a connected socket alone.
+4. **Scheduled analysis:** Use GitHub Actions only for CI, manually requested runs, and low-frequency noncritical batch research after a safe workflow is designed. Do not use Actions cron as a substitute for a durable worker, a one-minute market watcher, or order execution.
+5. **No continuous worker under $0:** The supervised Python worker, durable one-minute scheduling, multi-day unattended market soak, and guaranteed uninterrupted WebSockets remain unavailable on the currently verified free hosting options. Do not emulate always-on service by sending keep-alive traffic or split the runtime across providers.
+6. **Safe operating mode:** Keep research and opportunity paper-handoff opt-ins disabled. Keep `PAPER_ONLY`, `orders_authorized=false`, independent Risk Guardian authorization, Emergency Stop, and fail-closed stale-data checks. If the API, database, schedule, or market data is unavailable/stale, show degraded/offline state and block new paper intents.
+7. **Future gate:** Reconsider hosting only if a genuinely free, terms-compliant, persistent compute option is verified. Any option requiring a card, paid trial, subscription, usage-based charges, or a possible overage is excluded unless the user explicitly changes the no-payment instruction.
+
+### Explicitly not performed
+
+No Render/Railway service creation or configuration change; no Supabase project/branch creation, migration, pause/restore, or billing change; no GitHub deployment workflow activation; no secret rotation; no production data movement; no APK release; no live exchange orders. This is a free-tier architecture decision and readiness assessment, not an operational deployment acceptance.
