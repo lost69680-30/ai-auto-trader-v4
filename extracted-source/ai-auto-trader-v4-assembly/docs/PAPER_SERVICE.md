@@ -126,6 +126,18 @@ python -m backend.staging_preflight --role worker
 python -m backend.staging_preflight --role api
 ```
 
+Use these as the two independent process start commands after their respective preflight passes:
+
+```bash
+# Always-on worker: market polling, scheduled jobs, archive and paper analysis
+python -m backend.shared_market_worker
+
+# API process: authenticated REST and read-only WebSocket; no second poller
+python -m app.engines.read_only_api
+```
+
+Keep the API bearer token in the host's encrypted secret store. Do not put it in the APK, repository, command-line arguments, or logs. The worker uses public Testnet GET market data and does not need Binance API credentials.
+
 The worker check requires a parseable `PAPER_DATABASE_URL`, explicit `PAPER_MARKET_TESTNET=true`, and the one-minute candle interval. The API check additionally requires `PAPER_MARKET_ROLE=api`, `PAPER_MARKET_DATA_MODE=futures`, a `PAPER_API_TOKEN` of at least 32 characters, and `PAPER_WEBSOCKET_ENABLED=true`. A non-loopback API bind requires `PAPER_API_HTTPS_TERMINATED=1`.
 
 Both profiles reject enabled `PAPER_MARKET_INTELLIGENCE_ENABLED`, `PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED`, `PAPER_RESEARCH_WORKER_ENABLED`, or `PAPER_MARKET_SUPERVISOR_ENABLED`. Unset flags are treated as disabled. The preflight never prints the database URI or bearer token, opens no connection during configuration-only checks, and always reports `orders_authorized=false`.
