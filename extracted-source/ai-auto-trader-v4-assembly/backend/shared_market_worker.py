@@ -22,6 +22,23 @@ from backend.shared_market_store import PostgresMarketFeedStore
 logger = logging.getLogger(__name__)
 
 
+def persist_equity_snapshot(ledger, *, initial_equity: float, as_of: float,
+                            max_mark_age_seconds: float):
+    """Persist a durable mark-to-market snapshot without granting order authority."""
+    snapshot = ledger.mark_to_market_risk_report(
+        initial_equity=initial_equity,
+        as_of=as_of,
+        max_mark_age_seconds=max_mark_age_seconds,
+    )
+    if getattr(snapshot, "orders_authorized", True) is not False:
+        raise RuntimeError("equity snapshot unexpectedly authorized exchange orders")
+    logger.info(
+        "paper equity snapshot persisted equity=%s marks_fresh=%s open_positions=%s orders_authorized=False",
+        snapshot.account_equity, snapshot.marks_fresh, snapshot.open_position_count,
+    )
+    return snapshot
+
+
 def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source, *, paper_service=None):
     """Build a venue-bound reassessment job using only public price observations."""
     if not isinstance(coordinator, OpportunityCoordinator):
@@ -276,6 +293,10 @@ def main() -> None:
         archive_lookback_days = int(os.environ.get("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS", "30"))
         if not 1 <= archive_lookback_days <= 365:
             raise SystemExit("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS must be between 1 and 365")
+        equity_snapshot_interval_seconds = max(
+            5.0, float(os.environ.get("PAPER_EQUITY_SNAPSHOT_INTERVAL_SECONDS", "60"))
+        )
+        last_equity_snapshot_at = 0.0
 
         job_runner = threading.Thread(
             target=run_scheduled_jobs,
@@ -325,7 +346,24 @@ def main() -> None:
                 report = app.process_poll(poll, now=time.time())
                 cycle_status = str(report.analysis_status)
                 analysis_error = cycle_status.partition(":")[2] if cycle_status.startswith("ANALYSIS_FAILED:") else None
-                heartbeat_status = "DEGRADED" if analysis_error or cycle_status in {
+                equity_snapshot_error = None
+                snapshot_clock = time.monotonic()
+                if snapshot_clock - last_equity_snapshot_at >= equity_snapshot_interval_seconds:
+                    try:
+                        persist_equity_snapshot(
+                            app.ledger,
+                            initial_equity=app.config.simulated_equity,
+                            as_of=time.time(),
+                            max_mark_age_seconds=app.config.max_market_age_seconds,
+                        )
+                    except Exception as snapshot_exc:
+                        equity_snapshot_error = type(snapshot_exc).__name__
+                        logger.exception(
+                            "paper equity snapshot persistence failed; dashboard freshness remains unknown"
+                        )
+                    else:
+                        last_equity_snapshot_at = snapshot_clock
+                heartbeat_status = "DEGRADED" if equity_snapshot_error or analysis_error or cycle_status in {
                     "SKIPPED_UNHEALTHY_MARKET_DATA", "FUNDING_SYNC_DEGRADED",
                     "MARKET_UNIVERSE_STALE", "NO_HEALTHY_ALLOWLISTED_SYMBOLS",
                     "NO_ELIGIBLE_SYMBOLS", "ANALYZED_WITH_EXCLUSIONS",
@@ -346,6 +384,7 @@ def main() -> None:
                         "historical_archive_lookback_days": archive_lookback_days,
                         "historical_archive_older_candles": older_history_count,
                         "historical_archive_backfill_errors": older_history_errors,
+                        "equity_snapshot_error": equity_snapshot_error,
                         "orders_authorized": False,
                     },
                 )
