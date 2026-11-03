@@ -2,9 +2,21 @@ name: Solo staging PostgreSQL backup
 
 on:
   workflow_dispatch:
+    inputs:
+      confirm_staging_only:
+        description: "I confirm this run is for solo-ai-auto-trader-staging only"
+        required: true
+        type: boolean
+        default: false
+      confirm_free_artifact_storage:
+        description: "I checked GitHub Actions storage and confirm this temporary artifact fits within included free storage"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: solo-staging-db-backup
@@ -12,39 +24,144 @@ concurrency:
 
 jobs:
   backup-paper-ledger:
-    name: Export and validate paper_ledger schema
+    name: Encrypt, restore-test, and export staging paper_ledger
+    if: inputs.confirm_staging_only == true && inputs.confirm_free_artifact_storage == true
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: restore_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d restore_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
-      - name: Install PostgreSQL client
+      - name: Install PostgreSQL client and age
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --yes postgresql-client
+          sudo apt-get install --yes postgresql-client age
 
-      - name: Export the application schema
+      - name: Preflight the dedicated read-only staging role and RLS coverage
         env:
           DATABASE_URL: ${{ secrets.SOLO_BACKUP_DATABASE_URL }}
+          PGOPTIONS: "-c default_transaction_read_only=on"
         run: |
           set -euo pipefail
           set +x
           if [ -z "${DATABASE_URL:-}" ]; then
-            echo "::error::Add the dedicated read-only PostgreSQL connection as the SOLO_BACKUP_DATABASE_URL GitHub Actions secret."
+            echo "::error::Missing SOLO_BACKUP_DATABASE_URL Actions secret."
             exit 1
           fi
-          # Respect table RLS policies: the backup role is intentionally not BYPASSRLS.
-          pg_dump --format=custom --enable-row-security --inserts --no-owner --no-acl --schema=paper_ledger \
-            --file=solo-paper-ledger.dump "$DATABASE_URL"
+          current_user="$(psql "$DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 -c "SELECT current_user")"
+          if [ "$current_user" != "solo_backup_reader" ]; then
+            echo "::error::Backup connection must authenticate as solo_backup_reader; refusing a privileged or unexpected database role."
+            exit 1
+          fi
+          table_count="$(psql "$DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 -c "
+            SELECT count(*) FROM pg_class c
+            JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname='paper_ledger' AND c.relkind='r'")"
+          unsafe_count="$(psql "$DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 -c "
+            SELECT count(*) FROM pg_class c
+            JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname='paper_ledger' AND c.relkind='r'
+              AND (NOT c.relrowsecurity OR NOT EXISTS (
+                SELECT 1 FROM pg_policies p
+                WHERE p.schemaname='paper_ledger'
+                  AND p.tablename=c.relname
+                  AND p.policyname='solo_backup_reader_select'
+                  AND 'solo_backup_reader'=ANY(p.roles)
+                  AND p.cmd IN ('SELECT','ALL')
+              ))")"
+          if [ "$table_count" -lt 1 ] || [ "$unsafe_count" -ne 0 ]; then
+            echo "::error::RLS preflight failed: tables=$table_count, tables without the dedicated SELECT policy=$unsafe_count. No dump was started."
+            exit 1
+          fi
+          echo "PASS: dedicated reader role; $table_count tables have RLS and the explicit backup-reader SELECT policy."
+
+      - name: Export only the private paper_ledger schema
+        env:
+          DATABASE_URL: ${{ secrets.SOLO_BACKUP_DATABASE_URL }}
+          PGOPTIONS: "-c default_transaction_read_only=on"
+        run: |
+          set -euo pipefail
+          set +x
+          pg_dump --format=custom --enable-row-security --inserts --no-owner --no-acl \
+            --schema=paper_ledger --file=solo-paper-ledger.dump "$DATABASE_URL"
           test -s solo-paper-ledger.dump
           pg_restore --list solo-paper-ledger.dump >/dev/null
-          sha256sum solo-paper-ledger.dump > solo-paper-ledger.dump.sha256
-          echo "Backup archive created and structurally validated. Database credentials were not printed."
+          echo "PASS: staging schema dump created; credentials and row contents were not printed."
 
-      - name: Upload backup artifact
-        uses: actions/upload-artifact@v4
+      - name: Prove age encryption and full restore on disposable PostgreSQL
+        run: |
+          set -euo pipefail
+          umask 077
+          age-keygen -o /tmp/solo-runner-identity.txt 2>/dev/null
+          runner_recipient="$(age-keygen -y /tmp/solo-runner-identity.txt)"
+          age --recipient "$runner_recipient" --output /tmp/solo-self-check.age solo-paper-ledger.dump
+          age --decrypt --identity /tmp/solo-runner-identity.txt --output /tmp/solo-restore.dump /tmp/solo-self-check.age
+          pg_restore --list /tmp/solo-restore.dump >/dev/null
+
+          PGPASSWORD=postgres psql "postgresql://postgres:postgres@127.0.0.1:5432/restore_test" \
+            -X -v ON_ERROR_STOP=1 -c "CREATE ROLE solo_backup_reader NOLOGIN"
+          PGPASSWORD=postgres pg_restore --exit-on-error --no-owner --no-acl \
+            --dbname="postgresql://postgres:postgres@127.0.0.1:5432/restore_test" /tmp/solo-restore.dump
+
+          table_count="$(PGPASSWORD=postgres psql "postgresql://postgres:postgres@127.0.0.1:5432/restore_test" -X -A -t -v ON_ERROR_STOP=1 -c "
+            SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname='paper_ledger' AND c.relkind='r'")"
+          rls_count="$(PGPASSWORD=postgres psql "postgresql://postgres:postgres@127.0.0.1:5432/restore_test" -X -A -t -v ON_ERROR_STOP=1 -c "
+            SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname='paper_ledger' AND c.relkind='r' AND c.relrowsecurity")"
+          candle_count="$(PGPASSWORD=postgres psql "postgresql://postgres:postgres@127.0.0.1:5432/restore_test" -X -A -t -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM paper_ledger.market_candles")"
+          if [ "$table_count" -lt 1 ] || [ "$rls_count" -ne "$table_count" ] || [ "$candle_count" -lt 1 ]; then
+            echo "::error::Disposable restore verification failed: tables=$table_count, RLS=$rls_count, candles=$candle_count"
+            exit 1
+          fi
+          echo "PASS: age round-trip and disposable PostgreSQL restore; $table_count tables restored with RLS and $candle_count candle rows."
+          rm -f /tmp/solo-runner-identity.txt /tmp/solo-self-check.age /tmp/solo-restore.dump
+
+      - name: Encrypt the verified backup to the phone-held AgePony recipient
+        env:
+          AGE_RECIPIENT: ${{ secrets.SOLO_BACKUP_AGE_RECIPIENT }}
+        run: |
+          set -euo pipefail
+          set +x
+          if [ -z "${AGE_RECIPIENT:-}" ] || [[ ! "$AGE_RECIPIENT" =~ ^age1[0-9a-z]+$ ]]; then
+            echo "::error::Missing or invalid SOLO_BACKUP_AGE_RECIPIENT Actions secret."
+            exit 1
+          fi
+          age --recipient "$AGE_RECIPIENT" --output solo-paper-ledger.dump.age solo-paper-ledger.dump
+          test -s solo-paper-ledger.dump.age
+          size_bytes="$(stat -c '%s' solo-paper-ledger.dump.age)"
+          if [ "$size_bytes" -gt 209715200 ]; then
+            echo "::error::Encrypted backup exceeds the 200 MiB safety cap; artifact upload refused."
+            exit 1
+          fi
+          sha256sum solo-paper-ledger.dump.age > solo-paper-ledger.dump.age.sha256
+          rm -f solo-paper-ledger.dump
+          echo "PASS: encrypted archive ready; size=$size_bytes bytes. Plaintext dump removed."
+
+      - name: Upload encrypted archive for one day only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: solo-staging-paper-ledger-backup-${{ github.run_id }}
+          name: solo-staging-paper-ledger-encrypted-${{ github.run_id }}
           path: |
-            solo-paper-ledger.dump
-            solo-paper-ledger.dump.sha256
+            solo-paper-ledger.dump.age
+            solo-paper-ledger.dump.age.sha256
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
+          compression-level: 0
+
+      - name: Remove plaintext and temporary key material
+        if: always()
+        run: |
+          rm -f solo-paper-ledger.dump /tmp/solo-runner-identity.txt /tmp/solo-self-check.age /tmp/solo-restore.dump
