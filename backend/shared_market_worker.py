@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import signal
 import threading
@@ -20,23 +21,6 @@ from backend.shared_market_store import PostgresMarketFeedStore
 
 
 logger = logging.getLogger(__name__)
-
-
-def persist_equity_snapshot(ledger, *, initial_equity: float, as_of: float,
-                            max_mark_age_seconds: float):
-    """Persist a durable mark-to-market snapshot without granting order authority."""
-    snapshot = ledger.mark_to_market_risk_report(
-        initial_equity=initial_equity,
-        as_of=as_of,
-        max_mark_age_seconds=max_mark_age_seconds,
-    )
-    if getattr(snapshot, "orders_authorized", True) is not False:
-        raise RuntimeError("equity snapshot unexpectedly authorized exchange orders")
-    logger.info(
-        "paper equity snapshot persisted equity=%s marks_fresh=%s open_positions=%s orders_authorized=False",
-        snapshot.account_equity, snapshot.marks_fresh, snapshot.open_position_count,
-    )
-    return snapshot
 
 
 def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source, *, paper_service=None):
@@ -149,6 +133,36 @@ def run_scheduled_jobs(stop: threading.Event, scheduler: DurableJobScheduler,
         stop.wait(float(poll_interval))
 
 
+def run_equity_snapshot_scheduler(
+    stop: threading.Event, ledger, *, initial_equity: float,
+    interval_seconds: float = 300.0, max_mark_age_seconds: float = 30.0,
+    clock=time.time,
+) -> None:
+    """Persist paper-equity snapshots using the server-configured equity baseline."""
+    if not isinstance(stop, threading.Event):
+        raise ValueError("stop must be a threading.Event")
+    for name, value in (("initial_equity", initial_equity), ("interval_seconds", interval_seconds),
+                        ("max_mark_age_seconds", max_mark_age_seconds)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"{name} must be finite")
+    if initial_equity <= 0:
+        raise ValueError("initial_equity must be positive")
+    if interval_seconds < 1 or max_mark_age_seconds <= 0 or max_mark_age_seconds > 30:
+        raise ValueError("snapshot interval or mark age limit is outside the safe range")
+    if not callable(clock):
+        raise ValueError("clock must be callable")
+    while not stop.is_set():
+        try:
+            report = ledger.mark_to_market_risk_report(initial_equity=float(initial_equity),
+                as_of=float(clock()), max_mark_age_seconds=float(max_mark_age_seconds))
+            logger.info("paper equity snapshot persisted equity=%s marks_fresh=%s open_positions=%s orders_authorized=False",
+                report.account_equity, report.marks_fresh, report.open_position_count)
+            if not report.marks_fresh:
+                logger.warning("paper equity snapshot has stale or invalid position marks; risk display must remain degraded")
+        except Exception:
+            logger.exception("paper equity snapshot failed; risk display remains unavailable until a valid snapshot is persisted")
+        stop.wait(float(interval_seconds))
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     dsn = os.environ.get("PAPER_DATABASE_URL", "").strip()
@@ -165,6 +179,7 @@ def main() -> None:
 
     app = None
     job_runner = None
+    snapshot_runner = None
     stop = threading.Event()
 
     def request_stop(signum, frame) -> None:
@@ -225,11 +240,25 @@ def main() -> None:
         # Acquire the durable lease before creating the paper runtime: create() performs
         # restart recovery and must never run in a duplicate worker process.
         app = PaperServiceApplication.from_env()
+        snapshot_interval = max(60, int(os.environ.get("PAPER_EQUITY_SNAPSHOT_INTERVAL_SECONDS", "300")))
+        snapshot_max_mark_age = min(30.0, max(1.0, float(os.environ.get("PAPER_EQUITY_MAX_MARK_AGE_SECONDS", "30"))))
         testnet = str(os.environ.get("PAPER_MARKET_TESTNET", "true")).strip().lower() in {"1", "true", "yes"}
         if not testnet:
             raise SystemExit("shared historical archive is Testnet-only; refusing production market data")
         if app.config.candle_interval != "1m":
             raise SystemExit("shared historical archive requires PAPER_CANDLE_INTERVAL=1m")
+        snapshot_runner = threading.Thread(
+            target=run_equity_snapshot_scheduler,
+            args=(stop, app.ledger),
+            kwargs={
+                "initial_equity": app.config.simulated_equity,
+                "interval_seconds": snapshot_interval,
+                "max_mark_age_seconds": snapshot_max_mark_age,
+            },
+            name=f"{worker_id[:80]}-equity-snapshots",
+            daemon=True,
+        )
+        snapshot_runner.start()
         archive = PostgresCandleArchive(dsn)
         intelligence_handlers = {"market_feed_health_audit": market_feed_health_audit(store)}
         if intelligence_enabled:
@@ -293,10 +322,6 @@ def main() -> None:
         archive_lookback_days = int(os.environ.get("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS", "30"))
         if not 1 <= archive_lookback_days <= 365:
             raise SystemExit("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS must be between 1 and 365")
-        equity_snapshot_interval_seconds = max(
-            5.0, float(os.environ.get("PAPER_EQUITY_SNAPSHOT_INTERVAL_SECONDS", "60"))
-        )
-        last_equity_snapshot_at = 0.0
 
         job_runner = threading.Thread(
             target=run_scheduled_jobs,
@@ -346,24 +371,7 @@ def main() -> None:
                 report = app.process_poll(poll, now=time.time())
                 cycle_status = str(report.analysis_status)
                 analysis_error = cycle_status.partition(":")[2] if cycle_status.startswith("ANALYSIS_FAILED:") else None
-                equity_snapshot_error = None
-                snapshot_clock = time.monotonic()
-                if snapshot_clock - last_equity_snapshot_at >= equity_snapshot_interval_seconds:
-                    try:
-                        persist_equity_snapshot(
-                            app.ledger,
-                            initial_equity=app.config.simulated_equity,
-                            as_of=time.time(),
-                            max_mark_age_seconds=app.config.max_market_age_seconds,
-                        )
-                    except Exception as snapshot_exc:
-                        equity_snapshot_error = type(snapshot_exc).__name__
-                        logger.exception(
-                            "paper equity snapshot persistence failed; dashboard freshness remains unknown"
-                        )
-                    else:
-                        last_equity_snapshot_at = snapshot_clock
-                heartbeat_status = "DEGRADED" if equity_snapshot_error or analysis_error or cycle_status in {
+                heartbeat_status = "DEGRADED" if analysis_error or cycle_status in {
                     "SKIPPED_UNHEALTHY_MARKET_DATA", "FUNDING_SYNC_DEGRADED",
                     "MARKET_UNIVERSE_STALE", "NO_HEALTHY_ALLOWLISTED_SYMBOLS",
                     "NO_ELIGIBLE_SYMBOLS", "ANALYZED_WITH_EXCLUSIONS",
@@ -384,7 +392,6 @@ def main() -> None:
                         "historical_archive_lookback_days": archive_lookback_days,
                         "historical_archive_older_candles": older_history_count,
                         "historical_archive_backfill_errors": older_history_errors,
-                        "equity_snapshot_error": equity_snapshot_error,
                         "orders_authorized": False,
                     },
                 )
@@ -416,6 +423,10 @@ def main() -> None:
             job_runner.join(timeout=shutdown_grace)
             if job_runner.is_alive():
                 logger.warning("scheduled-job runner did not stop within shutdown grace; its durable job lease will expire for safe retry")
+        if snapshot_runner is not None:
+            snapshot_runner.join(timeout=5.0)
+            if snapshot_runner.is_alive():
+                logger.warning("equity snapshot runner did not stop within shutdown grace")
         try:
             store.release()
         finally:
