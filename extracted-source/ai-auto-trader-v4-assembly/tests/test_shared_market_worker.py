@@ -376,3 +376,117 @@ def test_env_bool_accepts_explicit_opt_in_and_rejects_invalid_values(monkeypatch
     monkeypatch.setenv("PAPER_MARKET_INTELLIGENCE_ENABLED", "sometimes")
     with pytest.raises(ValueError, match="must be a boolean"):
         shared_market_worker._env_bool("PAPER_MARKET_INTELLIGENCE_ENABLED")
+
+
+def test_shutdown_releases_lease_and_closes_app_after_job_runner_stops():
+    import threading
+
+    class Runner:
+        alive = True
+        timeout = None
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout):
+            self.timeout = timeout
+            self.alive = False
+
+    class Store:
+        released = False
+
+        def release(self):
+            self.released = True
+
+    class App:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    stop = threading.Event()
+    runner, store, app = Runner(), Store(), App()
+    assert shared_market_worker._shutdown_worker(
+        stop, runner, store, app, grace_seconds=7.0,
+    ) is True
+    assert stop.is_set()
+    assert runner.timeout == 7.0
+    assert store.released is True
+    assert app.closed is True
+
+
+def test_shutdown_keeps_worker_lease_and_ledger_open_if_job_runner_is_stuck():
+    import threading
+
+    class Runner:
+        def is_alive(self):
+            return True
+
+        def join(self, timeout):
+            self.timeout = timeout
+
+    class Store:
+        released = False
+
+        def release(self):
+            self.released = True
+
+    class App:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    stop = threading.Event()
+    runner, store, app = Runner(), Store(), App()
+    assert shared_market_worker._shutdown_worker(
+        stop, runner, store, app, grace_seconds=0.01,
+    ) is False
+    assert stop.is_set()
+    assert runner.timeout == 0.01
+    assert store.released is False
+    assert app.closed is False
+
+
+def test_shutdown_without_job_runner_releases_lease_and_closes_app():
+    import threading
+
+    class Store:
+        released = False
+
+        def release(self):
+            self.released = True
+
+    class App:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    store, app = Store(), App()
+    assert shared_market_worker._shutdown_worker(
+        threading.Event(), None, store, app, grace_seconds=1.0,
+    ) is True
+    assert store.released is True
+    assert app.closed is True
+
+
+def test_shutdown_closes_app_even_if_worker_lease_release_fails():
+    import threading
+
+    class Store:
+        def release(self):
+            raise RuntimeError("lease release failed")
+
+    class App:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    app = App()
+    with pytest.raises(RuntimeError, match="lease release failed"):
+        shared_market_worker._shutdown_worker(
+            threading.Event(), None, Store(), app, grace_seconds=1.0,
+        )
+    assert app.closed is True
