@@ -72,7 +72,7 @@ git commit -m "fix: preserve worker lease during stuck shutdown"
 
 **Files:**
 - Inspect/modify only as required: `backend/durable_scheduler.py`, `backend/shared_market_store.py`
-- Tests: `tests/test_durable_scheduler.py`, `tests/test_shared_market_store.py`
+- Tests: `tests/test_durable_scheduler.py`, `tests/test_shared_market_data_store.py`
 - Mirror corresponding files and tests under `extracted-source/ai-auto-trader-v4-assembly/`
 
 **Interfaces:**
