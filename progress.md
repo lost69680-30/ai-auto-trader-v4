@@ -315,3 +315,10 @@ The existing Free Render setup cannot be accepted as the continuous staging host
 ### Explicitly not performed
 
 No Render/Railway service creation or configuration change; no Supabase project/branch creation, migration, pause/restore, or billing change; no GitHub deployment workflow activation; no secret rotation; no production data movement; no APK release; no live exchange orders. This is a free-tier architecture decision and readiness assessment, not an operational deployment acceptance.
+
+
+### Additional zero-cost guardrails verified
+
+- The connected GitHub repository `lost69680-30/ai-auto-trader-v4` is public. GitHub documents standard GitHub-hosted runner usage as free for public repositories. This makes CI and manually dispatched verification jobs a useful $0 tool; scheduled jobs are still non-guaranteed and must not be treated as a continuous worker. Source: https://docs.github.com/en/actions/concepts/billing-and-usage
+- Render Free services count against monthly included outbound bandwidth; Render documents that exceeding the included amount can incur supplementary charges. The current account's usage/billing controls were not inspected, so a Free compute label alone is not a guarantee of zero charges. Keep traffic modest, do not create artificial keep-alive traffic, and do not add high-volume polling. Source: https://render.com/docs/free
+- The connected Supabase project-detail response did not expose the billing plan or usage. Do not infer the current plan from `ACTIVE_HEALTHY`; verify the dashboard's Free plan and quotas before relying on the database for continued operation. No billing settings were changed.
