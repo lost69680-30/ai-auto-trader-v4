@@ -286,3 +286,26 @@ def test_market_intelligence_publication_rejects_unsafe_and_future_payloads():
     with pytest.raises(ValueError, match="future-dated"):
         store.publish_intelligence(future, now=now)
     store.release(now=now)
+
+
+def test_postgres_store_reclaims_expired_worker_lease_after_process_loss():
+    reset_tables()
+    now = datetime.now(timezone.utc)
+    first = PostgresMarketFeedStore(
+        DSN, worker_id="test-expired-worker", owner_id="owner-before-crash",
+        lease_seconds=30,
+    )
+    replacement = PostgresMarketFeedStore(
+        DSN, worker_id="test-expired-worker", owner_id="owner-after-crash",
+        lease_seconds=30,
+    )
+
+    assert first.acquire_lease(now=now) is True
+    assert replacement.acquire_lease(now=now + timedelta(seconds=29)) is False
+    assert replacement.acquire_lease(now=now + timedelta(seconds=31)) is True
+
+    with pytest.raises(RuntimeError, match="lease lost"):
+        first.heartbeat("RUNNING", now=now + timedelta(seconds=32))
+
+    replacement.heartbeat("RUNNING", now=now + timedelta(seconds=32))
+    replacement.release(now=now + timedelta(seconds=33))
