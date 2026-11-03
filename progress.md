@@ -234,8 +234,8 @@ The initial PostgreSQL end-to-end scenario first returned `WAITING_FOR_TRIGGER` 
 ### Implemented
 
 - Added mirrored `backend.staging_preflight` commands for separate `worker` and `api` processes.
-- Worker preflight requires PostgreSQL configuration, explicit Futures Testnet selection, and the 1m archive interval.
-- API preflight requires API-only mode, Futures Testnet, a 32-character minimum bearer token, authenticated WebSocket transport, and loopback binding or declared HTTPS termination.
+- Worker preflight requires PostgreSQL configuration, explicit Futures Testnet selection, a 1m archive interval, and a valid `PaperServiceConfig` including the required settings and equity/risk/exposure caps.
+- API preflight requires API-only mode, Futures Testnet, a 32-character minimum bearer token, authenticated WebSocket transport, matching API/worker symbol allowlists and 1m intervals, and loopback binding or declared HTTPS termination.
 - Both profiles fail closed if research, opportunity paper handoff, research-worker, or supervisor opt-in flags are enabled.
 - Added optional `--check-database`: read-only PostgreSQL catalog inspection of all 21 required private tables, row-level security status, and remote TLS negotiation. It does not apply migrations or inspect trading rows.
 - Added staging process commands and a runbook to both root and packaged documentation.
@@ -243,14 +243,14 @@ The initial PostgreSQL end-to-end scenario first returned `WAITING_FOR_TRIGGER` 
 
 ### Fresh CI verification on PR head `6784ddf6960486dca5873749c74760b720d3e65b`
 
-- Staging preflight unit tests: **8 passed**.
+- Staging preflight unit tests: **11 passed**.
 - Worker configuration plus PostgreSQL schema/TLS preflight: passed.
 - API configuration preflight: passed.
 - PostgreSQL ledger integration: **6 passed**.
 - PostgreSQL paper-service recovery integration: **1 passed**.
 - Opportunity registry integration: **14 passed**.
-- Full backend suite: **614 passed**.
-- ASGI focused suite: **37 passed**; full suite: **553 passed, 48 skipped**.
+- Full backend suite: **617 passed**.
+- ASGI focused suite: **37 passed**; full suite: **556 passed, 48 skipped**.
 - Market-data/analysis safety suite: **108 passed, 14 skipped**.
 - Root and packaged preflight source, tests and runbook: byte-identical.
 
