@@ -712,6 +712,20 @@ class MarketFeedCache:
             return [dict(item) for item in self._items]
 
 
+def _configured_market_symbols(environ=None) -> tuple[str, ...]:
+    """Resolve API symbols from the explicit market allowlist or shared PAPER_SYMBOLS."""
+    values = os.environ if environ is None else environ
+    if "PAPER_MARKET_SYMBOLS" in values:
+        raw = values.get("PAPER_MARKET_SYMBOLS", "")
+    elif "PAPER_SYMBOLS" in values:
+        raw = values.get("PAPER_SYMBOLS", "")
+    else:
+        raw = "BTCUSDT,ETHUSDT"
+    return tuple(dict.fromkeys(
+        item.strip().upper() for item in raw.split(",") if item.strip()
+    ))
+
+
 def main() -> None:
     """Run the authenticated read-only API and independent public market poller."""
     if os.environ.get("PAPER_MARKET_SUPERVISOR_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
@@ -735,8 +749,7 @@ def main() -> None:
     if host not in ("127.0.0.1", "localhost") and os.environ.get("PAPER_API_HTTPS_TERMINATED") != "1":
         raise SystemExit("Refusing non-loopback bind unless HTTPS termination is configured")
     max_age = float(os.environ.get("PAPER_MAX_MARKET_AGE_SECONDS", "90"))
-    symbols_raw = os.environ.get("PAPER_MARKET_SYMBOLS", "BTCUSDT,ETHUSDT")
-    symbols = tuple(dict.fromkeys(item.strip().upper() for item in symbols_raw.split(",") if item.strip()))
+    symbols = _configured_market_symbols()
     interval = os.environ.get("PAPER_MARKET_INTERVAL", "1m")
     poll_interval = float(os.environ.get("PAPER_MARKET_POLL_INTERVAL_SECONDS", "15"))
     candle_limit = int(os.environ.get("PAPER_MARKET_CANDLE_LIMIT", "100"))
