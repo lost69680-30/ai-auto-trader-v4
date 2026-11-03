@@ -23,14 +23,23 @@ class WalkForwardConfig:
     candle_interval_minutes: int = 1
 
     def __post_init__(self) -> None:
+        geometry = (
+            self.train_bars,
+            self.validation_bars,
+            self.holdout_bars,
+            self.step_bars,
+            self.candle_interval_minutes,
+        )
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in geometry):
+            raise ValueError("walk-forward fold geometry and candle interval must be integers")
         if self.train_bars < 30:
             raise ValueError("train_bars must be at least 30")
         if self.validation_bars < 32:
             raise ValueError("validation_bars must be at least 32 to allow warmup and trades")
         if self.holdout_bars < 32:
             raise ValueError("holdout must be at least 32 bars to allow warmup and trades")
-        if self.step_bars <= 0:
-            raise ValueError("step_bars must be positive")
+        if self.step_bars < self.validation_bars:
+            raise ValueError("step_bars must be at least validation_bars to keep OOS windows disjoint")
         if self.candle_interval_minutes <= 0:
             raise ValueError("candle interval must be positive")
 
@@ -141,6 +150,11 @@ def evaluate_walk_forward(
     rs_cfg = research_config or ResearchConfig()
     rows = list(candles)
     _validate_dataset(symbol, rows, cfg.candle_interval_minutes)
+    if rows and rows[-1].timestamp.astimezone(timezone.utc) > (
+        research_now.astimezone(timezone.utc)
+        + timedelta(seconds=rs_cfg.max_future_skew_seconds)
+    ):
+        raise ValueError("candle dataset contains future timestamps relative to research_now")
     minimum = cfg.train_bars + cfg.validation_bars + cfg.holdout_bars
     if len(rows) < minimum:
         raise ValueError(f"not enough candles: need at least {minimum}, got {len(rows)}")
