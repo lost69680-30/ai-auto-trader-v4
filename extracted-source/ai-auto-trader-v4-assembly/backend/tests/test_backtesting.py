@@ -123,6 +123,8 @@ def test_backtest_start_timestamp_uses_prior_candles_only_as_warmup():
         {"slippage_bps_per_side": float("nan")},
         {"funding_bps_per_8h": float("inf")},
         {"minimum_signal_score": "60"},
+        {"candle_interval_minutes": 1.5},
+        {"candle_interval_minutes": True},
     ],
 )
 def test_backtest_config_rejects_non_numeric_boolean_and_non_finite_values(config_kwargs):
