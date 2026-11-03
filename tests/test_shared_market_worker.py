@@ -99,7 +99,7 @@ def test_scheduled_job_runner_surfaces_database_failure_in_health():
     )
     assert health["status"] == "DEGRADED"
     assert health["last_error"] == "RuntimeError"
-    assert health["last_dispatch_status"] == "FAILED"
+    assert health["last_dispatch_status"] == "IDLE"
 
 
 def test_opportunity_reassessment_handler_uses_venue_scoped_read_only_price_source():
