@@ -344,3 +344,23 @@ Read-only `pg_database_size` queries returned:
 - `solo-ai-auto-trader` (production): **11 MB** total database size (11,368,115 bytes), with 9 `paper_ledger` tables.
 - These are point-in-time size readings, not growth forecasts. If the staging project is on Supabase Free, 191 MB is about 38% of its 500 MB database allowance; approximately 309 MB would remain before the nominal limit. The connector did not expose the current billing plan or quota enforcement settings, so verify the plan in the Supabase dashboard before treating that remaining capacity as confirmed.
 - No table data was selected by these size queries; no database writes, migrations, or billing changes were made. Keep production separate and unchanged.
+
+
+### Staging migration and backup gate (read-only assessment, 2026-11-03)
+
+- Confirmed the connected Supabase organization `lost69680-30's Org` is on the **Free** plan. The staging project is in this organization. This confirms the intended $0 Supabase plan at the organization level; no billing controls were changed.
+- Confirmed the repository branch contains migration `supabase/migrations/20261031170000_create_opportunity_registry.sql`. The staging migration history stops at `20261031155011_create_market_intelligence_reports`; the opportunity-registry migration has not been applied.
+- Reviewed the migration source. It creates exactly the six missing opportunity-registry tables, indexes and foreign keys; enables RLS; revokes public/anon/authenticated/service_role access; and wraps its DDL in a transaction. It contains no INSERT/UPDATE/DELETE of existing ledger rows and does not grant exchange authority. The app's direct database role and connection privileges must still be verified against the actual staging runtime before applying it.
+- The six-table migration is therefore the likely schema repair, but **not applied**. First validate migration hash/source on the exact PR head, confirm backend connection role/permissions, and create an off-project logical backup.
+- Supabase's official Free-plan guidance confirms Free projects have **no automatic daily database backups**. Supabase recommends manual logical exports using `supabase db dump` and off-site retention. Official sources: https://supabase.com/kb/faqs/platform/free-plan-backups and https://supabase.com/docs/guides/platform/backups.
+- Backup gate: create a local/off-project encrypted backup of the staging `paper_ledger` schema and verify archive integrity; document a restore command and rehearse restore to a disposable local PostgreSQL database before any schema migration. Do not store database dumps, credentials, or connection strings in the public GitHub repository or public Actions artifacts.
+- Current staging size is 191 MB (about 38% of the Free plan's 500 MB database-size quota), with roughly 309 MB of nominal headroom if quota remains unchanged. Monitor growth, especially the one-minute candle archive. This is a point-in-time measurement, not a growth forecast.
+- No backup was taken by the connector; no migration was applied; no DB schema, rows, secrets, billing, Render, Railway or production settings were changed.
+
+### Next safe execution sequence
+
+1. Prepare a phone-compatible Termux backup runbook that prompts for the database password locally (never in chat) and saves the dump outside GitHub.
+2. Verify dump integrity and restore it to local disposable PostgreSQL; do not run a restore against staging or production.
+3. Inspect staging backend DB role and verify it can use the new tables while client-facing roles cannot.
+4. Re-run the Part 8 preflight with `--check-database` against staging; expect it to fail until the six-table migration is applied.
+5. Only after backup and permission checks pass, apply the single reviewed opportunity-registry migration to **staging only**, then verify all 21 required tables and RLS. Production remains untouched.
