@@ -421,7 +421,7 @@ def test_paper_open_requires_ledger_confirmation_after_risk_approved_intent():
         actor="risk_manager", evidence_version="paper-intent-123", now=now,
     )
 
-    with pytest.raises(ValueError, match="ledger-confirmed position evidence"):
+    with pytest.raises(ValueError, match="ledger-confirmed (open-position|closed-position) evidence"):
         store.transition(
             record.opportunity_id, expected_version=5, to_state="PAPER_OPEN",
             reason="unconfirmed open", event_id="paper-open-unconfirmed",
