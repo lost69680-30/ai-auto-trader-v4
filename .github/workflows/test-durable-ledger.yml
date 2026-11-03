@@ -47,6 +47,57 @@ jobs:
       - name: Install package and test dependencies
         working-directory: extracted-source/ai-auto-trader-v4-assembly
         run: python -m pip install -e '.[test]'
+      - name: Run staging preflight unit tests
+        working-directory: extracted-source/ai-auto-trader-v4-assembly
+        run: python -m pytest -q tests/test_staging_preflight.py
+      - name: Apply repository migrations to disposable CI database
+        env:
+          PAPER_TEST_DATABASE_URL: ${{ env.PAPER_TEST_DATABASE_URL }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import psycopg
+
+          migrations = sorted(Path("supabase/migrations").glob("*.sql"))
+          if not migrations:
+              raise SystemExit("No Supabase migrations found")
+          with psycopg.connect(
+              os.environ["PAPER_TEST_DATABASE_URL"],
+              autocommit=True,
+              prepare_threshold=None,
+          ) as connection:
+              for migration in migrations:
+                  connection.execute(migration.read_text(encoding="utf-8"), prepare=False)
+          print(f"Applied {len(migrations)} migrations to the disposable CI database.")
+          PY
+      - name: Run worker staging preflight and read-only schema inspection
+        working-directory: extracted-source/ai-auto-trader-v4-assembly
+        env:
+          PAPER_DATABASE_URL: ${{ env.PAPER_TEST_DATABASE_URL }}
+          PAPER_MARKET_TESTNET: "true"
+          PAPER_CANDLE_INTERVAL: "1m"
+          PAPER_MARKET_INTELLIGENCE_ENABLED: "false"
+          PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED: "false"
+          PAPER_RESEARCH_WORKER_ENABLED: "false"
+          PAPER_MARKET_SUPERVISOR_ENABLED: "false"
+        run: python -m backend.staging_preflight --role worker --check-database
+      - name: Run API staging preflight
+        working-directory: extracted-source/ai-auto-trader-v4-assembly
+        env:
+          PAPER_DATABASE_URL: ${{ env.PAPER_TEST_DATABASE_URL }}
+          PAPER_MARKET_TESTNET: "true"
+          PAPER_CANDLE_INTERVAL: "1m"
+          PAPER_MARKET_INTELLIGENCE_ENABLED: "false"
+          PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED: "false"
+          PAPER_RESEARCH_WORKER_ENABLED: "false"
+          PAPER_MARKET_SUPERVISOR_ENABLED: "false"
+          PAPER_MARKET_ROLE: "api"
+          PAPER_MARKET_DATA_MODE: "futures"
+          PAPER_API_TOKEN: "ci-only-placeholder-token-0123456789"
+          PAPER_API_HOST: "127.0.0.1"
+          PAPER_WEBSOCKET_ENABLED: "true"
+        run: python -m backend.staging_preflight --role api
       - name: Run PostgreSQL ledger integration tests
         working-directory: extracted-source/ai-auto-trader-v4-assembly
         run: python -m pytest -q tests/test_postgres_paper_ledger.py
