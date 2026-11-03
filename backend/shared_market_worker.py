@@ -22,6 +22,19 @@ from backend.shared_market_store import PostgresMarketFeedStore
 logger = logging.getLogger(__name__)
 
 
+def _env_bool(name: str, *, default: bool = False) -> bool:
+    """Parse an opt-in feature flag; missing values stay disabled by default."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value")
+
+
 def persist_equity_snapshot(ledger, *, initial_equity: float, as_of: float,
                             max_mark_age_seconds: float):
     """Persist a durable mark-to-market snapshot without granting order authority."""
@@ -39,12 +52,14 @@ def persist_equity_snapshot(ledger, *, initial_equity: float, as_of: float,
     return snapshot
 
 
-def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source, *, paper_service=None):
+def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source, *, paper_service=None, allow_paper_handoff: bool = False):
     """Build a venue-bound reassessment job using only public price observations."""
     if not isinstance(coordinator, OpportunityCoordinator):
         raise ValueError("a venue-scoped OpportunityCoordinator is required")
     if not callable(getattr(source, "fetch_mark_price", None)):
         raise ValueError("market source must provide read-only fetch_mark_price")
+    if not isinstance(allow_paper_handoff, bool):
+        raise ValueError("allow_paper_handoff must be an explicit boolean")
 
     def handle(payload: dict, idempotency_key: str) -> None:
         if payload.get("scope") != "opportunity_reassessment":
@@ -101,22 +116,25 @@ def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source
             from backend.opportunity_handoff import (
                 process_triggered_opportunity, reconcile_paper_intents,
             )
-            page = coordinator.store.list_opportunities(
-                states=("TRIGGERED", "RISK_CHECK"),
-                market_type=coordinator.market_type,
-                venue=coordinator.venue,
-                limit=50,
-            )
-            if page.next_cursor is not None:
-                raise RuntimeError("trigger handoff exceeded its bounded opportunity page")
-            for opportunity in page.items:
-                handoff = process_triggered_opportunity(
-                    coordinator, opportunity, source=source,
-                    paper_service=paper_service, now=now,
+            if allow_paper_handoff:
+                page = coordinator.store.list_opportunities(
+                    states=("TRIGGERED", "RISK_CHECK"),
+                    market_type=coordinator.market_type,
+                    venue=coordinator.venue,
+                    limit=50,
                 )
-                if handoff.get("orders_authorized") is not False:
-                    raise RuntimeError("opportunity handoff violated paper-only authorization boundary")
-                handoff_count += 1
+                if page.next_cursor is not None:
+                    raise RuntimeError("trigger handoff exceeded its bounded opportunity page")
+                for opportunity in page.items:
+                    handoff = process_triggered_opportunity(
+                        coordinator, opportunity, source=source,
+                        paper_service=paper_service, now=now,
+                    )
+                    if handoff.get("orders_authorized") is not False:
+                        raise RuntimeError("opportunity handoff violated paper-only authorization boundary")
+                    handoff_count += 1
+            # Ledger reconciliation is read-only with respect to new intents; it only
+            # records states already confirmed by the durable paper ledger.
             reconciled = reconcile_paper_intents(
                 coordinator, paper_service.ledger, now=now,
             )
@@ -184,9 +202,8 @@ def main() -> None:
             first_run_at=datetime.now(timezone.utc) + timedelta(seconds=schedule_interval),
             payload={"scope": "market_feed"},
         )
-        intelligence_enabled = str(
-            os.environ.get("PAPER_MARKET_INTELLIGENCE_ENABLED", "true")
-        ).strip().lower() in {"1", "true", "yes", "on"}
+        intelligence_enabled = _env_bool("PAPER_MARKET_INTELLIGENCE_ENABLED", default=False)
+        paper_handoff_enabled = _env_bool("PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED", default=False)
         if intelligence_enabled:
             intelligence_interval = max(
                 300, int(os.environ.get("PAPER_MARKET_INTELLIGENCE_INTERVAL_SECONDS", "900"))
@@ -281,6 +298,7 @@ def main() -> None:
             )
             intelligence_handlers["opportunity_reassessment_futures"] = opportunity_reassessment_handler(
                 futures_coordinator, app.worker.source, paper_service=app,
+                allow_paper_handoff=paper_handoff_enabled,
             )
             intelligence_handlers["opportunity_reassessment_spot"] = opportunity_reassessment_handler(
                 spot_coordinator, spot_source,
