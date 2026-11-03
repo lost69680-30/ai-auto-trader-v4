@@ -34,8 +34,12 @@ class BacktestConfig:
             raise ValueError("position_fraction must be in (0, 1]")
         if min(self.fee_bps_per_side, self.slippage_bps_per_side, self.funding_bps_per_8h) < 0:
             raise ValueError("cost assumptions must be non-negative")
-        if self.candle_interval_minutes <= 0:
-            raise ValueError("candle_interval_minutes must be positive")
+        if (
+            isinstance(self.candle_interval_minutes, bool)
+            or not isinstance(self.candle_interval_minutes, int)
+            or self.candle_interval_minutes <= 0
+        ):
+            raise ValueError("candle_interval_minutes must be a positive integer")
         if not 0 <= self.minimum_signal_score <= 100:
             raise ValueError("minimum_signal_score must be between 0 and 100")
 
