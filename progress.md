@@ -373,3 +373,14 @@ Read-only `pg_database_size` queries returned:
 - The runbook explicitly prohibits production access, credential sharing, public GitHub uploads, and restore/migration commands against staging or production.
 - Archive-list validation is not a restore rehearsal. A successful restore to disposable local PostgreSQL remains mandatory before applying the missing migration.
 - This is documentation only. The user has not yet run it; no backup has been created and no database was changed.
+
+
+### Phone-based GitHub/AgePony staging backup (2026-11-03)
+
+- Added `.github/workflows/solo-staging-db-backup.yml` secure manual workflow to the default `main` branch and mirrored it on this Part 8 branch. It uses a phone-held AgePony recipient, uploads only an encrypted artifact with one-day retention, caps the encrypted file at 200 MiB, and requires explicit manual confirmation of staging-only scope and available free Actions storage.
+- Added `docs/FREE_STAGING_BACKUP_GITHUB.md` to `main` and this branch. It replaces the Termux-only path with Android AgePony + GitHub instructions.
+- The workflow performs a pre-dump fail-closed check: exact `solo_backup_reader` identity, no superuser/BYPASSRLS/INHERIT privileges, SELECT-only table grants, no schema CREATE, RLS enabled, and the dedicated SELECT policy on every table. It then runs an age round-trip and a full restore into disposable PostgreSQL before uploading the phone-encrypted archive.
+- Latest read-only Supabase catalog inspection confirmed `solo_backup_reader` exists, can log in, has `rolsuper=false`, `rolbypassrls=false`, `rolinherit=false`, and has SELECT grants on all 15 current tables. However, only 14 of 15 tables have the `solo_backup_reader_select` policy; `market_intelligence_reports` has no policy. The workflow intentionally refuses to dump until this gap is reviewed and corrected with a narrowly scoped SELECT policy. No RLS policy or database role was changed.
+- GitHub standard runners are free for this public repository, but artifact storage has quotas. The workflow does not run unless the user manually confirms sufficient included free storage; if capacity cannot be verified, do not run. No billing changes or paid resources were made.
+- Workflow and guide are committed on `main` (workflow safety commits `79afb98ed501ec1a30157531b1134eeb41bb93cd`, `cbe3338863892fad31302d906e8a00f0bbda0288`; guide `dcdba56ba80c101dd6f2369985986ad0c6a8d874`) and mirrored on this branch (workflow safety commits `49c54abca410e7df5d9c4f59c0433315c92f156c`, `cc7e147637ba7f9812c7ff70bfb832522a003cf4`; guide `f6962c89bb865affe26a7faf44cd36ec25d70df9`).
+- This is implementation only: no workflow was run, no artifact/backup was created, no secret was added, and no staging or production database was changed. The six-table opportunity migration remains blocked until the backup and restore gates pass.
