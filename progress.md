@@ -133,3 +133,53 @@ This checkpoint supersedes the earlier limitation above that venue-scoped reasse
 - GitHub checks on commit `165749c386a8cc8d9c8d9e72a7b2d10866854488` passed: `test`, `postgres-ledger-tests`, `asgi-runtime`, `Read-only market data and analysis safety tests`, and `Offline backtest tests and safety checks`.
 - **Part 5 is not yet accepted as complete.** The scheduled search currently publishes independent strategy assessments; it does not yet automatically convert eligible assessments into durable opportunities with validated price plans. Existing waiting opportunities are reassessed by venue/timeframe, but automatic plan refresh/replacement, crash-safe refresh evidence, and triggered-opportunity revalidation through the existing paper signal cycle and independent Risk Guardian remain outstanding. Those are required before claiming end-to-end opportunity activation.
 - No deployment, Supabase migration, credential change, paid provisioning, or exchange-permission change was made. Both venues remain read-only; all research/coordinator outputs must keep `orders_authorized=false`.
+
+## Current integrated checkpoint — 2026-11-03 (supersedes earlier "Task 5 not started" entries)
+
+The latest Parts 5–7 integration candidate is PR #97, based on the verified Part 4 branch. Exact tested head after the additional regression coverage: `94c6d19d3661502641282ae92c2adda24d8edb83`.
+
+### Part 5 — Continuous Opportunity Engine
+
+- Durable PostgreSQL opportunity registry, append-only events/evidence, stable idempotency, expiry, plan refresh and transactional state transitions are implemented in the integration branch.
+- Independent strategy assessments remain separate; long-term is analysis-only.
+- Spot and Futures Testnet scans/reassessment are venue-isolated. Spot remains research-only.
+- Futures triggers are reloaded and revalidated with fresh market/candle evidence and all five strategy assessments, then pass through signal handoff, PaperServiceApplication, PaperSignalCycle, TradingOrchestrator and the independent Risk Guardian.
+- Paper intent state is recorded only after ledger confirmation; PAPER_OPEN requires a matching ledger-confirmed simulated position. Duplicate or uncertain handoffs fail closed.
+- Authenticated opportunity list/detail/event/assessment/evidence endpoints are GET-only.
+- Worker scan/reassessment activation and paper handoff remain opt-in. `PAPER_MARKET_INTELLIGENCE_ENABLED` defaults false and `PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED` defaults false.
+
+### Part 6 — Conservative evaluation
+
+- Net P&L/cost/expectancy/profit-factor/win-rate/loss-streak metrics and chronological walk-forward evaluation are integrated.
+- Validation folds are disjoint; the final holdout is reserved and reported separately.
+- No parameter tuning or automatic strategy promotion is included.
+- Next-open, one-bar-hold fills and simplified fee/slippage/funding assumptions are disclosed. Stops, liquidation, order-book depth and market impact are not modelled; results are not profitability forecasts.
+
+### Part 7 — Portfolio diagnostics
+
+- Pairwise Pearson correlation uses exact shared timestamps only.
+- Missing observations are not forward-filled or interpolated; insufficient overlap and zero variance remain undefined.
+- Malformed/non-finite observations fail validation; diagnostics remain research-only with `orders_authorized=false`.
+
+### Verification on exact head `94c6d19d3661502641282ae92c2adda24d8edb83`
+
+All six applicable GitHub Actions workflows passed:
+- Market-data/analysis safety: 108 passed, 13 skipped.
+- ASGI runtime: 37 focused tests passed; full backend suite 540 passed, 46 skipped.
+- Durable PostgreSQL ledger integration: 6 passed; opportunity registry integration: 14 passed; full backend suite 599 passed.
+- Second durable-ledger workflow: full backend suite 599 passed.
+- Offline backtest safety: 28 passed.
+- Extended-timeframe/Android workflow: 540 passed, 46 skipped; Gradle build successful and APK artifact uploaded.
+
+Root and extracted-assembly worker, API and new regression-test mirrors were checked byte-for-byte. The APK artifact is available from GitHub Actions run [41581443625](https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41581443625); it has not yet been installed and phone-tested.
+
+### Still not operationally accepted
+
+- No Render worker deployment or always-on host verification has been performed for this integration.
+- The opportunity migration remains source-only; the user's Supabase database has not been migrated.
+- Migration rollback, full process-crash/lease-expiry drills, multi-day paper soak, backup/restore, and operational alerting still require separate verification.
+- The new integration APK has not been phone-tested.
+- This scope covers Binance Spot and USDⓈ-M Futures Testnet research only; it does not implement Forex.
+- No live exchange order interface, live trading, secret change, paid hosting, or billing action was introduced.
+
+Do not enable the research or paper-handoff flags as part of CI. Keep both opt-in flags false until the separate operational acceptance gate is satisfied.
