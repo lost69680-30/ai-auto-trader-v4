@@ -322,3 +322,15 @@ No Render/Railway service creation or configuration change; no Supabase project/
 - The connected GitHub repository `lost69680-30/ai-auto-trader-v4` is public. GitHub documents standard GitHub-hosted runner usage as free for public repositories. This makes CI and manually dispatched verification jobs a useful $0 tool; scheduled jobs are still non-guaranteed and must not be treated as a continuous worker. Source: https://docs.github.com/en/actions/concepts/billing-and-usage
 - Render Free services count against monthly included outbound bandwidth; Render documents that exceeding the included amount can incur supplementary charges. The current account's usage/billing controls were not inspected, so a Free compute label alone is not a guarantee of zero charges. Keep traffic modest, do not create artificial keep-alive traffic, and do not add high-volume polling. Source: https://render.com/docs/free
 - The connected Supabase project-detail response did not expose the billing plan or usage. Do not infer the current plan from `ACTIVE_HEALTHY`; verify the dashboard's Free plan and quotas before relying on the database for continued operation. No billing settings were changed.
+
+
+### Staging database catalog verification (read-only, 2026-11-03)
+
+A second read-only inspection targeted the actual `paper_ledger` schema in `solo-ai-auto-trader-staging` (not the empty `public` schema):
+
+- Found **15 of the 21** tables required by `backend.staging_preflight.REQUIRED_PRIVATE_TABLES`.
+- The six missing Part 5 opportunity-registry tables are: `opportunities`, `opportunity_assessments`, `opportunity_evidence`, `opportunity_watch_conditions`, `opportunity_events`, and `opportunity_claims`.
+- The 15 existing tables all report RLS enabled. The catalog response showed approximately 470,317 candle rows, 2,270 market-intelligence reports, 1,121 scheduled-job rows, 63 audit events, 63 equity snapshots, and one worker heartbeat. Table counts only were returned; no trading-row payloads or credentials were read.
+- Supabase's security advisor returned one INFO finding: `paper_ledger.market_intelligence_reports` has RLS enabled but no policies. Since this is a private server-side schema, do not add a broad policy merely to silence the advisor; verify schema exposure and backend-only access before any change.
+- The performance advisor reported three unused indexes (INFO only). No index or schema changes were made.
+- **Result:** the existing staging database is not yet compatible with the Part 8 preflight. Do not deploy the Part 8 API/worker against it and do not apply migrations until a reviewed migration/backup/rollback plan is ready. Production Supabase remains untouched.
