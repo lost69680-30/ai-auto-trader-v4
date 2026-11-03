@@ -160,8 +160,13 @@ internal fun paperSnapshotMarksFresh(
     return ageSeconds >= -30.0 && ageSeconds <= PAPER_SNAPSHOT_FRESHNESS_LIMIT_SECONDS
 }
 
+internal fun emergencyStopDisplayLabel(active: Boolean): String =
+    if (active) "EMERGENCY STOP ACTIVE" else "EMERGENCY STOP INACTIVE"
+
 internal fun parsePaperRisk(json: JSONObject): PaperRiskView {
     require(!json.optBoolean("orders_authorized", true)) { "Unsafe risk response" }
+    val emergencyStopActive = json.opt("emergency_stop_active") as? Boolean
+        ?: throw IllegalArgumentException("Missing or invalid emergency-stop state")
     val snapshot = json.optJSONObject("latest_snapshot")
     fun finite(name: String): Double? {
         if (snapshot == null || snapshot.isNull(name)) return null
@@ -182,7 +187,7 @@ internal fun parsePaperRisk(json: JSONObject): PaperRiskView {
     val snapshotAt = snapshot?.optString("snapshot_at")?.takeIf { it.isNotBlank() && it != "null" }
     val marksFresh = paperSnapshotMarksFresh(snapshotAt, storedMarksFresh)
     return PaperRiskView(
-        emergencyStopActive = json.optBoolean("emergency_stop_active", false),
+        emergencyStopActive = emergencyStopActive,
         openPositionCount = json.optInt("open_position_count", -1).takeIf { it >= 0 }
             ?: throw IllegalArgumentException("Invalid open position count"),
         accountEquity = finite("account_equity"),
