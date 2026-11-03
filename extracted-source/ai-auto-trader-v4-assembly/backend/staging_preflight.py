@@ -28,6 +28,10 @@ _FALSE = frozenset({"0", "false", "no", "off", ""})
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
+class _RemoteDatabaseTLSRequired(RuntimeError):
+    """Remote PostgreSQL connections must negotiate TLS."""
+
+
 @dataclass(frozen=True, slots=True)
 class PreflightCheck:
     name: str
@@ -186,7 +190,7 @@ def check_database_schema(
             connect_factory = psycopg.connect
         with connect_factory(dsn, **postgres_connection_ssl_options(dsn)) as connection:
             if remote_database and not getattr(getattr(connection, "info", None), "ssl_in_use", False):
-                raise RuntimeError("TLS is not active for the remote PostgreSQL connection")
+                raise _RemoteDatabaseTLSRequired("TLS is not active for the remote PostgreSQL connection")
             with connection.transaction():
                 connection.execute("SET TRANSACTION READ ONLY")
                 rows = connection.execute(
@@ -213,6 +217,11 @@ def check_database_schema(
         return PreflightCheck(
             "postgres_schema_read_only", True,
             f"Read-only catalog inspection found all {len(REQUIRED_PRIVATE_TABLES)} required private tables with row-level security enabled.",
+        )
+    except _RemoteDatabaseTLSRequired:
+        return PreflightCheck(
+            "postgres_schema_read_only", False,
+            "TLS is not active for the remote PostgreSQL connection; connection details redacted.",
         )
     except Exception as exc:
         return PreflightCheck(
