@@ -146,7 +146,8 @@ def test_postgres_paper_service_pipeline_emergency_stop_and_restart(monkeypatch,
         next_at = NOW + timedelta(seconds=5)
         current_clock[0] = next_at
         source.current_price = first_price + 0.5
-        next_candles = source.fetch_klines("BTCUSDT", now=next_at)
+        # Keep the same closed-candle signal identity while advancing only the mark price.
+        next_candles = first_candles
         second = app.process_poll(
             MarketPollResult(
                 next_at, (_frame(next_at, source.current_price, next_candles),),
