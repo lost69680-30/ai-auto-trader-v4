@@ -44,6 +44,8 @@ def test_scheduled_job_runner_executes_off_feed_loop_and_stops_cleanly():
     class Dispatcher:
         def __init__(self):
             self.called = threading.Event()
+            self.last_run_status = "SUCCEEDED"
+            self.last_error = None
 
         def run_once(self):
             self.called.set()
@@ -52,10 +54,12 @@ def test_scheduled_job_runner_executes_off_feed_loop_and_stops_cleanly():
     stop = threading.Event()
     scheduler = Scheduler()
     dispatcher = Dispatcher()
+    health = {"status": "STARTING"}
+    health_lock = threading.Lock()
     thread = threading.Thread(
         target=shared_market_worker.run_scheduled_jobs,
         args=(stop, scheduler, dispatcher),
-        kwargs={"poll_interval": 0.01},
+        kwargs={"poll_interval": 0.01, "health": health, "health_lock": health_lock},
         daemon=True,
     )
     thread.start()
@@ -64,6 +68,38 @@ def test_scheduled_job_runner_executes_off_feed_loop_and_stops_cleanly():
     stop.set()
     thread.join(timeout=1.0)
     assert not thread.is_alive()
+    assert health["status"] == "RUNNING"
+    assert health["last_dispatch_status"] == "SUCCEEDED"
+    assert health["last_error"] is None
+    assert health["last_poll_at"] is not None
+
+
+def test_scheduled_job_runner_surfaces_database_failure_in_health():
+    import threading
+
+    stop = threading.Event()
+    health = {"status": "STARTING"}
+    health_lock = threading.Lock()
+
+    class BrokenScheduler:
+        def enqueue_due(self):
+            stop.set()
+            raise RuntimeError("database unavailable")
+
+    class Dispatcher:
+        last_run_status = "IDLE"
+        last_error = None
+
+        def run_once(self):
+            return False
+
+    shared_market_worker.run_scheduled_jobs(
+        stop, BrokenScheduler(), Dispatcher(),
+        poll_interval=0.01, health=health, health_lock=health_lock,
+    )
+    assert health["status"] == "DEGRADED"
+    assert health["last_error"] == "RuntimeError"
+    assert health["last_dispatch_status"] == "FAILED"
 
 
 def test_opportunity_reassessment_handler_uses_venue_scoped_read_only_price_source():
@@ -208,6 +244,7 @@ def test_research_activation_profile_uses_conservative_bounded_defaults(monkeypa
         "PAPER_OPPORTUNITY_REASSESS_INTERVAL_SECONDS",
         "PAPER_MARKET_INTELLIGENCE_CANDLE_LIMIT",
         "PAPER_MARKET_INTELLIGENCE_FETCH_WORKERS",
+        "PAPER_SCHEDULED_JOB_POLL_INTERVAL_SECONDS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -227,6 +264,10 @@ def test_research_activation_profile_uses_conservative_bounded_defaults(monkeypa
         "PAPER_MARKET_INTELLIGENCE_FETCH_WORKERS", 3,
         minimum=1, maximum=6,
     ) == 3
+    assert shared_market_worker._bounded_env_int(
+        "PAPER_SCHEDULED_JOB_POLL_INTERVAL_SECONDS", 5,
+        minimum=3, maximum=30,
+    ) == 5
 
 
 @pytest.mark.parametrize(
@@ -237,6 +278,7 @@ def test_research_activation_profile_uses_conservative_bounded_defaults(monkeypa
         ("PAPER_MARKET_INTELLIGENCE_CANDLE_LIMIT", "501", 30, 500),
         ("PAPER_MARKET_INTELLIGENCE_FETCH_WORKERS", "7", 1, 6),
         ("PAPER_MARKET_INTELLIGENCE_FETCH_WORKERS", "not-a-number", 1, 6),
+        ("PAPER_SCHEDULED_JOB_POLL_INTERVAL_SECONDS", "2", 3, 30),
     ],
 )
 def test_research_activation_profile_rejects_unsafe_or_invalid_overrides(
