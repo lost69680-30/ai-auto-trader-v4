@@ -915,3 +915,20 @@ def test_opportunity_api_rejects_partial_venue_filter_and_missing_registry(tmp_p
     assert status.startswith("400")
     assert body["orders_authorized"] is False
 
+def test_configured_market_symbols_prefers_explicit_market_allowlist():
+    from app.engines.read_only_api import _configured_market_symbols
+
+    assert _configured_market_symbols({
+        "PAPER_MARKET_SYMBOLS": " btcusdt, ETHUSDT, btcusdt ",
+        "PAPER_SYMBOLS": "SOLUSDT",
+    }) == ("BTCUSDT", "ETHUSDT")
+
+
+def test_configured_market_symbols_falls_back_to_paper_symbols_and_safe_default():
+    from app.engines.read_only_api import _configured_market_symbols
+
+    assert _configured_market_symbols({"PAPER_SYMBOLS": " solusdt, ethusdt "}) == (
+        "SOLUSDT", "ETHUSDT"
+    )
+    assert _configured_market_symbols({}) == ("BTCUSDT", "ETHUSDT")
+    assert _configured_market_symbols({"PAPER_MARKET_SYMBOLS": ""}) == ()
