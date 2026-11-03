@@ -11,6 +11,7 @@ import math
 from typing import Iterable
 
 from backend.backtesting import BacktestConfig, BacktestResult, run_backtest
+from backend.external_strategy_intelligence import ExternalRuleSpec
 from backend.strategy_research import Candle, ResearchConfig
 
 
@@ -24,11 +25,8 @@ class WalkForwardConfig:
 
     def __post_init__(self) -> None:
         geometry = (
-            self.train_bars,
-            self.validation_bars,
-            self.holdout_bars,
-            self.step_bars,
-            self.candle_interval_minutes,
+            self.train_bars, self.validation_bars, self.holdout_bars,
+            self.step_bars, self.candle_interval_minutes,
         )
         if any(isinstance(value, bool) or not isinstance(value, int) for value in geometry):
             raise ValueError("walk-forward fold geometry and candle interval must be integers")
@@ -45,11 +43,60 @@ class WalkForwardConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class MarketRegimeEvidence:
+    trend_state: str
+    volatility_state: str
+    trend_return_pct: float
+    realized_volatility_pct: float
+    observations: int
+    methodology: str
+    orders_authorized: bool = False
+
+
+def _classify_market_regime(rows: list[Candle]) -> MarketRegimeEvidence:
+    """Label a window descriptively; this is not a forecast or a trading signal."""
+    if len(rows) < 3:
+        raise ValueError("market regime classification requires at least three candles")
+    returns = [
+        (rows[index].close / rows[index - 1].close - 1.0) * 100.0
+        for index in range(1, len(rows))
+    ]
+    if not all(math.isfinite(value) for value in returns):
+        raise ValueError("market regime returns must be finite")
+    mean_return = math.fsum(returns) / len(returns)
+    variance = math.fsum((value - mean_return) ** 2 for value in returns) / len(returns)
+    realized_volatility = math.sqrt(variance)
+    trend_return = (rows[-1].close / rows[0].close - 1.0) * 100.0
+    if not math.isfinite(realized_volatility) or not math.isfinite(trend_return):
+        raise ValueError("market regime metrics must be finite")
+    trend_state = "UP" if trend_return >= 1.0 else "DOWN" if trend_return <= -1.0 else "RANGE"
+    volatility_state = (
+        "LOW" if realized_volatility < 0.25
+        else "MEDIUM" if realized_volatility < 1.0
+        else "HIGH"
+    )
+    return MarketRegimeEvidence(
+        trend_state=trend_state,
+        volatility_state=volatility_state,
+        trend_return_pct=round(trend_return, 6),
+        realized_volatility_pct=round(realized_volatility, 6),
+        observations=len(returns),
+        methodology=(
+            "Close-to-close window trend: UP at >=1%, DOWN at <=-1%, otherwise RANGE; "
+            "population standard deviation of close-to-close percentage returns: "
+            "LOW below 0.25%, MEDIUM below 1.0%, otherwise HIGH."
+        ),
+        orders_authorized=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class EvaluationWindow:
     name: str
     start_index: int
     end_index: int  # exclusive
     strategy: BacktestResult
+    market_regime: MarketRegimeEvidence
     buy_hold_return_pct: float
     cash_return_pct: float = 0.0
     used_for_selection: bool = False
@@ -96,6 +143,7 @@ def _evaluate_window(
     backtest_config: BacktestConfig,
     research_config: ResearchConfig,
     train_bars: int,
+    rule_spec: ExternalRuleSpec | None,
 ) -> EvaluationWindow:
     # Prior training-window candles are indicator warmup only. The backtest explicitly
     # blocks entries before the OOS boundary; benchmark returns use only the test segment.
@@ -106,6 +154,7 @@ def _evaluate_window(
     strategy = run_backtest(
         symbol, context_rows, config=backtest_config, research_config=research_config,
         research_now=now, start_timestamp=test_rows[0].timestamp,
+        rule_spec=rule_spec,
     )
     entry_price = test_rows[0].open
     exit_price = test_rows[-1].close
@@ -121,6 +170,7 @@ def _evaluate_window(
         start_index=start,
         end_index=end,
         strategy=strategy,
+        market_regime=_classify_market_regime(test_rows),
         buy_hold_return_pct=round(buy_hold_return, 6),
         cash_return_pct=0.0,
         used_for_selection=False,
@@ -135,6 +185,7 @@ def evaluate_walk_forward(
     backtest_config: BacktestConfig | None = None,
     research_config: ResearchConfig | None = None,
     research_now: datetime,
+    rule_spec: ExternalRuleSpec | None = None,
 ) -> WalkForwardResult:
     """Evaluate fixed strategy settings over rolling chronological windows.
 
@@ -170,14 +221,15 @@ def evaluate_walk_forward(
     while test_start + cfg.validation_bars <= holdout_start:
         folds.append(_evaluate_window(
             symbol, rows, test_start, test_start + cfg.validation_bars,
-            f"walk_forward_{fold_number}", bt_cfg, rs_cfg, cfg.train_bars,
+            f"walk_forward_{fold_number}", bt_cfg, rs_cfg, cfg.train_bars, rule_spec,
         ))
         fold_number += 1
         test_start += cfg.step_bars
     if not folds:
         raise ValueError("not enough pre-holdout history for at least one validation fold")
     holdout = _evaluate_window(
-        symbol, rows, holdout_start, len(rows), "untouched_holdout", bt_cfg, rs_cfg, cfg.train_bars
+        symbol, rows, holdout_start, len(rows), "untouched_holdout", bt_cfg, rs_cfg,
+        cfg.train_bars, rule_spec,
     )
     return WalkForwardResult(
         symbol=symbol,
