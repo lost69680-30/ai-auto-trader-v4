@@ -201,6 +201,83 @@ def test_futures_reassessment_handler_hands_off_triggers_and_reconciles_ledger(m
 
 
 
+
+def test_research_activation_profile_uses_conservative_bounded_defaults(monkeypatch):
+    for name in (
+        "PAPER_MARKET_INTELLIGENCE_INTERVAL_SECONDS",
+        "PAPER_OPPORTUNITY_REASSESS_INTERVAL_SECONDS",
+        "PAPER_MARKET_INTELLIGENCE_CANDLE_LIMIT",
+        "PAPER_MARKET_INTELLIGENCE_FETCH_WORKERS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    assert shared_market_worker._bounded_env_int(
+        "PAPER_MARKET_INTELLIGENCE_INTERVAL_SECONDS", 1800,
+        minimum=900, maximum=86400,
+    ) == 1800
+    assert shared_market_worker._bounded_env_int(
+        "PAPER_OPPORTUNITY_REASSESS_INTERVAL_SECONDS", 300,
+        minimum=300, maximum=3600,
+    ) == 300
+    assert shared_market_worker._bounded_env_int(
+        "PAPER_MARKET_INTELLIGENCE_CANDLE_LIMIT", 100,
+        minimum=30, maximum=500,
+    ) == 100
+    assert shared_market_worker._bounded_env_int(
+        "PAPER_MARKET_INTELLIGENCE_FETCH_WORKERS", 3,
+        minimum=1, maximum=6,
+    ) == 3
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "minimum", "maximum"),
+    [
+        ("PAPER_MARKET_INTELLIGENCE_INTERVAL_SECONDS", "899", 900, 86400),
+        ("PAPER_OPPORTUNITY_REASSESS_INTERVAL_SECONDS", "299", 300, 3600),
+        ("PAPER_MARKET_INTELLIGENCE_CANDLE_LIMIT", "501", 30, 500),
+        ("PAPER_MARKET_INTELLIGENCE_FETCH_WORKERS", "7", 1, 6),
+        ("PAPER_MARKET_INTELLIGENCE_FETCH_WORKERS", "not-a-number", 1, 6),
+    ],
+)
+def test_research_activation_profile_rejects_unsafe_or_invalid_overrides(
+    monkeypatch, name, value, minimum, maximum,
+):
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError):
+        shared_market_worker._bounded_env_int(
+            name, 1, minimum=minimum, maximum=maximum,
+        )
+
+
+def test_opportunity_reassessment_batch_is_bounded_to_twenty_records():
+    from backend.shared_market_worker import opportunity_reassessment_handler
+    from backend.opportunity_coordinator import OpportunityCoordinator
+    from types import SimpleNamespace
+
+    coordinator = object.__new__(OpportunityCoordinator)
+    coordinator.market_type = "SPOT"
+    coordinator.venue = "BINANCE_SPOT_TESTNET"
+    seen = {}
+
+    def reassess_due(*, now, market_update_provider, limit):
+        seen["limit"] = limit
+        return SimpleNamespace(evaluated_count=0, failed_count=0, orders_authorized=False)
+
+    coordinator.reassess_due = reassess_due
+
+    class SpotSource:
+        def fetch_mark_price(self, symbol):
+            raise AssertionError("empty batch must not fetch prices")
+
+    handler = opportunity_reassessment_handler(coordinator, SpotSource())
+    handler(
+        {"scope": "opportunity_reassessment", "market_type": "SPOT",
+         "venue": "BINANCE_SPOT_TESTNET"},
+        "bounded-spot-reassessment",
+    )
+    assert seen["limit"] == 20
+
+
 def test_market_intelligence_worker_is_disabled_by_default(monkeypatch):
     monkeypatch.delenv("PAPER_MARKET_INTELLIGENCE_ENABLED", raising=False)
     assert shared_market_worker._env_bool("PAPER_MARKET_INTELLIGENCE_ENABLED") is False
