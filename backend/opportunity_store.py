@@ -805,14 +805,32 @@ class PostgresOpportunityStore:
                 "INTENT_RECORDED", "PAPER_OPEN",
             }:
                 raise ValueError("long-term analysis cannot enter the paper-eligible lifecycle")
-            if to_state == "INTENT_RECORDED" and (
-                from_state != "RISK_CHECK" or actor != "risk_manager" or evidence_version is None
-            ):
-                raise ValueError("intent recording requires Risk Manager approval and evidence version")
-            if to_state == "PAPER_OPEN" and (
-                from_state != "INTENT_RECORDED" or actor != "paper_ledger" or evidence_version is None
-            ):
-                raise ValueError("PAPER_OPEN requires ledger-confirmed position evidence")
+            if to_state == "INTENT_RECORDED":
+                if from_state != "RISK_CHECK" or actor != "risk_manager" or evidence_version is None:
+                    raise ValueError("intent recording requires Risk Manager approval and evidence version")
+                intent_evidence = conn.execute(
+                    """SELECT evidence_id FROM paper_ledger.opportunity_evidence
+                       WHERE opportunity_id = %s AND evidence_type = 'PAPER_INTENT'
+                         AND reference_id = %s
+                         AND payload->>'risk_approved' = 'true'
+                         AND payload->>'orders_authorized' = 'false'""",
+                    (opportunity_id, evidence_version),
+                ).fetchone()
+                if intent_evidence is None:
+                    raise ValueError("INTENT_RECORDED requires ledger-confirmed intent evidence")
+            if to_state == "PAPER_OPEN":
+                if from_state != "INTENT_RECORDED" or actor != "paper_ledger" or evidence_version is None:
+                    raise ValueError("PAPER_OPEN requires ledger-confirmed position evidence")
+                position_evidence = conn.execute(
+                    """SELECT evidence_id FROM paper_ledger.opportunity_evidence
+                       WHERE opportunity_id = %s AND evidence_type = 'PAPER_POSITION'
+                         AND reference_id = %s
+                         AND payload->>'status' IN ('OPEN', 'CLOSED')
+                         AND payload->>'orders_authorized' = 'false'""",
+                    (opportunity_id, evidence_version),
+                ).fetchone()
+                if position_evidence is None:
+                    raise ValueError("PAPER_OPEN requires ledger-confirmed position evidence")
             updated = conn.execute(
                 """UPDATE paper_ledger.opportunities
                    SET state = %s, version = version + 1, updated_at = %s
