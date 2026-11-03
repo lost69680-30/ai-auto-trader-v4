@@ -136,7 +136,7 @@ def test_database_schema_check_is_read_only_and_requires_all_private_tables():
     assert connection.statements[0][0] == "SET TRANSACTION READ ONLY"
     assert len(connection.statements) == 2
     assert "super-secret" not in check.detail
-    assert "READ ONLY" in check.detail
+    assert "read-only" in check.detail.lower()
 
 
 def test_database_schema_check_fails_when_required_table_or_rls_is_missing():
