@@ -450,12 +450,12 @@ def main() -> None:
                     equity_snapshot_error or analysis_error
                     or scheduler_health_snapshot.get("status") == "DEGRADED"
                     or cycle_status in {
-                    "SKIPPED_UNHEALTHY_MARKET_DATA", "FUNDING_SYNC_DEGRADED",
-                    "MARKET_UNIVERSE_STALE", "NO_HEALTHY_ALLOWLISTED_SYMBOLS",
-                    "NO_ELIGIBLE_SYMBOLS", "ANALYZED_WITH_EXCLUSIONS",
-                    "FUNDING_SYNC_ERROR", "MARKET_UNIVERSE_UNAVAILABLE",
-                    "MARKET_UNIVERSE_REJECTED", "AUTHORIZATION_FLAG_REJECTED",
-                    "ANALYSIS_RESULT_MISSING", "ANALYSIS_ELIGIBILITY_INVALID",
+                        "SKIPPED_UNHEALTHY_MARKET_DATA", "FUNDING_SYNC_DEGRADED",
+                        "MARKET_UNIVERSE_STALE", "NO_HEALTHY_ALLOWLISTED_SYMBOLS",
+                        "NO_ELIGIBLE_SYMBOLS", "ANALYZED_WITH_EXCLUSIONS",
+                        "FUNDING_SYNC_ERROR", "MARKET_UNIVERSE_UNAVAILABLE",
+                        "MARKET_UNIVERSE_REJECTED", "AUTHORIZATION_FLAG_REJECTED",
+                        "ANALYSIS_RESULT_MISSING", "ANALYSIS_ELIGIBILITY_INVALID",
                     }
                 ) else "RUNNING"
                 store.heartbeat(
