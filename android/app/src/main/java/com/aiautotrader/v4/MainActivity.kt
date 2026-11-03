@@ -1541,8 +1541,8 @@ private fun RiskCenterScreen() {
     val risk = snapshot?.risk
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CardPanel {
-            StatusLine("●", if (risk?.emergencyStopActive == true) "EMERGENCY STOP ACTIVE" else "PAPER-ONLY · READ-ONLY",
-                if (risk?.emergencyStopActive == true) Red else Green)
+            StatusLine("●", risk?.let { emergencyStopDisplayLabel(it.emergencyStopActive) } ?: "EMERGENCY STOP UNKNOWN",
+                when (risk?.emergencyStopActive) { true -> Red; false -> Green; null -> Color(0xFFFFC857) })
             Text("Risk control center", fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text(
                 if (snapshot != null) "Risk state from the authenticated paper ledger. Last successful read: ${snapshot.fetchedAt}."
