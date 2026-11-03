@@ -165,3 +165,42 @@ def test_database_schema_check_fails_when_required_table_or_rls_is_missing():
     assert check.passed is False
     assert "missing" in check.detail.lower()
     assert "row-level security" in check.detail.lower()
+
+def test_remote_database_preflight_rejects_connection_without_tls():
+    class Result:
+        def fetchall(self):
+            return [(name, True) for name in sorted({
+                "paper_orders", "paper_fills", "paper_positions", "paper_funding_events",
+                "paper_audit_events", "paper_system_controls", "paper_order_cancellations",
+                "paper_position_extrema", "paper_equity_snapshots", "market_feed_snapshots",
+                "market_worker_heartbeats", "scheduled_job_definitions", "scheduled_jobs",
+                "market_candles", "market_intelligence_reports", "opportunities",
+                "opportunity_assessments", "opportunity_evidence",
+                "opportunity_watch_conditions", "opportunity_events", "opportunity_claims",
+            })]
+
+    class Info:
+        ssl_in_use = False
+
+    class FakeConnection:
+        info = Info()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def transaction(self):
+            return self
+
+        def execute(self, statement, params=None):
+            return Result()
+
+    check = check_database_schema(
+        "postgresql://paper:secret@db.example.test:5432/solo",
+        connect_factory=lambda *args, **kwargs: FakeConnection(),
+    )
+
+    assert check.passed is False
+    assert "TLS" in check.detail
