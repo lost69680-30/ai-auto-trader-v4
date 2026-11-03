@@ -20,10 +20,10 @@ from app.engines.postgres_ssl import postgres_connection_ssl_options
 
 _STATES = {
     "DISCOVERED", "ASSESSING", "WAITING", "REASSESSING", "TRIGGERED",
-    "RISK_CHECK", "INTENT_RECORDED", "PAPER_OPEN", "REJECTED",
+    "RISK_CHECK", "INTENT_RECORDED", "PAPER_OPEN", "PAPER_CLOSED", "REJECTED",
     "INVALIDATED", "EXPIRED", "CANCELLED", "BLOCKED", "NO_TRADE",
 }
-_TERMINAL_STATES = {"PAPER_OPEN", "REJECTED", "INVALIDATED", "EXPIRED", "CANCELLED", "BLOCKED", "NO_TRADE"}
+_TERMINAL_STATES = {"PAPER_CLOSED", "REJECTED", "INVALIDATED", "EXPIRED", "CANCELLED", "BLOCKED", "NO_TRADE"}
 _ALLOWED_TRANSITIONS = {
     "DISCOVERED": {"ASSESSING", "REJECTED", "BLOCKED", "NO_TRADE", "CANCELLED"},
     "ASSESSING": {"WAITING", "REJECTED", "BLOCKED", "NO_TRADE", "CANCELLED"},
@@ -31,7 +31,8 @@ _ALLOWED_TRANSITIONS = {
     "REASSESSING": {"WAITING", "TRIGGERED", "INVALIDATED", "EXPIRED", "BLOCKED", "NO_TRADE", "CANCELLED"},
     "TRIGGERED": {"RISK_CHECK", "EXPIRED", "BLOCKED", "CANCELLED", "NO_TRADE"},
     "RISK_CHECK": {"INTENT_RECORDED", "BLOCKED", "NO_TRADE", "CANCELLED"},
-    "INTENT_RECORDED": {"PAPER_OPEN", "BLOCKED"},
+    "INTENT_RECORDED": {"PAPER_OPEN", "PAPER_CLOSED", "BLOCKED"},
+    "PAPER_OPEN": {"PAPER_CLOSED"},
 }
 _STRATEGIES = {"scalping", "day", "swing", "position", "long_term"}
 _VENUES = {"FUTURES": "BINANCE_USDM_TESTNET", "SPOT": "BINANCE_SPOT_TESTNET"}
@@ -802,7 +803,7 @@ class PostgresOpportunityStore:
                 raise ValueError(f"invalid opportunity transition: {from_state} -> {to_state}")
             if current["strategy_id"] == "long_term" and to_state in {
                 "WAITING", "REASSESSING", "TRIGGERED", "RISK_CHECK",
-                "INTENT_RECORDED", "PAPER_OPEN",
+                "INTENT_RECORDED", "PAPER_OPEN", "PAPER_CLOSED",
             }:
                 raise ValueError("long-term analysis cannot enter the paper-eligible lifecycle")
             if to_state == "INTENT_RECORDED":
@@ -820,17 +821,30 @@ class PostgresOpportunityStore:
                     raise ValueError("INTENT_RECORDED requires ledger-confirmed intent evidence")
             if to_state == "PAPER_OPEN":
                 if from_state != "INTENT_RECORDED" or actor != "paper_ledger" or evidence_version is None:
-                    raise ValueError("PAPER_OPEN requires ledger-confirmed position evidence")
+                    raise ValueError("PAPER_OPEN requires ledger-confirmed open-position evidence")
                 position_evidence = conn.execute(
                     """SELECT evidence_id FROM paper_ledger.opportunity_evidence
                        WHERE opportunity_id = %s AND evidence_type = 'PAPER_POSITION'
                          AND reference_id = %s
-                         AND payload->>'status' IN ('OPEN', 'CLOSED')
+                         AND payload->>'status' = 'OPEN'
                          AND payload->>'orders_authorized' = 'false'""",
                     (opportunity_id, evidence_version),
                 ).fetchone()
                 if position_evidence is None:
-                    raise ValueError("PAPER_OPEN requires ledger-confirmed position evidence")
+                    raise ValueError("PAPER_OPEN requires ledger-confirmed open-position evidence")
+            if to_state == "PAPER_CLOSED":
+                if from_state not in {"INTENT_RECORDED", "PAPER_OPEN"} or actor != "paper_ledger" or evidence_version is None:
+                    raise ValueError("PAPER_CLOSED requires ledger-confirmed closed-position evidence")
+                position_evidence = conn.execute(
+                    """SELECT evidence_id FROM paper_ledger.opportunity_evidence
+                       WHERE opportunity_id = %s AND evidence_type = 'PAPER_POSITION'
+                         AND reference_id = %s
+                         AND payload->>'status' = 'CLOSED'
+                         AND payload->>'orders_authorized' = 'false'""",
+                    (opportunity_id, evidence_version),
+                ).fetchone()
+                if position_evidence is None:
+                    raise ValueError("PAPER_CLOSED requires ledger-confirmed closed-position evidence")
             updated = conn.execute(
                 """UPDATE paper_ledger.opportunities
                    SET state = %s, version = version + 1, updated_at = %s
