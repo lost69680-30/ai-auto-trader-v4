@@ -259,3 +259,25 @@ The initial PostgreSQL end-to-end scenario first returned `WAITING_FOR_TRIGGER` 
 No deployment to Render, Railway or another host; no staging or production Supabase migration; no user database backup/restore; no secret or billing changes; no real multi-day market-data soak; no Android installation or phone verification. Live orders remain unavailable and unauthorized.
 
 **Safety state:** paper-only/read-only, `PAPER_ONLY`, `orders_authorized=false`, independent Risk Guardian authority, research and opportunity paper-handoff opt-ins disabled by default.
+
+
+## Read-only hosting inspection (2026-11-03)
+
+No Render or Railway settings were changed.
+
+### Render — My Workspace
+
+- `solo-ai-auto-trader-staging-api`: Frankfurt Free web service, deployed from `feat/solo-ledger-dashboard-integration`, not the Part 8 branch. Its configured start command requests API-only mode, but its application logs show worker cycles, scheduled jobs, market-intelligence scans, equity snapshots, and supervisor child-process shutdown. This indicates the deployed runtime is not behaving as a clean API-only process; the exact environment flag values were not exposed by the read-only service detail tool.
+- `solo-futures-websocket-staging`: Frankfurt Free web service, deployed from `fix/futures-context-mainline`, with start command `python -m backend.shared_market_supervisor`. This starts a supervisor composition, not the separated worker-only command in the current Part 8 runbook. Logs show healthy market cycles and fresh equity snapshots, then SIGTERM and child-process shutdown at 2026-11-02 20:51 UTC. The service returned no CPU, memory, or instance-count samples in the queried period. Treat it as not proven always-on.
+- Both staging services are on Free web-service compute. Render documents that Free web services spin down after 15 minutes without inbound traffic; Free compute is not suitable for the continuous worker requirement.
+- Legacy `ai-auto-trader-v4-backend`: Free web service on `main`; start command writes SQLite under `/tmp/v4data/paper-ledger.sqlite3`. That filesystem is ephemeral and this service is not a durable-ledger staging target.
+- `solo-staging-postgres`: Free PostgreSQL in Frankfurt, created 2026-10-29, scheduled to expire 2026-11-28. The connected read-only Render SQL tool could not connect because the database IP allowlist is empty. No allowlist changes or SQL writes were attempted.
+- The current Render API/worker branches are not `feat/solo-part8-operational-recovery`; PR #101 has not been deployed.
+
+### Railway
+
+- Connected Railway workspace `lost69680-30's Projects` currently has zero projects. No Railway project, service, volume, or deployment was created.
+
+### Operational consequence
+
+The existing Free Render setup cannot be accepted as the continuous staging host. The intended topology remains one always-on worker process (`python -m backend.shared_market_worker`) plus one API-only process (`python -m app.engines.read_only_api`), both on the same approved code branch and connected to the approved durable PostgreSQL database. Use paid always-on compute or another persistent-service host. Keep the user's Supabase production database and existing secrets unchanged until a separate staging database/backup and deployment approval are established.
