@@ -116,6 +116,19 @@ def run_preflight(role: str, environ: Mapping[str, str] | None = None) -> Prefli
         "Worker candle interval is 1m." if candle_interval == "1m"
         else "PAPER_CANDLE_INTERVAL must be 1m for the shared archive and worker.",
     ))
+    if role == "worker":
+        try:
+            from app.engines.paper_service_app import PaperServiceConfig
+            PaperServiceConfig.from_env(values)
+            runtime_config_ok = True
+        except Exception:
+            runtime_config_ok = False
+        checks.append(PreflightCheck(
+            "paper_runtime_configuration", runtime_config_ok,
+            "Required paper runtime settings and independent risk limits are valid."
+            if runtime_config_ok
+            else "Paper runtime settings or risk limits are invalid; verify required PAPER_* values and safety caps. Values are redacted.",
+        ))
 
     for name, check_name, description in (
         ("PAPER_MARKET_INTELLIGENCE_ENABLED", "market_intelligence_disabled",
@@ -146,6 +159,29 @@ def run_preflight(role: str, environ: Mapping[str, str] | None = None) -> Prefli
             "futures_market_mode", futures_mode,
             "API market mode is Futures." if futures_mode
             else "PAPER_MARKET_DATA_MODE must be futures for the Testnet API profile.",
+        ))
+        worker_symbols = tuple(
+            item.strip().upper() for item in values.get("PAPER_SYMBOLS", "").split(",")
+            if item.strip()
+        )
+        api_symbols_raw = values.get("PAPER_MARKET_SYMBOLS", values.get("PAPER_SYMBOLS", ""))
+        api_symbols = tuple(
+            item.strip().upper() for item in api_symbols_raw.split(",") if item.strip()
+        )
+        symbols_match = bool(worker_symbols) and api_symbols == worker_symbols
+        checks.append(PreflightCheck(
+            "market_symbol_allowlist_match", symbols_match,
+            "API and worker market symbol allowlists match."
+            if symbols_match
+            else "PAPER_MARKET_SYMBOLS must match PAPER_SYMBOLS in the same order; omit it to inherit the worker allowlist.",
+        ))
+        api_interval = values.get("PAPER_MARKET_INTERVAL", "1m")
+        interval_match = api_interval == candle_interval == "1m"
+        checks.append(PreflightCheck(
+            "market_archive_interval_match", interval_match,
+            "API and worker use the shared 1m market archive interval."
+            if interval_match
+            else "PAPER_MARKET_INTERVAL and PAPER_CANDLE_INTERVAL must both be 1m for the shared archive.",
         ))
         token = values.get("PAPER_API_TOKEN", "")
         token_ok = isinstance(token, str) and len(token) >= 32
