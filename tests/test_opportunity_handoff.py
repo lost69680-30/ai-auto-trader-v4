@@ -330,4 +330,16 @@ def test_restart_reconciliation_records_intent_then_ledger_confirmed_position():
     second = reconcile_paper_intents(coordinator, ledger, now=now + timedelta(seconds=5))
     assert second[0]["state"] == "PAPER_OPEN"
     assert store.get_opportunity(record.opportunity_id).state == "PAPER_OPEN"
-    assert any(item.evidence_type == "PAPER_POSITION" for item in store.list_evidence(record.opportunity_id))
+
+    ledger.positions = (SimpleNamespace(
+        proposal_id=proposal_id, status="CLOSED",
+        opened_at=now, closed_at=now + timedelta(seconds=10), realized_pnl=2.5,
+    ),)
+    third = reconcile_paper_intents(coordinator, ledger, now=now + timedelta(seconds=10))
+    assert third[0]["state"] == "PAPER_CLOSED"
+    assert store.get_opportunity(record.opportunity_id).state == "PAPER_CLOSED"
+    position_evidence = [
+        item for item in store.list_evidence(record.opportunity_id)
+        if item.evidence_type == "PAPER_POSITION"
+    ]
+    assert {item.payload["status"] for item in position_evidence} == {"OPEN", "CLOSED"}
