@@ -48,10 +48,23 @@ class PaperLedgerClientTest {
                 .put("drawdown_pct", 1.5).put("marks_fresh", false).put("snapshot_at", "2026-10-31T00:00:00Z"))
         val risk = parsePaperRisk(json)
         assertTrue(risk.emergencyStopActive)
+        assertEquals("EMERGENCY STOP ACTIVE", emergencyStopDisplayLabel(risk.emergencyStopActive))
         assertEquals(2, risk.openPositionCount)
         assertEquals(1000.0, risk.accountEquity!!, 0.0)
         assertNull(risk.unrealizedPnl)
         assertFalse(risk.marksFresh!!)
+    }
+
+    @Test
+    fun rendersExplicitInactiveEmergencyStopAndRejectsMissingStatus() {
+        val inactive = JSONObject().put("orders_authorized", false)
+            .put("emergency_stop_active", false).put("open_position_count", 0)
+        val risk = parsePaperRisk(inactive)
+        assertFalse(risk.emergencyStopActive)
+        assertEquals("EMERGENCY STOP INACTIVE", emergencyStopDisplayLabel(risk.emergencyStopActive))
+        assertThrows(IllegalArgumentException::class.java) {
+            parsePaperRisk(JSONObject().put("orders_authorized", false).put("open_position_count", 0))
+        }
     }
 
     @Test
