@@ -72,6 +72,59 @@ def test_metrics_reject_non_finite_or_negative_cost_inputs():
         calculate_evaluation_metrics([trade(1.0, costs=-1.0)])
 
 
+def test_risk_adjusted_metrics_report_return_to_drawdown_ratio():
+    from backend.backtesting import BacktestResult
+    from backend.evaluation_metrics import calculate_risk_adjusted_metrics
+
+    result = BacktestResult(
+        symbol="BTCUSDT", initial_equity=1000.0, ending_equity=1100.0,
+        net_pnl=100.0, total_costs=5.0, trade_count=10, wins=7, losses=3,
+        win_rate_pct=70.0, max_drawdown_pct=5.0, trades=(), warnings=(),
+        orders_authorized=False,
+    )
+
+    metrics = calculate_risk_adjusted_metrics(result)
+
+    assert metrics.net_return_pct == 10.0
+    assert metrics.max_drawdown_pct == 5.0
+    assert metrics.return_to_drawdown_ratio == 2.0
+    assert metrics.status == "DEFINED"
+    assert metrics.orders_authorized is False
+
+
+def test_risk_adjusted_metrics_keep_zero_drawdown_ratio_undefined():
+    from backend.backtesting import BacktestResult
+    from backend.evaluation_metrics import calculate_risk_adjusted_metrics
+
+    result = BacktestResult(
+        symbol="BTCUSDT", initial_equity=1000.0, ending_equity=1000.0,
+        net_pnl=0.0, total_costs=0.0, trade_count=0, wins=0, losses=0,
+        win_rate_pct=0.0, max_drawdown_pct=0.0, trades=(), warnings=(),
+        orders_authorized=False,
+    )
+
+    metrics = calculate_risk_adjusted_metrics(result)
+
+    assert metrics.return_to_drawdown_ratio is None
+    assert metrics.status == "ZERO_DRAWDOWN_UNDEFINED"
+    assert metrics.orders_authorized is False
+
+
+def test_risk_adjusted_metrics_reject_results_claiming_order_authority():
+    from dataclasses import replace
+    from backend.backtesting import BacktestResult
+    from backend.evaluation_metrics import calculate_risk_adjusted_metrics
+
+    result = BacktestResult(
+        symbol="BTCUSDT", initial_equity=1000.0, ending_equity=1100.0,
+        net_pnl=100.0, total_costs=5.0, trade_count=10, wins=7, losses=3,
+        win_rate_pct=70.0, max_drawdown_pct=5.0, trades=(), warnings=(),
+        orders_authorized=False,
+    )
+    with pytest.raises(ValueError, match="paper-only"):
+        calculate_risk_adjusted_metrics(replace(result, orders_authorized=True))
+
+
 def test_metrics_reject_aggregate_overflow_instead_of_returning_non_finite_values():
     with pytest.raises(ValueError, match="aggregate metrics"):
         calculate_evaluation_metrics([trade(1e308, costs=0.0), trade(1e308, costs=0.0)])
