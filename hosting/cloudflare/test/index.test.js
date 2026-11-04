@@ -203,7 +203,7 @@ test('oversized emergency-stop request is rejected before any upstream call', as
 test('authenticated market WebSocket is tunneled to Render primary only', async () => {
   const calls = [];
   const request = new Request('https://edge.example/ws/v1/markets', {
-    headers: { authorization: 'Bearer ' + 'x'.repeat(40), upgrade: 'websocket' },
+    headers: { authorization: 'Bearer ' + 'x'.repeat(40), upgrade: 'websocket', 'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==', 'sec-websocket-version': '13' },
   });
   const response = await handleRequest(request, env(), {
     fetchImpl: async (upstreamRequest) => {
@@ -215,6 +215,8 @@ test('authenticated market WebSocket is tunneled to Render primary only', async 
   assert.equal(calls.length, 1);
   assert.equal(new URL(calls[0].url).pathname, '/ws/v1/markets');
   assert.equal(calls[0].headers.get('upgrade'), 'websocket');
+  assert.equal(calls[0].headers.get('sec-websocket-key'), 'dGhlIHNhbXBsZSBub25jZQ==');
+  assert.equal(calls[0].headers.get('sec-websocket-version'), '13');
   assert.equal(calls[0].headers.get('authorization'), 'Bearer ' + 'x'.repeat(40));
 });
 
@@ -229,4 +231,43 @@ test('WebSocket never falls back to Deno when Render is unavailable', async () =
   assert.equal(response.status, 503);
   assert.equal(calls.length, 1);
   assert.match(calls[0].url, /^https:\/\/solo-primary\.example/);
+});
+
+
+test('unsafe primary market authorization is blocked instead of hidden by fallback', async () => {
+  const calls = [];
+  const unsafe = structuredClone(freshMarket);
+  unsafe.items[0].orders_authorized = true;
+  const response = await handleRequest(new Request('https://edge.example/api/v1/markets', {
+    headers: { authorization: 'Bearer ' + 'x'.repeat(40) },
+  }), env(), {
+    now: () => NOW,
+    fetchImpl: async (url) => { calls.push(String(url)); return jsonResponse(unsafe); },
+  });
+  assert.equal(response.status, 502);
+  assert.equal(calls.length, 1);
+  const body = await response.json();
+  assert.equal(body.error, 'unsafe_primary_market_response');
+  assert.equal(body.orders_authorized, false);
+});
+
+test('streamed oversized emergency-stop body is capped even without Content-Length', async () => {
+  const calls = [];
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(3000));
+      controller.close();
+    },
+  });
+  const request = new Request('https://edge.example/api/v1/emergency-stop', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + 'x'.repeat(40) },
+    body: stream,
+    duplex: 'half',
+  });
+  const response = await handleRequest(request, env(), {
+    fetchImpl: async (url) => { calls.push(url); return jsonResponse({}); },
+  });
+  assert.equal(response.status, 400);
+  assert.equal(calls.length, 0);
 });
