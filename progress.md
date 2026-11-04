@@ -384,3 +384,18 @@ Read-only `pg_database_size` queries returned:
 - GitHub standard runners are free for this public repository, but artifact storage has quotas. The workflow does not run unless the user manually confirms sufficient included free storage; if capacity cannot be verified, do not run. No billing changes or paid resources were made.
 - Workflow and guide are committed on `main` (workflow safety commits `79afb98ed501ec1a30157531b1134eeb41bb93cd`, `cbe3338863892fad31302d906e8a00f0bbda0288`; guide `dcdba56ba80c101dd6f2369985986ad0c6a8d874`) and mirrored on this branch (workflow safety commits `49c54abca410e7df5d9c4f59c0433315c92f156c`, `cc7e147637ba7f9812c7ff70bfb832522a003cf4`; guide `f6962c89bb865affe26a7faf44cd36ec25d70df9`).
 - This is implementation only: no workflow was run, no artifact/backup was created, no secret was added, and no staging or production database was changed. The six-table opportunity migration remains blocked until the backup and restore gates pass.
+
+
+## Part 8 continuation checkpoint — 2026-11-04
+
+Continued on the existing `feat/solo-part8-operational-recovery` branch and draft PR #101; no replacement Part 8 branch or duplicate implementation was created.
+
+- Fixed repeatability of `20261031170000_create_opportunity_registry.sql`: the optional `solo_backup_reader_select` policy is now dropped before recreation for each opportunity table. This addresses the disposable-CI failure where repeated test setup reapplied the migration and PostgreSQL raised `DuplicateObject`.
+- The regression was observed in the prior durable-ledger workflow: opportunity-registry integration tests failed on the already-existing policy. The fix was committed at `e1ef797aaa472e2eaa4b1ba24218999b8de3acbf`.
+- Post-fix verification on that exact head:
+  - Durable PostgreSQL workflow: success, including staging preflight, disposable migrations, read-only schema inspection, ledger tests, paper-service recovery, opportunity-registry tests, and complete backend suite: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41820305155
+  - Durable paper-ledger full backend suite: success: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41820304988
+  - ASGI runtime: success: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41820305087
+  - Market-data and analysis safety: success: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41820304977
+- These are CI results on a disposable PostgreSQL service. They do not constitute a user Supabase migration, staging deployment, real-market soak, or Android phone acceptance.
+- Remaining Part 8 operational gates are unchanged: verify the intended Supabase staging schema and backup/restore/rollback evidence, host/API/worker topology acceptance under the $0 budget, alert delivery, real public-market-data soak, and phone verification of the matching APK. No paid compute, migration, secret, billing, production, or live-trading change was made.
