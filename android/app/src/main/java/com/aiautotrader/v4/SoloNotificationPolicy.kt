@@ -99,3 +99,32 @@ internal class SoloNotificationGate(
         const val MAX_FUTURE_SKEW_MS = 60_000L
     }
 }
+
+/**
+ * Builds and admits an alert event at the notification publisher boundary.
+ * Severity is derived from the event type, never supplied by an upstream caller.
+ */
+internal fun evaluateSoloAlertAdmission(
+    gate: SoloNotificationGate,
+    eventId: String,
+    type: SoloAlertType,
+    conditionKey: String,
+    title: String,
+    message: String,
+    occurredAtEpochMs: Long,
+    nowEpochMs: Long,
+    source: String,
+    scope: String,
+): SoloNotificationDecision = gate.evaluate(
+    SoloAlertEvent(
+        eventId = eventId,
+        type = type,
+        conditionKey = conditionKey,
+        title = title,
+        message = message,
+        occurredAtEpochMs = occurredAtEpochMs,
+        source = source,
+        scope = scope,
+    ),
+    nowEpochMs,
+)
