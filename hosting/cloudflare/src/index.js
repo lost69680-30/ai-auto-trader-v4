@@ -113,11 +113,11 @@ async function upstreamFetch(fetchImpl, origin, request, method, body = undefine
   });
 }
 
-async function fetchSecondaryMarkets(fetchImpl, secondary, now, ageLimit) {
-  if (!secondary) return null;
+async function fetchSecondaryMarkets(fetchImpl, secondary, token, now, ageLimit) {
+  if (!secondary || typeof token !== 'string' || token.length < 32) return null;
   try {
     const fallbackUrl = new URL('/api/v1/markets', secondary);
-    const response = await fetchImpl(fallbackUrl, { method: 'GET', headers: { accept: 'application/json' }, redirect: 'manual' });
+    const response = await fetchImpl(fallbackUrl, { method: 'GET', headers: { accept: 'application/json', authorization: `Bearer ${token}` }, redirect: 'manual' });
     if (!response.ok || (response.status >= 300 && response.status < 400)) return null;
     const payload = await readJson(response);
     if (validMarketPayload(payload, now, ageLimit) && payload.data_mode === 'POLLED_FALLBACK') return payload;
@@ -145,7 +145,7 @@ export async function handleRequest(request, env, dependencies = {}) {
       const response = await fetchImpl(new URL('/readyz', primary), { method: 'GET', redirect: 'manual' });
       primaryReady = response.status === 200;
     } catch { /* fail closed below */ }
-    if (secondary) {
+    if (secondary && typeof env.SECONDARY_MARKET_TOKEN === 'string' && env.SECONDARY_MARKET_TOKEN.length >= 32) {
       try {
         const response = await fetchImpl(new URL('/healthz', secondary), { method: 'GET', redirect: 'manual' });
         secondaryReady = response.status === 200;
@@ -207,7 +207,7 @@ export async function handleRequest(request, env, dependencies = {}) {
       }
     } catch { /* market-only status fallback below */ }
 
-    const fallback = await fetchSecondaryMarkets(fetchImpl, secondary, now(), maxAgeSeconds(env));
+    const fallback = await fetchSecondaryMarkets(fetchImpl, secondary, env.SECONDARY_MARKET_TOKEN, now(), maxAgeSeconds(env));
     if (!fallback) return json({ error: 'primary_and_market_fallback_unavailable', orders_authorized: false }, 503);
     return json({
       service: 'solo-edge-market-fallback',
@@ -295,7 +295,7 @@ export async function handleRequest(request, env, dependencies = {}) {
       }
     } catch { /* the independent fallback is attempted only for market snapshots */ }
 
-    const fallback = await fetchSecondaryMarkets(fetchImpl, secondary, now(), ageLimit);
+    const fallback = await fetchSecondaryMarkets(fetchImpl, secondary, env.SECONDARY_MARKET_TOKEN, now(), ageLimit);
     if (fallback) {
       return json(fallback, 200, { 'x-solo-upstream': 'deno-secondary', 'x-solo-data-mode': 'POLLED_FALLBACK' });
     }
