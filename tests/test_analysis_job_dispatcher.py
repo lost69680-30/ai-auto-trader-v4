@@ -10,8 +10,12 @@ class FakeScheduler:
         self.failed = []
         self.complete_result = True
 
-    def claim_next(self, *, owner):
-        return self.jobs.pop(0) if self.jobs else None
+    def claim_next(self, *, owner, allowed_job_names=None):
+        if not self.jobs:
+            return None
+        if allowed_job_names is not None and self.jobs[0].get("job_name") not in allowed_job_names:
+            return None
+        return self.jobs.pop(0)
 
     def complete(self, key, *, owner):
         self.completed.append((key, owner))
