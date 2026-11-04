@@ -67,9 +67,71 @@ jobs:
               autocommit=True,
               prepare_threshold=None,
           ) as connection:
+              # Exercise the optional backup-reader branch in the migration.
+              connection.execute(
+                  "CREATE ROLE solo_backup_reader LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT"
+              )
+              connection.execute("CREATE ROLE anon")
+              connection.execute("CREATE ROLE authenticated")
+              connection.execute("CREATE ROLE service_role")
               for migration in migrations:
                   connection.execute(migration.read_text(encoding="utf-8"), prepare=False)
-          print(f"Applied {len(migrations)} migrations to the disposable CI database.")
+
+              expected = [
+                  "opportunities", "opportunity_assessments", "opportunity_evidence",
+                  "opportunity_watch_conditions", "opportunity_events", "opportunity_claims",
+              ]
+              for table in expected:
+                  row = connection.execute(
+                      """
+                      SELECT c.relrowsecurity,
+                             has_table_privilege('solo_backup_reader', c.oid, 'SELECT'),
+                             has_table_privilege('solo_backup_reader', c.oid, 'INSERT'),
+                             has_table_privilege('solo_backup_reader', c.oid, 'UPDATE'),
+                             has_table_privilege('solo_backup_reader', c.oid, 'DELETE'),
+                             EXISTS (
+                                 SELECT 1 FROM pg_policies p
+                                 WHERE p.schemaname = 'paper_ledger'
+                                   AND p.tablename = c.relname
+                                   AND p.policyname = 'solo_backup_reader_select'
+                                   AND 'solo_backup_reader' = ANY(p.roles)
+                                   AND p.cmd = 'SELECT'
+                             )
+                      FROM pg_class c
+                      JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'paper_ledger'
+                        AND c.relname = %s
+                        AND c.relkind = 'r'
+                      """,
+                      (table,),
+                  ).fetchone()
+                  if row is None or row != (True, True, False, False, False, True):
+                      raise SystemExit(
+                          f"Backup-reader/RLS contract failed for paper_ledger.{table}: {row}"
+                      )
+                  for client_role in ("anon", "authenticated", "service_role"):
+                      client_access = connection.execute(
+                          """
+                          SELECT has_table_privilege(%s, %s, 'SELECT')
+                              OR has_table_privilege(%s, %s, 'INSERT')
+                              OR has_table_privilege(%s, %s, 'UPDATE')
+                              OR has_table_privilege(%s, %s, 'DELETE')
+                          """,
+                          (
+                              client_role, f"paper_ledger.{table}",
+                              client_role, f"paper_ledger.{table}",
+                              client_role, f"paper_ledger.{table}",
+                              client_role, f"paper_ledger.{table}",
+                          ),
+                      ).fetchone()[0]
+                      if client_access:
+                          raise SystemExit(
+                              f"Client-facing role {client_role} unexpectedly has access to {table}"
+                          )
+          print(
+              f"Applied {len(migrations)} migrations and verified six private opportunity tables "
+              "have RLS, backup-reader SELECT-only access, and no client/service-role grants."
+          )
           PY
       - name: Run worker staging preflight and read-only schema inspection
         working-directory: extracted-source/ai-auto-trader-v4-assembly
