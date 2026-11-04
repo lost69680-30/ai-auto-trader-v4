@@ -36,6 +36,7 @@ internal fun evaluateSoloAlertTransition(
 }
 
 internal object SoloNotificationCenter {
+    private val admissionGate = SoloNotificationGate()
     private const val PREFS = "solo_notification_center"
     private const val EVENTS = "events"
     private const val LAST_STOP_STATE = "last_emergency_stop_state"
@@ -99,8 +100,23 @@ internal object SoloNotificationCenter {
         title: String,
         message: String,
     ) {
+        val alertType = SoloAlertType.values().firstOrNull { it.name == type } ?: return
+        if (alertType.requiredSeverity.name != severity) return
         val now = System.currentTimeMillis()
         val eventId = "$type:$now"
+        val admission = evaluateSoloAlertAdmission(
+            gate = admissionGate,
+            eventId = eventId,
+            type = alertType,
+            conditionKey = "active",
+            title = title,
+            message = message,
+            occurredAtEpochMs = now,
+            nowEpochMs = now,
+            source = "paper_risk_snapshot",
+            scope = if (alertType == SoloAlertType.EMERGENCY_STOP) "account" else "positions",
+        )
+        if (admission != SoloNotificationDecision.ACCEPTED) return
         val records = readRecords(context).toMutableList()
         records.add(
             0,
