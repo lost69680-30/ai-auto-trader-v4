@@ -32,7 +32,7 @@
 - Deno uses only `https://demo-fapi.binance.com/fapi/v1/premiumIndex` (public Futures Testnet data).
 - Symbols are restricted to the configured allowlist; the default is the existing ten-symbol Solo paper universe.
 - Non-finite, malformed, non-allowlisted, future-dated, stale, or incomplete market rows are omitted.
-- Market snapshots are accepted only when the source timestamp is within the configured freshness window (default 120 seconds; Worker setting is bounded to 30–300 seconds).
+- Market snapshots are accepted only when the source timestamp is within the configured freshness window (default 120 seconds; Worker setting is bounded to 30–300 seconds). The edge gateway also caps JSON market responses at 256 KiB to keep parsing bounded on the Cloudflare Free CPU budget; oversized responses fall back to the compact polled snapshot.
 - Every returned market item and top-level response explicitly carries `orders_authorized=false` and `mode=PAPER_ONLY`.
 - Deno returns no candles. Chart history, indicators, strategy assessment, opportunity research, and paper simulation remain unavailable when the primary backend is down.
 - The Deno fallback is not connected to the paper worker and cannot feed the Risk Guardian or create paper intents.
