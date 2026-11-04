@@ -249,3 +249,26 @@ internal fun fetchPaperLedgerSnapshot(baseUrl: String, token: String): PaperLedg
         java.time.Instant.now().toString()
     )
 }
+
+
+/** Background worker reads only the authoritative risk endpoint; it has no mutation path. */
+internal fun fetchPaperRiskSnapshot(baseUrl: String, token: String): PaperRiskView {
+    require(baseUrl.startsWith("https://")) { "Authenticated HTTPS backend is required" }
+    require(token.length >= 32) { "A valid backend token is required" }
+    val connection = URL(baseUrl.trimEnd('/') + "/api/v1/risk").openConnection() as HttpURLConnection
+    try {
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 20_000
+        connection.readTimeout = 30_000
+        connection.setRequestProperty("Authorization", "Bearer $token")
+        connection.setRequestProperty("Accept", "application/json")
+        connection.useCaches = false
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        if (code !in 200..299) throw IllegalStateException("Risk endpoint returned HTTP $code")
+        return parsePaperRisk(JSONObject(body))
+    } finally {
+        connection.disconnect()
+    }
+}
