@@ -23,6 +23,33 @@ from backend.shared_market_store import PostgresMarketFeedStore
 logger = logging.getLogger(__name__)
 
 
+def disable_optional_intelligence_schedules(scheduler: DurableJobScheduler) -> None:
+    """Disable persisted opportunity schedules when research is not opted in."""
+    first_run = datetime.now(timezone.utc) + timedelta(days=3650)
+    disabled = (
+        ("market_intelligence_scan", {"scope": "continuous_opportunity_search"}),
+        ("market_intelligence_scan_spot", {"scope": "continuous_opportunity_search"}),
+        ("opportunity_reassessment_futures", {
+            "scope": "opportunity_reassessment",
+            "market_type": "FUTURES",
+            "venue": "BINANCE_USDM_TESTNET",
+        }),
+        ("opportunity_reassessment_spot", {
+            "scope": "opportunity_reassessment",
+            "market_type": "SPOT",
+            "venue": "BINANCE_SPOT_TESTNET",
+        }),
+    )
+    for job_name, payload in disabled:
+        scheduler.register_interval(
+            job_name,
+            interval_seconds=1800,
+            first_run_at=first_run,
+            payload=payload,
+            enabled=False,
+        )
+
+
 def _env_bool(name: str, *, default: bool = False) -> bool:
     """Parse an opt-in feature flag; missing values stay disabled by default."""
     raw = os.environ.get(name)
@@ -391,6 +418,8 @@ def main() -> None:
             intelligence_handlers["opportunity_reassessment_spot"] = opportunity_reassessment_handler(
                 spot_coordinator, spot_source,
             )
+        else:
+            disable_optional_intelligence_schedules(scheduler)
         dispatcher = AnalysisJobDispatcher(
             scheduler,
             owner=os.environ.get("PAPER_ANALYSIS_DISPATCHER_ID", f"{worker_id[:110]}-analysis"),
