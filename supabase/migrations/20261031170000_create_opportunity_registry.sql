@@ -171,26 +171,25 @@ END
 $$;
 
 
--- Permit the dedicated backup identity to read these private tables only.
--- This preserves the same read-only backup contract as the existing ledger.
-GRANT SELECT ON paper_ledger.opportunities TO solo_backup_reader;
-GRANT SELECT ON paper_ledger.opportunity_assessments TO solo_backup_reader;
-GRANT SELECT ON paper_ledger.opportunity_evidence TO solo_backup_reader;
-GRANT SELECT ON paper_ledger.opportunity_watch_conditions TO solo_backup_reader;
-GRANT SELECT ON paper_ledger.opportunity_events TO solo_backup_reader;
-GRANT SELECT ON paper_ledger.opportunity_claims TO solo_backup_reader;
-
-CREATE POLICY solo_backup_reader_select ON paper_ledger.opportunities
-    FOR SELECT TO solo_backup_reader USING (true);
-CREATE POLICY solo_backup_reader_select ON paper_ledger.opportunity_assessments
-    FOR SELECT TO solo_backup_reader USING (true);
-CREATE POLICY solo_backup_reader_select ON paper_ledger.opportunity_evidence
-    FOR SELECT TO solo_backup_reader USING (true);
-CREATE POLICY solo_backup_reader_select ON paper_ledger.opportunity_watch_conditions
-    FOR SELECT TO solo_backup_reader USING (true);
-CREATE POLICY solo_backup_reader_select ON paper_ledger.opportunity_events
-    FOR SELECT TO solo_backup_reader USING (true);
-CREATE POLICY solo_backup_reader_select ON paper_ledger.opportunity_claims
-    FOR SELECT TO solo_backup_reader USING (true);
-
+-- Permit the dedicated backup identity to read these private tables only,
+-- when that optional backup role has been provisioned in this environment.
+-- This keeps the migration portable while preserving the read-only backup contract.
+DO $$
+DECLARE
+    table_name text;
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'solo_backup_reader') THEN
+        FOREACH table_name IN ARRAY ARRAY[
+            'opportunities', 'opportunity_assessments', 'opportunity_evidence',
+            'opportunity_watch_conditions', 'opportunity_events', 'opportunity_claims'
+        ] LOOP
+            EXECUTE format('GRANT SELECT ON paper_ledger.%I TO solo_backup_reader', table_name);
+            EXECUTE format(
+                'CREATE POLICY solo_backup_reader_select ON paper_ledger.%I FOR SELECT TO solo_backup_reader USING (true)',
+                table_name
+            );
+        END LOOP;
+    END IF;
+END
+$$;
 COMMIT;
