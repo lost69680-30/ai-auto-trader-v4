@@ -1508,7 +1508,7 @@ private fun PaperLedgerRefreshEffect() {
             BackendSession.paperLedgerError.value = "Connect the authenticated backend to load paper-ledger data."
             return@LaunchedEffect
         }
-        if (!shouldRefreshPaperLedger(token, isForeground)) {
+        if (!shouldAttemptPaperLedgerRefresh(token, isForeground)) {
             BackendSession.paperLedgerStatus.value = "PAUSED"
             return@LaunchedEffect
         }
