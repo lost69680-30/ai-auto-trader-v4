@@ -1,3 +1,4 @@
+# Verification note: disabling and re-enabling research schedules resets the due cursor safely.
 from datetime import datetime, timedelta, timezone
 import os
 
