@@ -70,4 +70,12 @@ class SoloNotificationPolicyTest {
         assertNotNull(SoloAlertType.EMERGENCY_STOP.requiredSeverity)
         assertEquals(SoloAlertSeverity.CRITICAL, SoloAlertType.EMERGENCY_STOP.requiredSeverity)
     }
+
+    @Test fun rejectsEventsFarInTheFuture() {
+        val gate = SoloNotificationGate(cooldownMillis = 60_000L)
+        assertEquals(
+            SoloNotificationDecision.INVALID,
+            gate.evaluate(event("evt-future").copy(occurredAtEpochMs = 70_001L), 1_000L),
+        )
+    }
 }
