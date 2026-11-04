@@ -261,3 +261,16 @@ git commit -m "test: add long-horizon paper recovery replay"
 All six migration files were applied only to the disposable GitHub Actions PostgreSQL service. No user-owned database, Render/Railway service, secret, billing setting, or Android installation was accessed or changed.
 
 **Staging acceptance still outstanding:** create/approve a separate staging database and host, rehearse provider-supported encrypted backup/restore and migration rollback, validate alerts, run a real public-market-data soak, and phone-test the matching APK. This PR does not perform or authorize those operations.
+
+
+### Continuation checkpoint — 2026-11-04
+
+Continued this existing Part 8 branch without restarting it. The opportunity-registry migration had a repeatability defect in CI because the test setup reapplies migrations while the optional backup-reader policy was already present. The migration now drops only `solo_backup_reader_select` for each affected table before recreating it.
+
+Verified on commit `e1ef797aaa472e2eaa4b1ba24218999b8de3acbf`:
+- Durable PostgreSQL integration + full backend suite: passed.
+- Separate durable-ledger full backend suite: passed.
+- ASGI runtime tests: passed.
+- Market-data/analysis safety checks: passed.
+
+The failure is no longer being hidden or skipped; the opportunity-registry tests pass after the migration correction. This remains CI evidence only. The operational staging, backup/restore/rollback, hosted runtime, real-market-data soak, alert delivery and Android phone acceptance gates listed above remain open, and no user-owned Supabase database or host was changed.
