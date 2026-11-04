@@ -399,3 +399,49 @@ Continued on the existing `feat/solo-part8-operational-recovery` branch and draf
   - Market-data and analysis safety: success: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41820304977
 - These are CI results on a disposable PostgreSQL service. They do not constitute a user Supabase migration, staging deployment, real-market soak, or Android phone acceptance.
 - Remaining Part 8 operational gates are unchanged: verify the intended Supabase staging schema and backup/restore/rollback evidence, host/API/worker topology acceptance under the $0 budget, alert delivery, real public-market-data soak, and phone verification of the matching APK. No paid compute, migration, secret, billing, production, or live-trading change was made.
+
+
+## Authoritative backup and acceptance correction — 2026-11-04
+
+This section supersedes earlier historical notes in this file that said the staging backup had not yet been created or restored. Those notes describe an earlier checkpoint and must not be used as the current backup status.
+
+### Backup status — completed and user-confirmed
+
+- The encrypted staging backup artifact `solo-staging-paper-ledger-encrypted-41805158431.zip` was successfully created and downloaded by the user.
+- GitHub Actions successfully restored the backup into a disposable PostgreSQL database, verifying all **15 tables** and **470,767 candle rows** at backup time.
+- The user confirmed AgePony successfully decrypted the archive on their Android phone on 2026-11-04.
+- Therefore backup creation, disposable restore verification, download, and phone decryption are **complete**. Do not ask the user to repeat them or describe the backup as incomplete.
+- The six opportunity-registry tables were not in that 15-table backup because the opportunity migration had not yet been applied. A new post-migration backup is a later maintenance task, not a prerequisite to redo the already successful backup.
+
+### Backup workflow source hardening after the successful backup
+
+- A separate workflow run had exposed that the pinned age archive setup needed the `age-plugin-pq` executable explicitly installed.
+- The workflow was hardened to locate, require, install, and version-check `age-plugin-pq` from the same checksum-verified age v1.3.2 archive.
+- The hardened workflow was committed to `main` at `c647dc41cf1ca41b2fedf9bb593402aaf5b47615` and to this Part 8 branch at `0f6bee541c367ac83bfdb7bd75d65e391f547c97`; both versions were fetched and verified to have identical content blob SHA `30f0c5e783f3815055cc21b83a4b682c09d347e5`.
+- No new backup run was started after this source fix. The previously successful encrypted backup remains valid and user-decrypted.
+
+### Current staging schema and backend-role gate — read-only inspection
+
+- The staging Supabase project `solo-ai-auto-trader-staging` (`gryjtjobkmredawmymwy`) still lists only the six migrations through `20261103063947`; the opportunity-registry migration `20261031170000` is **not applied**.
+- A fresh read-only table listing shows the same 15 private `paper_ledger` tables, all with RLS enabled; the six opportunity-registry tables remain absent. The latest listed candle count was 470,317 (a current table listing, distinct from the 470,767 rows in the earlier backup).
+- The security advisor returned no lints at the time of this inspection. `anon`, `authenticated`, and `service_role` have no USAGE on the private `paper_ledger` schema; the dedicated `solo_backup_reader` has USAGE and no CREATE.
+- The current database activity snapshot did not show an identifiable Render application session. The Supabase connector's own administrative session and platform sessions are not evidence of the Render API's actual database login role. Render's service metadata does not expose the secret connection-string username. Therefore the **actual backend runtime database role remains unverified**; do not infer that it is `postgres`, `service_role`, or the backup reader.
+- The Render staging API service remains on the Free plan and is configured to run the API-only command, but it is still attached to the older `feat/solo-ledger-dashboard-integration` branch rather than this Part 8 branch. No deployment or environment change was made.
+- Do not apply the opportunity migration until the actual backend runtime role and its required privileges are verified. Production remains untouched.
+
+### Latest source-level CI and Android build evidence
+
+- Part 8 PR #101 head `0f6bee541c367ac83bfdb7bd75d65e391f547c97`: the latest four PR workflows completed successfully (run IDs `41822717827`, `41822717706`, `41822717823`, `41822717619`). The comprehensive durable PostgreSQL job passed preflight unit tests, disposable migration and six-table backup-reader/RLS assertions, worker/API preflight, ledger/runtime/opportunity integration tests, and the complete backend suite. This is disposable-CI verification, not a staging migration or deployment.
+- Parts 5–7 PR #97 head `1f4df2c1b5f44a686add9335ba95a292a1f10a6f`: all four latest PR workflows completed successfully (run IDs `41581927605`, `41581927517`, `41581927460`, `41581927526`).
+- Integrated notification PR #105 head `f1b235dd4433868f5760966caa73879670ab2785`: Android unit-test task and debug APK build completed successfully in run `41819186986`; root/extracted source mirrors matched. Artifact `solo-staging-market-analysis-debug-apk` (16,594,296 bytes) is available until 2026-11-18. APK SHA-256: `75b850a5d74fa08915278c53421d1238d858a1e8beacc25cc4f90371c7461f74`.
+- PR #104's APK workflow was cancelled on its older branch; PR #105 is the integrated notification branch with the successful build.
+- No physical Android installation/notification permission/background delivery/restart test has been performed. APK build success is not phone acceptance.
+
+### Remaining acceptance gates
+
+1. Verify the actual Render API (and any worker, if separately run) database login role without exposing credentials; check role attributes, schema usage, and minimum required table privileges. Fail closed if the runtime role is privileged or cannot be established.
+2. Keep the opportunity migration unapplied until gate 1 and migration/rollback review are complete. The successful backup above is evidence for the existing 15-table schema; it does not include the six new tables.
+3. After an explicitly authorized staging migration, run the 21-table read-only preflight, backup-reader checks, and restore/rollback rehearsal against staging. Never touch production.
+4. Install the PR #105 APK on the user's Android device and verify in-app alerts, OS permission grant/denial, foreground and background behavior, process restart, acknowledgement versus resolution, and Emergency Stop semantics.
+5. Complete real public-market-data soak and host/API/worker recovery acceptance. The current $0 Render Free topology cannot be represented as a guaranteed always-on worker; do not add keep-alive traffic or paid services.
+6. Keep all PRs draft/unmerged until these product and operational acceptance gates pass. Preserve `PAPER_ONLY`, `orders_authorized=false`, independent Risk Guardian authority, and no-live-trading restrictions.
