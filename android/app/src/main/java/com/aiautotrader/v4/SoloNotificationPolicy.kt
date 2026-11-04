@@ -130,6 +130,8 @@ internal fun evaluateSoloAlertAdmission(
 )
 
 
-/** Paper-ledger alerts are observed only with an authenticated foreground session. */
-internal fun shouldRefreshPaperLedger(sessionToken: String, isForeground: Boolean): Boolean =
-    sessionToken.length >= 32 && isForeground
+/** Avoids polling without a saved session token or while the app is backgrounded.
+ * The backend remains responsible for authenticating the bearer token on every request.
+ */
+internal fun shouldAttemptPaperLedgerRefresh(sessionToken: String, isForeground: Boolean): Boolean =
+    sessionToken.isNotBlank() && isForeground
