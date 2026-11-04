@@ -490,3 +490,58 @@ def test_shutdown_closes_app_even_if_worker_lease_release_fails():
             threading.Event(), None, Store(), app, grace_seconds=1.0,
         )
     assert app.closed is True
+
+
+def test_persist_equity_snapshot_uses_configured_baseline_and_keeps_paper_only_authority():
+    from types import SimpleNamespace
+
+    snapshot = SimpleNamespace(
+        account_equity=1000.0,
+        marks_fresh=True,
+        open_position_count=0,
+        orders_authorized=False,
+    )
+
+    class Ledger:
+        calls = None
+
+        def mark_to_market_risk_report(self, **kwargs):
+            self.calls = kwargs
+            return snapshot
+
+    ledger = Ledger()
+    result = shared_market_worker.persist_equity_snapshot(
+        ledger,
+        initial_equity=1000.0,
+        as_of=1_800_000_000.0,
+        max_mark_age_seconds=45.0,
+    )
+
+    assert result is snapshot
+    assert ledger.calls == {
+        "initial_equity": 1000.0,
+        "as_of": 1_800_000_000.0,
+        "max_mark_age_seconds": 45.0,
+    }
+    assert result.orders_authorized is False
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        type("AuthorizedSnapshot", (), {"orders_authorized": True})(),
+        type("MissingAuthorizationSnapshot", (), {})(),
+    ],
+)
+def test_persist_equity_snapshot_fails_closed_without_explicit_false_order_authority(snapshot):
+    class Ledger:
+        def mark_to_market_risk_report(self, **kwargs):
+            return snapshot
+
+    with pytest.raises(RuntimeError, match="equity snapshot unexpectedly authorized"):
+        shared_market_worker.persist_equity_snapshot(
+            Ledger(),
+            initial_equity=1000.0,
+            as_of=1_800_000_000.0,
+            max_mark_age_seconds=45.0,
+        )
