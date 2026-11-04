@@ -24,6 +24,7 @@ android {
     buildTypes {
         getByName("debug") {
             applicationIdSuffix = ".staging"
+            resValue("string", "app_name", "Solo Staging")
         }
     }
 
