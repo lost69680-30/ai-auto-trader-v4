@@ -1440,12 +1440,21 @@ private fun NotificationsScreen() {
 @Composable
 private fun AgentNetworkScreen() {
     val agents = listOf(
-        Triple("Research Agent", "Scans setups, support/resistance and market context", "READY · LOCAL UI"),
-        Triple("Analysis Agent", "Reviews trend, momentum, volatility and indicators", "READY · LOCAL UI"),
-        Triple("GAT Coordinator", "Designed to model relationships across instruments and agents", "NOT CONNECTED"),
-        Triple("PPO / RL Policy", "Policy evaluation and learning from simulated outcomes", "NOT CONNECTED"),
-        Triple("Risk Agent", "Checks sizing, exposure and trade constraints", "BACKEND REQUIRED"),
-        Triple("Paper Simulator", "Simulated fills and position lifecycle", "BACKEND REQUIRED")
+        Triple("Market Observer", "Market feed, candle integrity and freshness", "SPECIFIED · NOT RUNNING"),
+        Triple("Technical Analyst", "Trend, momentum, indicators and price structure", "SPECIFIED · NOT RUNNING"),
+        Triple("Regime Analyst", "Market regime and phase classification", "SPECIFIED · NOT RUNNING"),
+        Triple("Liquidity Analyst", "Liquidity conditions; candle estimates distinguished from order-book evidence", "SPECIFIED · NOT RUNNING"),
+        Triple("Volatility Analyst", "Volatility state and range expansion", "SPECIFIED · NOT RUNNING"),
+        Triple("Pattern Analyst", "Validated candle and swing-pattern research", "SPECIFIED · NOT RUNNING"),
+        Triple("Multi-Timeframe Analyst", "Cross-interval agreement and conflict detection", "SPECIFIED · NOT RUNNING"),
+        Triple("Strategy Researcher", "Backtesting, walk-forward and out-of-sample research", "SPECIFIED · NOT RUNNING"),
+        Triple("Opportunity Evaluator", "Candidate ranking, evidence and expiry monitoring", "SPECIFIED · NOT RUNNING"),
+        Triple("Performance Auditor", "Ledger-derived metrics and strategy attribution", "SPECIFIED · NOT RUNNING"),
+        Triple("Data Integrity Guardian", "Freshness, gaps, schema and source validation", "SPECIFIED · NOT RUNNING"),
+        Triple("Risk Guardian", "Independent paper-intent authorization gate", "BACKEND AUTHORITY"),
+        Triple("Portfolio Analyst", "Exposure, allocation and correlation analysis", "SPECIFIED · NOT RUNNING"),
+        Triple("Anomaly Detector", "Market and runtime anomaly screening", "SPECIFIED · NOT RUNNING"),
+        Triple("Intelligence Supervisor", "Orchestration, audit and fail-closed coordination", "SPECIFIED · NOT RUNNING")
     )
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CardPanel {
@@ -1453,7 +1462,7 @@ private fun AgentNetworkScreen() {
             Text("Multi-agent coordination", fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text("This screen shows the intended agent topology. It does not claim agents are running or communicating until the backend is connected.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MetricCard("Agents", "6", "Defined roles", Modifier.weight(1f))
+                MetricCard("Agents", "15", "Specified roles · not running", Modifier.weight(1f))
                 MetricCard("Message bus", "OFFLINE", "No live messages", Modifier.weight(1f))
             }
         }
@@ -1476,7 +1485,7 @@ private fun AgentNetworkScreen() {
             Spacer(Modifier.height(4.dp))
             Text("Illustrative architecture only. Arrows describe the planned data flow; no agents or message bus are connected in this build.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
         }
-        SectionTitle("AGENT STATUS")
+        SectionTitle("SPECIALIST ROLE STATUS")
         agents.forEach { (name, description, status) ->
             CardPanel {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
