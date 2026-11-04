@@ -127,7 +127,7 @@ def test_database_schema_check_is_read_only_and_requires_all_private_tables():
             self.statements.append((statement, params))
             if statement == "SET TRANSACTION READ ONLY":
                 return Result()
-            return Result([(name, True) for name in sorted(expected_tables)])
+            return Result([(name, True, "solo_runtime", "solo_runtime", True, True) for name in sorted(expected_tables)])
 
     connection = FakeConnection()
     calls = []
@@ -152,7 +152,7 @@ def test_database_schema_check_is_read_only_and_requires_all_private_tables():
 def test_database_schema_check_fails_when_required_table_or_rls_is_missing():
     class Result:
         def fetchall(self):
-            return [("paper_orders", True), ("paper_fills", False)]
+            return [("paper_orders", True, "solo_runtime", "solo_runtime", True, True), ("paper_fills", False, "solo_runtime", "solo_runtime", True, True)]
 
     class FakeConnection:
         def __enter__(self):
@@ -176,10 +176,80 @@ def test_database_schema_check_fails_when_required_table_or_rls_is_missing():
     assert "missing" in check.detail.lower()
     assert "row-level security" in check.detail.lower()
 
+
+def test_database_schema_check_reports_runtime_role_and_requires_dml_access():
+    expected_tables = sorted({
+        "paper_orders", "paper_fills", "paper_positions", "paper_funding_events",
+        "paper_audit_events", "paper_system_controls", "paper_order_cancellations",
+        "paper_position_extrema", "paper_equity_snapshots", "market_feed_snapshots",
+        "market_worker_heartbeats", "scheduled_job_definitions", "scheduled_jobs",
+        "market_candles", "market_intelligence_reports", "opportunities",
+        "opportunity_assessments", "opportunity_evidence",
+        "opportunity_watch_conditions", "opportunity_events", "opportunity_claims",
+    })
+
+    class Result:
+        def __init__(self, rows=()):
+            self.rows = list(rows)
+        def fetchall(self):
+            return self.rows
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def transaction(self):
+            return self
+        def execute(self, statement, params=None):
+            if statement == "SET TRANSACTION READ ONLY":
+                return Result()
+            return Result([
+                (name, True, "solo_runtime", "solo_runtime", True, True)
+                for name in expected_tables
+            ])
+
+    check = check_database_schema(
+        "postgresql://runtime:secret@127.0.0.1:5432/solo",
+        connect_factory=lambda *args, **kwargs: FakeConnection(),
+    )
+
+    assert check.passed is True
+    assert "solo_runtime" in check.detail
+    assert "session" in check.detail.lower()
+
+
+def test_database_schema_check_fails_when_runtime_role_cannot_write_private_tables():
+    class Result:
+        def fetchall(self):
+            return [
+                ("paper_orders", True, "service_role", "service_role", True, False),
+                ("paper_fills", True, "service_role", "service_role", True, False),
+            ]
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def transaction(self):
+            return self
+        def execute(self, statement, params=None):
+            return Result()
+
+    check = check_database_schema(
+        "postgresql://runtime:secret@127.0.0.1:5432/solo",
+        connect_factory=lambda *args, **kwargs: FakeConnection(),
+    )
+
+    assert check.passed is False
+    assert "DML privileges" in check.detail
+    assert "service_role" in check.detail
+
 def test_remote_database_preflight_rejects_connection_without_tls():
     class Result:
         def fetchall(self):
-            return [(name, True) for name in sorted({
+            return [(name, True, "solo_runtime", "solo_runtime", True, True) for name in sorted({
                 "paper_orders", "paper_fills", "paper_positions", "paper_funding_events",
                 "paper_audit_events", "paper_system_controls", "paper_order_cancellations",
                 "paper_position_extrema", "paper_equity_snapshots", "market_feed_snapshots",
