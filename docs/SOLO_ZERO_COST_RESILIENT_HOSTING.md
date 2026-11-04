@@ -17,14 +17,14 @@
 - `GET /healthz` reports only that the edge Worker is alive; it does not claim Render or the database are healthy.
 - `GET /readyz` checks the Render `/readyz` and Deno `/healthz` endpoints. It reports `ready` only when Render is ready; a healthy Deno fallback with a failed Render primary is reported as `degraded` and HTTP 503.
 - Authenticated `GET /api/v1/status` and `GET /api/v1/markets` use Render first.
-- If Render is unavailable or its market snapshot is invalid/stale, the Worker may use Deno for **market display only**. The fallback status is explicitly `DEGRADED_MARKET_ONLY`, with `orders_authorized=false`, no fabricated Emergency Stop state, no fabricated positions, and no paper-ledger values.
+- If Render is unavailable or its market snapshot is invalid/stale, and the primary response does not explicitly violate the order-authorization contract, the Worker may use Deno for **market display only**. An unsafe or malformed authorization state from the primary is rejected rather than hidden by fallback. The fallback status is explicitly `DEGRADED_MARKET_ONLY`, with `orders_authorized=false`, no fabricated Emergency Stop state, no fabricated positions, and no paper-ledger values.
 - Deno snapshots are labeled `POLLED_FALLBACK`; they are not WebSocket/live-stream data. The Android UI must show a degraded market-fallback state and must not label these snapshots `LIVE`.
 
 ### Never fail over these capabilities
 
 - Positions, orders, fills, P&L, risk, audit, funding, opportunities, assessments, candle history, and paper-ledger state remain primary-only. If Render is unavailable, these return unavailable rather than stale or invented data.
 - `POST /api/v1/emergency-stop` is forwarded to Render exactly once. It is never retried and never sent to Deno. An unavailable primary produces an explicit error, not a false success.
-- The authenticated `/ws/v1/markets` WebSocket is tunneled to Render only. Deno does not pretend to be a WebSocket service. If Render is asleep, Android reconnects and the separate REST fallback may supply a recent display snapshot.
+- The authenticated `/ws/v1/markets` WebSocket is tunneled to Render only, preserving the WebSocket handshake headers. Deno does not pretend to be a WebSocket service. If Render is asleep, Android reconnects and the separate REST fallback may supply a recent display snapshot.
 - All other mutation methods and paths are rejected by the Worker.
 
 ## 3. Data validation and safety
