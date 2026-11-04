@@ -58,11 +58,15 @@ jobs:
           tar -xzf "$age_archive" -C /tmp/age-release
           age_binary="$(find /tmp/age-release -type f -name age -perm /111 -print -quit)"
           age_keygen_binary="$(find /tmp/age-release -type f -name age-keygen -perm /111 -print -quit)"
+          age_pq_plugin_binary="$(find /tmp/age-release -type f -name age-plugin-pq -perm /111 -print -quit)"
           test -n "$age_binary"
           test -n "$age_keygen_binary"
+          test -n "$age_pq_plugin_binary"
           sudo install -m 0755 "$age_binary" /usr/local/bin/age
           sudo install -m 0755 "$age_keygen_binary" /usr/local/bin/age-keygen
+          sudo install -m 0755 "$age_pq_plugin_binary" /usr/local/bin/age-plugin-pq
           age --version
+          age-plugin-pq --version
           # Verify native age1pq1... support before touching the database dump.
           umask 077
           age-keygen -pq -o /tmp/solo-pq-identity.txt 2>/dev/null
