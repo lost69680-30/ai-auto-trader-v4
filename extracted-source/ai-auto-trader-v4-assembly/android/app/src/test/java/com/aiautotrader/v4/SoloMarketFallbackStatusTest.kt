@@ -13,6 +13,9 @@ class SoloMarketFallbackStatusTest {
         assertFalse(isMarketOnlyFallbackStatus("DEGRADED_MARKET_ONLY", "PAPER_ONLY", true))
         assertFalse(isMarketOnlyFallbackStatus("READY", "PAPER_ONLY", false))
         assertFalse(isMarketOnlyFallbackStatus("DEGRADED_MARKET_ONLY", "LIVE", false))
+        assertFalse(isMarketOnlyFallbackStatus("", "PAPER_ONLY", false))
+        assertFalse(isMarketOnlyFallbackStatus("UNKNOWN", "PAPER_ONLY", false))
+        assertFalse(isMarketOnlyFallbackStatus("DEGRADED_MARKET_ONLY", "", false))
     }
 
     @Test fun displaysOnlyValidatedDegradedSnapshotsFromExplicitFallback() {
