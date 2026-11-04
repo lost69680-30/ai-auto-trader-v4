@@ -40,7 +40,8 @@ internal object SoloNotificationCenter {
     private const val EVENTS = "events"
     private const val LAST_STOP_STATE = "last_emergency_stop_state"
     private const val LAST_MARKS_STATE = "last_marks_fresh_state"
-    private const val CHANNEL_ID = "solo_critical_alerts"
+    private const val CRITICAL_CHANNEL_ID = "solo_critical_alerts"
+    private const val HIGH_CHANNEL_ID = "solo_high_alerts"
     private const val MAX_EVENTS = 100
 
     fun observeVerifiedRiskSnapshot(context: Context, risk: PaperRiskView) {
@@ -100,16 +101,20 @@ internal object SoloNotificationCenter {
     ) {
         val now = System.currentTimeMillis()
         val eventId = "$type:$now"
-        val osDelivered = postSystemNotification(context, eventId, title, message, severity)
         val records = readRecords(context).toMutableList()
         records.add(
             0,
             SoloNotificationRecord(
                 eventId, type, severity, title, message, now,
-                acknowledged = false, resolved = false, osDelivered = osDelivered,
+                acknowledged = false, resolved = false, osDelivered = false,
             )
         )
+        // Persist the in-app alert before attempting OS delivery so permission or
+        // notification-manager failures cannot erase the alert from Solo history.
         saveRecords(context, records.take(MAX_EVENTS))
+        if (postSystemNotification(context, eventId, title, message, severity)) {
+            updateRecord(context, eventId) { it.copy(osDelivered = true) }
+        }
     }
 
     private fun postSystemNotification(
@@ -119,27 +124,28 @@ internal object SoloNotificationCenter {
         message: String,
         severity: String,
     ): Boolean {
-        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    "Solo critical alerts",
-                    if (severity == "CRITICAL") NotificationManager.IMPORTANCE_HIGH
-                    else NotificationManager.IMPORTANCE_DEFAULT,
-                ).apply {
-                    description = "Verified Solo risk and market-data alerts"
-                    enableVibration(severity == "CRITICAL")
-                }
-            )
-        }
-        if (Build.VERSION.SDK_INT >= 33 &&
-            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) return false
-
         return try {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val channelId = if (severity == "CRITICAL") CRITICAL_CHANNEL_ID else HIGH_CHANNEL_ID
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        channelId,
+                        if (severity == "CRITICAL") "Solo critical alerts" else "Solo high-priority alerts",
+                        if (severity == "CRITICAL") NotificationManager.IMPORTANCE_HIGH
+                        else NotificationManager.IMPORTANCE_DEFAULT,
+                    ).apply {
+                        description = "Verified Solo risk and market-data alerts"
+                        enableVibration(severity == "CRITICAL")
+                    }
+                )
+            }
+            if (Build.VERSION.SDK_INT >= 33 &&
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) return false
+
             val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                Notification.Builder(context, CHANNEL_ID)
+                Notification.Builder(context, channelId)
             } else {
                 @Suppress("DEPRECATION")
                 Notification.Builder(context)
@@ -154,12 +160,21 @@ internal object SoloNotificationCenter {
                 .setWhen(System.currentTimeMillis())
             manager.notify(eventId.hashCode() and 0x7fffffff, notification.build())
             true
-        } catch (_: SecurityException) {
+        } catch (_: Exception) {
             false
         }
     }
 
-    fun getRecords(context: Context): List<SoloNotificationRecord> = readRecords(context)
+    fun getRecords(context: Context): List<SoloNotificationRecord> {
+        readRecords(context)
+            .filter { !it.osDelivered && !it.acknowledged && !it.resolved }
+            .forEach { record ->
+                if (postSystemNotification(context, record.eventId, record.title, record.message, record.severity)) {
+                    updateRecord(context, record.eventId) { it.copy(osDelivered = true) }
+                }
+            }
+        return readRecords(context)
+    }
 
     fun acknowledge(context: Context, eventId: String) {
         updateRecord(context, eventId) { it.copy(acknowledged = true) }
