@@ -1297,7 +1297,7 @@ private fun TraderApp() {
     BackendMarketIntelligenceEffect()
     BackendMarketWebSocketEffect()
     var screen by remember { mutableStateOf("Dashboard") }
-    val screens = listOf("Dashboard", "AI Agents", "Markets", "Positions", "Risk Center")
+    val screens = listOf("Dashboard", "AI Agents", "Markets", "Positions", "Risk Center", "Notifications")
     Column(Modifier.fillMaxSize().background(Background)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column {
@@ -1335,7 +1335,90 @@ private fun TraderApp() {
             "AI Agents" -> AgentNetworkScreen()
             "Positions" -> PositionsScreen()
             "Risk Center" -> RiskCenterScreen()
+            "Notifications" -> NotificationsScreen()
             else -> DashboardScreen { screen = "Charts & Analysis" }
+        }
+    }
+}
+
+
+@Composable
+private fun NotificationsScreen() {
+    PaperLedgerRefreshEffect()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var records by remember { mutableStateOf(SoloNotificationCenter.getRecords(context)) }
+    val permissionGranted = android.os.Build.VERSION.SDK_INT < 33 ||
+        context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+        android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        CardPanel {
+            Text("SOLO ALERT CENTER", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+            Text("Verified system alerts", color = White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "Alerts are created only from successful, validated paper-risk snapshots. Acknowledging an alert does not resolve its underlying condition.",
+                color = Muted, fontSize = 12.sp, lineHeight = 18.sp
+            )
+            StatusLine(
+                "●",
+                if (permissionGranted) "ANDROID NOTIFICATIONS ENABLED" else "IN-APP ALERTS ONLY · PERMISSION NEEDED",
+                if (permissionGranted) Green else Color(0xFFFFC857)
+            )
+            if (!permissionGranted && android.os.Build.VERSION.SDK_INT >= 33) {
+                Button(
+                    onClick = {
+                        (context as? ComponentActivity)?.requestPermissions(
+                            arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 7001
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background)
+                ) { Text("Enable Android notifications") }
+            }
+            Button(
+                onClick = { records = SoloNotificationCenter.getRecords(context) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = PanelAlt, contentColor = White)
+            ) { Text("Refresh alerts") }
+        }
+        if (records.isEmpty()) {
+            CardPanel {
+                Text("No verified alerts yet", color = White, fontWeight = FontWeight.SemiBold)
+                Text("Emergency Stop and stale position-mark alerts appear here only after the authenticated paper ledger confirms those states.", color = Muted, fontSize = 12.sp)
+            }
+        } else {
+            records.forEach { record ->
+                CardPanel {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(record.severity, color = if (record.severity == "CRITICAL") Red else Color(0xFFFFC857), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(if (record.resolved) "RESOLVED" else if (record.acknowledged) "ACKNOWLEDGED" else "UNACKNOWLEDGED",
+                            color = if (record.resolved) Green else Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Text(record.title, color = White, fontWeight = FontWeight.SemiBold)
+                    Text(record.message, color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+                    Text(
+                        java.time.Instant.ofEpochMilli(record.occurredAtEpochMs).toString() +
+                            if (record.osDelivered) " · ANDROID DELIVERED" else " · IN-APP ONLY",
+                        color = Muted, fontSize = 9.sp
+                    )
+                    if (!record.acknowledged) {
+                        Button(
+                            onClick = {
+                                SoloNotificationCenter.acknowledge(context, record.eventId)
+                                records = SoloNotificationCenter.getRecords(context)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = PanelAlt, contentColor = Gold)
+                        ) { Text("Acknowledge") }
+                    }
+                }
+            }
+        }
+        CardPanel {
+            Text("Delivery and safety", color = Gold, fontWeight = FontWeight.Bold)
+            Text("Notifications never authorize or submit orders. Emergency Stop blocks new paper orders; this alert does not close existing positions. If Android notification permission is denied, alerts remain in this in-app history.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
         }
     }
 }
@@ -1421,6 +1504,7 @@ private fun NetworkArrow(label: String) {
 
 @Composable
 private fun PaperLedgerRefreshEffect() {
+    val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     val token = BackendSession.activeToken.value
     LaunchedEffect(token) {
         if (token.isBlank()) {
@@ -1436,6 +1520,8 @@ private fun PaperLedgerRefreshEffect() {
             }
             result.onSuccess { snapshot ->
                 BackendSession.paperLedger.value = snapshot
+                // Notifications are derived only from a complete, validated authenticated ledger snapshot.
+                SoloNotificationCenter.observeVerifiedRiskSnapshot(appContext, snapshot.risk)
                 BackendSession.paperLedgerStatus.value = "CURRENT"
                 BackendSession.paperLedgerError.value = ""
             }.onFailure { error ->
