@@ -1134,6 +1134,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         BackendSession.token.value = BackendTokenStore(applicationContext).read().orEmpty()
+        lightTheme = getSharedPreferences("solo_preferences", MODE_PRIVATE).getBoolean("light_theme", false)
         setContent {
             MaterialTheme(colorScheme = if (lightTheme) lightColorScheme(primary = Gold, background = Background, surface = Panel,
                 onBackground = White, onSurface = White) else darkColorScheme(primary = Gold, background = Background, surface = Panel,
@@ -1967,7 +1968,7 @@ private fun SecurityScreen() {
     val risk = BackendSession.paperLedger.value?.risk
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CardPanel {
-            Text("SECURITY & AUTHENTICATION", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("SECURITY & SESSION", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             Text("Protected backend session", color = White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             IndicatorRow("Backend session", BackendSession.status.value)
             IndicatorRow("Paper ledger", BackendSession.paperLedgerStatus.value)
@@ -1987,6 +1988,7 @@ private fun SecurityScreen() {
 
 @Composable
 private fun SettingsScreen() {
+    val context = androidx.compose.ui.platform.LocalContext.current
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CardPanel {
             Text("SOLO PREFERENCES", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -1996,7 +1998,11 @@ private fun SettingsScreen() {
                     Text("Appearance", color = White, fontWeight = FontWeight.SemiBold)
                     Text(if (lightTheme) "Light theme" else "Dark theme", color = Muted, fontSize = 11.sp)
                 }
-                Switch(checked = lightTheme, onCheckedChange = { lightTheme = it })
+                Switch(checked = lightTheme, onCheckedChange = { enabled ->
+                    lightTheme = enabled
+                    context.getSharedPreferences("solo_preferences", android.content.Context.MODE_PRIVATE)
+                        .edit().putBoolean("light_theme", enabled).apply()
+                })
             }
             Text("Presentation preferences cannot change Risk Guardian authority, order permissions, or backend safety limits.", color = Muted, fontSize = 11.sp)
         }
