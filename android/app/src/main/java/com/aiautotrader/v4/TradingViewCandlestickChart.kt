@@ -69,9 +69,6 @@ internal class TradingViewCandlestickChart(context: Context) : FrameLayout(conte
 
     init {
         addView(chartView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        chartView.setOnErrorListener {
-            // Keep chart errors local to the visual component; they never affect paper state.
-        }
         chartView.subscribeOnChartStateChange { state ->
             if (state is ChartsView.State.Ready && !isReady) {
                 isReady = true
@@ -99,7 +96,7 @@ internal class TradingViewCandlestickChart(context: Context) : FrameLayout(conte
     private fun configureChart() {
         val background = if (lightTheme) "#FFFFFF" else "#151D29"
         val foreground = if (lightTheme) "#202630" else "#F4F7FB"
-        val grid = if (lightTheme) "#E5E0D7" else "#2A3544"
+        val gridColor = if (lightTheme) "#E5E0D7" else "#2A3544"
         chartView.api.applyOptions {
             layout = layoutOptions {
                 this.background = SolidColor(background.toIntColor())
@@ -107,10 +104,10 @@ internal class TradingViewCandlestickChart(context: Context) : FrameLayout(conte
                 attributionLogo = true
             }
             grid = gridOptions {
-                vertLines = gridLineOptions { color = grid.toIntColor() }
+                vertLines = gridLineOptions { color = gridColor.toIntColor() }
                 horzLines = gridLineOptions { color = grid.toIntColor() }
             }
-            rightPriceScale = priceScaleOptions { borderColor = grid.toIntColor() }
+            rightPriceScale = priceScaleOptions { borderColor = gridColor.toIntColor() }
             timeScale = timeScaleOptions {
                 timeVisible = true
                 secondsVisible = false
