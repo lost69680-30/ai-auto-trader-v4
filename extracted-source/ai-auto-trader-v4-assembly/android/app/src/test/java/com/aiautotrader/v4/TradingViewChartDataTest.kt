@@ -15,7 +15,7 @@ class TradingViewChartDataTest {
         val result = toTradingViewCandlestickData(rows)
 
         assertEquals(2, result.size)
-        assertEquals(1_793_784_000L, (result[0].time as com.tradingview.lightweightcharts.api.series.models.Time.Utc).timestamp)
+        assertEquals(1_793_786_400L, (result[0].time as com.tradingview.lightweightcharts.api.series.models.Time.Utc).timestamp)
         assertEquals(100f, result[0].open)
         assertEquals(105f, result[1].close)
     }
