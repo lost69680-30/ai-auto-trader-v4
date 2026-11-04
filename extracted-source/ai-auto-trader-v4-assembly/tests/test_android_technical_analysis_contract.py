@@ -60,7 +60,11 @@ def test_solo_brand_is_applied_to_app_header_and_launcher():
     manifest = (root / "android/app/src/main/AndroidManifest.xml").read_text(encoding="utf-8")
     logo = (root / "android/app/src/main/res/drawable/ic_solo_logo.xml").read_text(encoding="utf-8")
     assert 'Text("SOLO"' in source
-    assert 'android:label="Solo"' in manifest
+    assert 'android:label="@string/app_name"' in manifest
+    build_config = (root / "android/app/build.gradle.kts").read_text(encoding="utf-8")
+    assert 'resValue("string", "app_name", "Solo")' in build_config
+    assert 'resValue("string", "app_name", "Solo Staging")' in build_config
+    assert 'applicationIdSuffix = ".staging"' in build_config
     assert 'android:icon="@drawable/ic_solo_logo"' in manifest
     assert 'android:strokeColor="#D8B878"' in logo
 
