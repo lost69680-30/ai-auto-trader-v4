@@ -1932,6 +1932,19 @@ private fun AnalysisScreen() {
     }
     val selectedTimeframe = timeframeSnapshots.firstOrNull { it.timeframe == timeframe }
     val displayedCandles = selectedTimeframe?.candles.orEmpty()
+    val chartRows = remember(displayedCandles) {
+        displayedCandles.map { candle ->
+            TradingViewOhlc(
+                openTime = candle.openTime,
+                open = candle.open,
+                high = candle.high,
+                low = candle.low,
+                close = candle.close,
+                volume = candle.volume,
+            )
+        }
+    }
+    val chartValidationMessage = remember(chartRows) { chartDataValidationMessage(chartRows) }
     val technical = selectedTimeframe?.analysis
     LaunchedEffect(loadedMarkets.map { it.symbol }) {
         if (loadedMarkets.isNotEmpty() && loadedMarkets.none { normalizeSymbol(it.symbol) == normalizeSymbol(symbol) }) {
@@ -1992,8 +2005,11 @@ private fun AnalysisScreen() {
             }
             Text("REST feed: ${BackendSession.feedStatus.value} · WebSocket: ${BackendSession.websocketStatus.value} · ${BackendSession.marketMessage.value}", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
             Text("Selected interval: $timeframe · loaded directly from validated, closed backend candles. No missing candles are fabricated.", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
-            CandlestickChart(Modifier.fillMaxWidth().height(220.dp), displayedCandles)
+            CandlestickChart(Modifier.fillMaxWidth().height(220.dp), chartRows)
             Text("Charting by TradingView · market data supplied and validated by Solo", color = Muted, fontSize = 10.sp)
+            chartValidationMessage?.let { message ->
+                Text(message, color = Red, fontSize = 11.sp, lineHeight = 15.sp)
+            }
             if (selectedMarket == null) {
                 Text(if (BackendSession.marketLoading.value || candleHistoryLoading) "Loading authenticated interval-specific candles…" else "No validated candles for $symbol. The chart will remain empty rather than fabricate prices.", color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
             } else {
@@ -2221,21 +2237,12 @@ private fun AnalyticsChartCard(title: String, note: String, kind: ChartKind) {
 }
 
 @Composable
-private fun CandlestickChart(modifier: Modifier = Modifier, candles: List<MarketCandle>) {
+private fun CandlestickChart(modifier: Modifier = Modifier, candles: List<TradingViewOhlc>) {
     AndroidView(
         factory = { context -> TradingViewCandlestickChart(context) },
         update = { chart ->
             chart.setLightTheme(lightTheme)
-            chart.setCandles(candles.map { candle ->
-                TradingViewOhlc(
-                    openTime = candle.openTime,
-                    open = candle.open,
-                    high = candle.high,
-                    low = candle.low,
-                    close = candle.close,
-                    volume = candle.volume,
-                )
-            })
+            chart.setCandles(candles)
         },
         modifier = modifier.background(Panel, RoundedCornerShape(10.dp)).padding(8.dp),
     )
