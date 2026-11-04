@@ -181,6 +181,15 @@ internal object SoloNotificationCenter {
         }
     }
 
+    /** Posts a harmless local Android notification without creating a risk event or ledger record. */
+    internal fun sendTestNotification(context: Context): Boolean = postSystemNotification(
+        context = context,
+        eventId = "solo-notification-test",
+        title = "Solo notification test",
+        message = "Android system notification test. No risk event or order was created.",
+        severity = "HIGH",
+    )
+
     fun getRecords(context: Context): List<SoloNotificationRecord> {
         readRecords(context)
             .filter { !it.osDelivered && !it.acknowledged && !it.resolved }
