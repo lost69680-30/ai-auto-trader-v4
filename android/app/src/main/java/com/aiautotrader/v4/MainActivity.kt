@@ -1345,6 +1345,7 @@ private fun TraderApp() {
 private fun NotificationsScreen() {
     val context = androidx.compose.ui.platform.LocalContext.current
     var records by remember { mutableStateOf(SoloNotificationCenter.getRecords(context)) }
+    var testDeliveryStatus by remember { mutableStateOf<String?>(null) }
     val permissionGranted = android.os.Build.VERSION.SDK_INT < 33 ||
         context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
         android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -1378,6 +1379,19 @@ private fun NotificationsScreen() {
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = PanelAlt, contentColor = White)
             ) { Text("Refresh alerts") }
+            Button(
+                onClick = {
+                    testDeliveryStatus = if (SoloNotificationCenter.sendTestNotification(context)) {
+                        "Android accepted the test notification request. Check the notification shade."
+                    } else {
+                        "Android did not accept the notification. Check app and channel notification settings."
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background)
+            ) { Text("Send test notification") }
+            testDeliveryStatus?.let { Text(it, color = Muted, fontSize = 11.sp, lineHeight = 16.sp) }
+            Text("This test does not create a risk alert, change risk settings, or submit an order.", color = Muted, fontSize = 10.sp)
         }
         if (records.isEmpty()) {
             CardPanel {
