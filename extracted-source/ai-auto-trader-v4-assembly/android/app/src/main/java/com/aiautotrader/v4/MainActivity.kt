@@ -1133,6 +1133,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        SoloRiskAlertWork.enqueue(applicationContext)
         BackendSession.token.value = BackendTokenStore(applicationContext).read().orEmpty()
         lightTheme = getSharedPreferences("solo_preferences", MODE_PRIVATE).getBoolean("light_theme", false)
         setContent {
