@@ -49,25 +49,78 @@ test('handler exposes health and GET-only markets; mutation is forbidden', async
   const env = (name) => ({
     SOLO_MARKET_SYMBOLS: 'BTCUSDT',
     BINANCE_USDM_TESTNET_REST_ORIGIN: 'https://demo-fapi.binance.com',
+    SOLO_FALLBACK_TOKEN: 'solo-test-shared-secret-0123456789abcdef',
   })[name];
   const handler = createHandler({ env, now: () => NOW, fetchImpl: async () => new Response(JSON.stringify(upstreamRows)) });
   const health = await handler(new Request('https://deno.example/healthz'));
   assert.equal(health.status, 200);
   assert.equal((await health.json()).orders_authorized, false);
+  const readyDenied = await handler(new Request('https://deno.example/readyz'));
+  assert.equal(readyDenied.status, 401);
+  const ready = await handler(new Request('https://deno.example/readyz', { headers: { authorization: 'Bearer solo-test-shared-secret-0123456789abcdef' } }));
+  assert.equal(ready.status, 200);
   const denied = await handler(new Request('https://deno.example/api/v1/markets', { method: 'POST' }));
   assert.equal(denied.status, 405);
-  const market = await handler(new Request('https://deno.example/api/v1/markets'));
+  const market = await handler(new Request('https://deno.example/api/v1/markets', { headers: { authorization: 'Bearer solo-test-shared-secret-0123456789abcdef' } }));
   assert.equal(market.status, 200);
   assert.equal((await market.json()).data_mode, 'POLLED_FALLBACK');
 });
 
 test('upstream failure returns safe unavailable response', async () => {
-  const env = (name) => ({ SOLO_MARKET_SYMBOLS: 'BTCUSDT', BINANCE_USDM_TESTNET_REST_ORIGIN: 'https://demo-fapi.binance.com' })[name];
+  const env = (name) => ({
+    SOLO_MARKET_SYMBOLS: 'BTCUSDT',
+    BINANCE_USDM_TESTNET_REST_ORIGIN: 'https://demo-fapi.binance.com',
+    SOLO_FALLBACK_TOKEN: 'solo-test-shared-secret-0123456789abcdef',
+  })[name];
   const handler = createHandler({ env, now: () => NOW, fetchImpl: async () => { throw new Error('network down'); } });
-  const response = await handler(new Request('https://deno.example/api/v1/markets'));
+  const response = await handler(new Request('https://deno.example/api/v1/markets', { headers: { authorization: 'Bearer solo-test-shared-secret-0123456789abcdef' } }));
   assert.equal(response.status, 503);
   const body = await response.json();
   assert.equal(body.status, 'UNAVAILABLE');
   assert.equal(body.orders_authorized, false);
   assert.deepEqual(body.items, []);
+});
+
+
+test('unconfigured Deno fallback returns a safe empty market snapshot without upstream access', async () => {
+  let upstreamCalls = 0;
+  const env = (name) => ({
+    SOLO_MARKET_SYMBOLS: 'BTCUSDT',
+    BINANCE_USDM_TESTNET_REST_ORIGIN: 'https://demo-fapi.binance.com',
+  })[name];
+  const handler = createHandler({
+    env,
+    now: () => NOW,
+    fetchImpl: async () => { upstreamCalls += 1; return new Response(JSON.stringify(upstreamRows)); },
+  });
+  const response = await handler(new Request('https://deno.example/api/v1/markets'));
+  assert.equal(response.status, 503);
+  const body = await response.json();
+  assert.equal(body.status, 'UNAVAILABLE');
+  assert.equal(body.error, 'fallback_not_configured');
+  assert.deepEqual(body.items, []);
+  assert.equal(body.orders_authorized, false);
+  assert.equal(upstreamCalls, 0);
+});
+
+test('Deno market fallback requires the private service-to-service token', async () => {
+  let upstreamCalls = 0;
+  const env = (name) => ({
+    SOLO_MARKET_SYMBOLS: 'BTCUSDT',
+    BINANCE_USDM_TESTNET_REST_ORIGIN: 'https://demo-fapi.binance.com',
+    SOLO_FALLBACK_TOKEN: 'solo-test-shared-secret-0123456789abcdef',
+  })[name];
+  const handler = createHandler({
+    env,
+    now: () => NOW,
+    fetchImpl: async () => { upstreamCalls += 1; return new Response(JSON.stringify(upstreamRows)); },
+  });
+  const unauthorized = await handler(new Request('https://deno.example/api/v1/markets'));
+  assert.equal(unauthorized.status, 401);
+  assert.equal(upstreamCalls, 0);
+  const authorized = await handler(new Request('https://deno.example/api/v1/markets', {
+    headers: { authorization: 'Bearer solo-test-shared-secret-0123456789abcdef' },
+  }));
+  assert.equal(authorized.status, 200);
+  assert.equal(upstreamCalls, 1);
 });
