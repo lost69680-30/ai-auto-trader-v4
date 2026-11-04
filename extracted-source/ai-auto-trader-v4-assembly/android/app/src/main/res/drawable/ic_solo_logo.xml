@@ -4,15 +4,15 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:fillColor="#0B1018"
-        android:pathData="M17,0H91C100.389,0 108,7.611 108,17V91C108,100.389 100.389,108 91,108H17C7.611,108 0,100.389 0,91V17C0,7.611 7.611,0 17,0Z" />
+    <path android:fillColor="#101216" android:pathData="M17,0H91C100.389,0 108,7.611 108,17V91C108,100.389 100.389,108 91,108H17C7.611,108 0,100.389 0,91V17C0,7.611 7.611,0 17,0Z" />
+    <path android:fillColor="#C6A66B" android:pathData="M31,36 L33,24 L43,30 L54,21 L65,30 L75,24 L77,36 Z" />
+    <path android:fillColor="#C6A66B" android:pathData="M35,36 L73,36 L70,41 L38,41 Z" />
+    <path android:fillType="evenOdd" android:fillColor="#C6A66B" android:pathData="M54,38 C44,38 36,43 32,51 L24,47 L27,58 L21,64 L29,70 L27,80 L39,77 L44,87 L54,82 L64,87 L69,77 L81,80 L79,70 L87,64 L81,58 L84,47 L76,51 C72,43 64,38 54,38 Z M54,44 C45,44 37,51 37,61 C37,71 44,79 54,84 C64,79 71,71 71,61 C71,51 63,44 54,44 Z" />
     <path
         android:fillColor="#00000000"
-        android:strokeColor="#D8B878"
-        android:strokeWidth="2"
-        android:pathData="M54,9C78.853,9 99,29.147 99,54C99,78.853 78.853,99 54,99C29.147,99 9,78.853 9,54C9,29.147 29.147,9 54,9Z" />
-    <path
-        android:fillColor="#D8B878"
-        android:pathData="M72,28C65.8,22.7 58.4,20 49.8,20C35.5,20 26.5,27.7 26.5,38.7C26.5,48.8 34.9,53.4 50.4,57.7C63.3,61.2 71.2,64.3 71.2,73.1C71.2,82.7 61.7,88.5 49.2,88.5C39.1,88.5 30.1,85.1 22.8,78.7L28.7,71.5C34.6,76.6 41.7,79.2 49.2,79.2C57.4,79.2 62.2,76.3 62.2,72.7C62.2,68.9 55.7,66.1 46.7,63.6C28.9,58.7 17.7,52.5 17.7,38.7C17.7,23.1 30.8,11.4 49.5,11.4C61.7,11.4 71.1,15.1 79.5,22.1L72,28Z" />
+        android:strokeColor="#C6A66B"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M68,50 C63,46 59,45 53,45 C45,45 40,49 40,55 C40,60 45,63 54,66 C62,68 66,71 66,76 C66,81 60,84 53,84 C47,84 42,82 37,78" />
 </vector>
