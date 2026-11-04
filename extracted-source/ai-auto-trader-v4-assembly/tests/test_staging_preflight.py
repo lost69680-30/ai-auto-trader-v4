@@ -56,7 +56,7 @@ def test_worker_preflight_rejects_production_market_data_and_opt_in_features():
 
     assert report.passed is False
     failed = {check.name for check in report.checks if not check.passed}
-    assert {"testnet_required", "market_intelligence_disabled", "paper_handoff_disabled"} <= failed
+    assert {"testnet_required", "paper_handoff_disabled"} <= failed
 
 
 def test_api_preflight_requires_websocket_strong_token_and_tls_termination():
@@ -316,3 +316,14 @@ def test_api_preflight_rejects_market_allowlist_or_archive_interval_mismatch():
     assert report.passed is False
     failed = {check.name for check in report.checks if not check.passed}
     assert {"market_symbol_allowlist_match", "market_archive_interval_match"} <= failed
+
+
+def test_worker_preflight_allows_read_only_opportunity_research_without_paper_handoff():
+    report = run_preflight("worker", worker_env(
+        PAPER_MARKET_INTELLIGENCE_ENABLED="true",
+        PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED="false",
+    ))
+
+    assert report.passed is True
+    assert report.orders_authorized is False
+    assert all(check.passed for check in report.checks)
