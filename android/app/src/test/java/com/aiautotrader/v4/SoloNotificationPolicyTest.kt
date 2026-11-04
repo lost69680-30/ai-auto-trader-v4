@@ -105,4 +105,11 @@ class SoloNotificationPolicyTest {
         assertEquals(false, shouldAttemptPaperLedgerRefresh("short-token", false))
         assertEquals(false, shouldAttemptPaperLedgerRefresh("", false))
     }
+
+    @Test fun systemDeliveryRequiresAppNotificationsAndChannelEnabled() {
+        assertEquals(true, shouldPostSystemNotification(true, true, true))
+        assertEquals(false, shouldPostSystemNotification(false, true, true))
+        assertEquals(false, shouldPostSystemNotification(true, false, true))
+        assertEquals(false, shouldPostSystemNotification(true, true, false))
+    }
 }
