@@ -445,3 +445,22 @@ This section supersedes earlier historical notes in this file that said the stag
 4. Install the PR #105 APK on the user's Android device and verify in-app alerts, OS permission grant/denial, foreground and background behavior, process restart, acknowledgement versus resolution, and Emergency Stop semantics.
 5. Complete real public-market-data soak and host/API/worker recovery acceptance. The current $0 Render Free topology cannot be represented as a guaranteed always-on worker; do not add keep-alive traffic or paid services.
 6. Keep all PRs draft/unmerged until these product and operational acceptance gates pass. Preserve `PAPER_ONLY`, `orders_authorized=false`, independent Risk Guardian authority, and no-live-trading restrictions.
+
+
+## Unified Solo Parts 1–8 integration checkpoint — 2026-11-04
+
+- Created unified integration branch `integration/solo-complete-parts1-8` and draft PR #107 against the existing Part 4 baseline branch `feat/solo-ledger-dashboard-integration`.
+- The unified tree preserves the existing Parts 1–4 baseline, Parts 5–7 implementation, notification core and foreground risk refresh, and Part 8 operational recovery work. The Part 8 files were overlaid onto the latest notification branch tree and both source histories were retained in a two-parent merge commit.
+- Android navigation now exposes ten core screen groups: Dashboard, AI Agents, Markets/Charts, Opportunities, Positions, Risk Center, Performance, Notifications, Security/Session, and Settings. Theme preference persists locally. Performance fields that lack a complete verified historical series remain explicitly unavailable; no synthetic metrics are shown.
+- The AI screen now lists all 15 specialist roles. It explicitly marks them as specified/not running; the agent network and GAT/PPO research policies are not represented as active services. Risk Guardian remains the independent authorization boundary.
+- Root and extracted Android source/test mirrors were verified byte-for-byte identical on the integration branch.
+- Unified branch CI at head `4900b4fd48d0a8eb6f306351848f6025eb63c275`:
+  - Durable PostgreSQL integration, worker/API staging preflight, paper-service recovery, opportunity registry integration, and full backend suite: **618 passed**.
+  - ASGI runtime tests: successful.
+  - Market-data and analysis safety validation: successful.
+  - Android unit tests and staging debug APK build: successful.
+  - Extended-timeframe and branding Android build: successful.
+- Staging APK artifact: `13359058843`, 16,613,368 bytes, SHA-256 `f38f885e8adfd60106022ed0945ba0dfa9a8cf0c561183def0f29f4d35b8e4ab`, created 2026-11-04 and expires 2026-11-18.
+- This is source/CI completion, not phone acceptance or production deployment. No Render deploy, Supabase migration, secret update, billing change, or production change was made.
+- The staging opportunity-registry migration remains unapplied because the actual Render API/worker database login role could not be identified from the available read-only runtime session data. The Supabase activity snapshot showed only platform sessions and no identifiable Render application session. Do not apply the migration until the runtime role and minimum privileges are verified.
+- Android physical-device notification acceptance, genuine risk-alert acknowledgement/resolution, background delivery, and real hosted market-data/worker soak remain unverified and are deferred to the final acceptance phase. The free hosting topology is not an always-on worker; no paid service or keep-alive workaround is used.
