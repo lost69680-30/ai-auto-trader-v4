@@ -17,7 +17,8 @@ class AnalysisJobDispatcher:
     Queue delivery is at-least-once. Every handler receives the durable
     idempotency key and must use it for any externally visible side effect.
     This dispatcher deliberately has no order, fill, position, or risk-setting
-    handlers and rejects any claimed job that asserts order authority.
+    handlers and rejects any claimed job that asserts order authority. Claims are
+    filtered to registered handlers so disabled-feature jobs remain pending.
     """
 
     def __init__(
