@@ -337,3 +337,17 @@ test('readyz authenticates the Deno fallback service-to-service secret', async (
   assert.equal(body.market_fallback, 'READY');
   assert.equal(calls.length, 2);
 });
+
+
+test('oversized primary market payload falls back before expensive JSON parsing', async () => {
+  const fallback = { ...freshMarket, status: 'DEGRADED', data_mode: 'POLLED_FALLBACK' };
+  const response = await handleRequest(new Request('https://edge.example/api/v1/markets', {
+    headers: { authorization: 'Bearer ' + 'x'.repeat(40) },
+  }), env(), {
+    now: () => NOW,
+    fetchImpl: async (url) => String(url).startsWith('https://solo-primary.example')
+      ? new Response('x'.repeat(262145), { status: 200 }) : jsonResponse(fallback),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-solo-data-mode'), 'POLLED_FALLBACK');
+});
