@@ -56,10 +56,38 @@ function validMarketItem(item, now, maxAge) {
     Number.isFinite(funding) && funding > now && Array.isArray(item.candles);
 }
 
+function marketPayloadExplicitlyUnsafe(payload) {
+  return !payload || typeof payload !== 'object' || payload.orders_authorized !== false ||
+    !Array.isArray(payload.items) ||
+    payload.items.some((item) => !item || typeof item !== 'object' || item.orders_authorized !== false);
+}
+
 function validMarketPayload(payload, now, maxAge) {
-  return Boolean(payload && typeof payload === 'object' && payload.orders_authorized === false &&
+  return Boolean(payload && typeof payload === 'object' &&
+    ['HEALTHY', 'DEGRADED'].includes(payload.status) && payload.orders_authorized === false &&
     Array.isArray(payload.items) && payload.items.length > 0 &&
     payload.items.every((item) => validMarketItem(item, now, maxAge)));
+}
+
+async function readLimitedBody(request, maxBytes) {
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error('request body too large');
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  return body;
 }
 
 async function readJson(response) {
@@ -142,11 +170,13 @@ export async function handleRequest(request, env, dependencies = {}) {
     if (!primary) return json({ error: 'primary_unavailable', orders_authorized: false }, 503);
     try {
       const target = new URL(url.pathname + url.search, primary);
-      const headers = new Headers({
-        authorization: request.headers.get('authorization'),
-        upgrade: 'websocket',
-        accept: 'application/json',
-      });
+      const headers = new Headers();
+      for (const name of ['authorization', 'upgrade', 'sec-websocket-key', 'sec-websocket-version', 'sec-websocket-protocol', 'sec-websocket-extensions']) {
+        const value = request.headers.get(name);
+        if (value) headers.set(name, value);
+      }
+      headers.set('upgrade', 'websocket');
+      headers.set('accept', 'application/json');
       const upstreamRequest = new Request(target, { method: 'GET', headers, redirect: 'manual' });
       const response = await fetchImpl(upstreamRequest);
       if (response.status >= 300 && response.status < 400) {
@@ -216,7 +246,10 @@ export async function handleRequest(request, env, dependencies = {}) {
     if (Number.isFinite(declaredLength) && declaredLength > 2048) {
       return json({ error: 'invalid_request_size', orders_authorized: false }, 400);
     }
-    const body = await request.arrayBuffer();
+    let body;
+    try { body = await readLimitedBody(request, 2048); } catch {
+      return json({ error: 'invalid_request_size', orders_authorized: false }, 400);
+    }
     if (body.byteLength === 0 || body.byteLength > 2048) {
       return json({ error: 'invalid_request_size', orders_authorized: false }, 400);
     }
@@ -251,6 +284,9 @@ export async function handleRequest(request, env, dependencies = {}) {
       }
       if (response.ok) {
         const payload = await readJson(response);
+        if (marketPayloadExplicitlyUnsafe(payload)) {
+          return json({ error: 'unsafe_primary_market_response', orders_authorized: false }, 502);
+        }
         if (validMarketPayload(payload, now(), ageLimit)) {
           return json(payload, response.status, { 'x-solo-upstream': 'render-primary', 'x-solo-data-mode': 'PRIMARY' });
         }
