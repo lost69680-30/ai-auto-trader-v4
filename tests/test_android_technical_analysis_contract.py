@@ -124,3 +124,12 @@ def test_empty_performance_panels_do_not_draw_synthetic_chart_data():
     assert "drawPath(path" not in source
     assert "No verified ledger data" in source
     assert "This chart will appear only when real paper-ledger history is available." in source
+
+
+def test_android_notification_center_has_a_safe_delivery_probe():
+    center = (ROOT / "android/app/src/main/java/com/aiautotrader/v4/SoloNotificationCenter.kt").read_text(encoding="utf-8")
+    source = SOURCE.read_text(encoding="utf-8")
+    assert "internal fun sendTestNotification(context: Context): Boolean" in center
+    assert "SoloNotificationCenter.sendTestNotification(context)" in source
+    assert 'Text("Send test notification")' in source
+    assert "This test does not create a risk alert" in source
