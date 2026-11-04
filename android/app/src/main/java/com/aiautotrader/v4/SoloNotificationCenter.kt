@@ -22,6 +22,19 @@ internal data class SoloNotificationRecord(
     val osDelivered: Boolean,
 )
 
+internal enum class SoloAlertTransitionAction { NONE, PUBLISH, RESOLVE }
+
+internal fun evaluateSoloAlertTransition(
+    previousActive: Boolean?,
+    currentActive: Boolean,
+): SoloAlertTransitionAction = when {
+    previousActive == null && currentActive -> SoloAlertTransitionAction.PUBLISH
+    previousActive == null -> SoloAlertTransitionAction.NONE
+    !previousActive && currentActive -> SoloAlertTransitionAction.PUBLISH
+    previousActive && !currentActive -> SoloAlertTransitionAction.RESOLVE
+    else -> SoloAlertTransitionAction.NONE
+}
+
 internal object SoloNotificationCenter {
     private const val PREFS = "solo_notification_center"
     private const val EVENTS = "events"
@@ -63,14 +76,18 @@ internal object SoloNotificationCenter {
         message: String,
     ) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val previous = prefs.getString(preferenceKey, null)
-        val state = if (current) "ACTIVE" else "INACTIVE"
-        if (previous == state) return
-        prefs.edit().putString(preferenceKey, state).apply()
-        if (current) {
-            publish(context, type, severity, title, message)
-        } else if (previous == "ACTIVE") {
-            resolveLatest(context, type)
+        val previousActive = when (prefs.getString(preferenceKey, null)) {
+            "ACTIVE" -> true
+            "INACTIVE" -> false
+            else -> null
+        }
+        val action = evaluateSoloAlertTransition(previousActive, current)
+        if (action == SoloAlertTransitionAction.NONE) return
+        prefs.edit().putString(preferenceKey, if (current) "ACTIVE" else "INACTIVE").apply()
+        when (action) {
+            SoloAlertTransitionAction.PUBLISH -> publish(context, type, severity, title, message)
+            SoloAlertTransitionAction.RESOLVE -> resolveLatest(context, type)
+            SoloAlertTransitionAction.NONE -> Unit
         }
     }
 
