@@ -147,7 +147,7 @@ export async function handleRequest(request, env, dependencies = {}) {
     } catch { /* fail closed below */ }
     if (secondary && typeof env.SECONDARY_MARKET_TOKEN === 'string' && env.SECONDARY_MARKET_TOKEN.length >= 32) {
       try {
-        const response = await fetchImpl(new URL('/healthz', secondary), { method: 'GET', redirect: 'manual' });
+        const response = await fetchImpl(new URL('/readyz', secondary), { method: 'GET', headers: { authorization: `Bearer ${env.SECONDARY_MARKET_TOKEN}` }, redirect: 'manual' });
         secondaryReady = response.status === 200;
       } catch { /* fail closed below */ }
     }
