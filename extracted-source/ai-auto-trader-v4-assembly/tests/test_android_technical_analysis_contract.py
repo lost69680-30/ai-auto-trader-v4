@@ -67,7 +67,8 @@ def test_solo_brand_is_applied_to_app_header_and_launcher():
     assert 'applicationIdSuffix = ".staging"' in build_config
     assert 'android:icon="@mipmap/ic_launcher"' in manifest
     assert 'android:roundIcon="@mipmap/ic_launcher_round"' in manifest
-    assert 'android:strokeColor="#D8B878"' in logo
+    assert 'android:strokeColor="#C6A66B"' in logo
+    assert 'android:fillColor="#C6A66B"' in logo
 
 
 def test_advanced_analysis_rejects_bad_candle_sequences_and_stale_history():
