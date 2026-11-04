@@ -1,3 +1,4 @@
+# Verification note: read-only opportunity research is allowed; paper handoff remains disabled.
 from __future__ import annotations
 
 from backend.staging_preflight import check_database_schema, run_preflight
