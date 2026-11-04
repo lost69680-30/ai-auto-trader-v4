@@ -22,22 +22,7 @@ jobs:
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.14.2"
-      - name: Install Android API 36 platform and build tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -n "${ANDROID_HOME:-}" ]]; then
-            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          elif [[ -n "${ANDROID_SDK_ROOT:-}" ]]; then
-            SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          else
-            SDKMANAGER="$(command -v sdkmanager)"
-          fi
-          test -x "$SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
-
+          gradle-version: "8.9"
       - name: Verify project files
         run: |
           set -euo pipefail
