@@ -170,4 +170,27 @@ BEGIN
 END
 $$;
 
+
+-- Permit the dedicated backup identity to read these private tables only.
+-- This preserves the same read-only backup contract as the existing ledger.
+GRANT SELECT ON paper_ledger.opportunities TO solo_backup_reader;
+GRANT SELECT ON paper_ledger.opportunity_assessments TO solo_backup_reader;
+GRANT SELECT ON paper_ledger.opportunity_evidence TO solo_backup_reader;
+GRANT SELECT ON paper_ledger.opportunity_watch_conditions TO solo_backup_reader;
+GRANT SELECT ON paper_ledger.opportunity_events TO solo_backup_reader;
+GRANT SELECT ON paper_ledger.opportunity_claims TO solo_backup_reader;
+
+CREATE POLICY solo_backup_reader_select ON paper_ledger.opportunities
+    FOR SELECT TO solo_backup_reader USING (true);
+CREATE POLICY solo_backup_reader_select ON paper_ledger.opportunity_assessments
+    FOR SELECT TO solo_backup_reader USING (true);
+CREATE POLICY solo_backup_reader_select ON paper_ledger.opportunity_evidence
+    FOR SELECT TO solo_backup_reader USING (true);
+CREATE POLICY solo_backup_reader_select ON paper_ledger.opportunity_watch_conditions
+    FOR SELECT TO solo_backup_reader USING (true);
+CREATE POLICY solo_backup_reader_select ON paper_ledger.opportunity_events
+    FOR SELECT TO solo_backup_reader USING (true);
+CREATE POLICY solo_backup_reader_select ON paper_ledger.opportunity_claims
+    FOR SELECT TO solo_backup_reader USING (true);
+
 COMMIT;
