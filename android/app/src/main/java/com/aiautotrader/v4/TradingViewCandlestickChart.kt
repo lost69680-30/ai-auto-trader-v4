@@ -1,7 +1,6 @@
 package com.aiautotrader.v4
 
 import android.content.Context
-import android.graphics.Color as AndroidColor
 import android.widget.FrameLayout
 import com.tradingview.lightweightcharts.api.chart.models.color.surface.SolidColor
 import com.tradingview.lightweightcharts.api.chart.models.color.toIntColor
@@ -46,7 +45,7 @@ internal fun toTradingViewCandlestickData(rows: List<TradingViewOhlc>): List<Can
         require(row.volume >= 0.0) { "candle volume must not be negative" }
         require(row.high >= maxOf(row.open, row.close, row.low)) { "candle high is inconsistent" }
         require(row.low <= minOf(row.open, row.close, row.high)) { "candle low is inconsistent" }
-        require(timestamp > previousTimestamp) { "candle timestamps must be strictly increasing" }
+        require(timestamp >= 0L && timestamp > previousTimestamp) { "candle timestamps must be non-negative and strictly increasing" }
         previousTimestamp = timestamp
         val floatValues = listOf(row.open, row.high, row.low, row.close).map { it.toFloat() }
         require(floatValues.all { it.isFinite() && it > 0f }) { "candle prices exceed chart precision" }
