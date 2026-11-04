@@ -1,0 +1,12 @@
+<resources>
+    <color name="solo_obsidian">#101216</color>
+    <color name="solo_graphite">#1B1E24</color>
+    <color name="solo_champagne_gold">#C6A66B</color>
+    <color name="solo_antique_gold">#927547</color>
+    <color name="solo_platinum">#D7D9DC</color>
+    <color name="solo_silk_ivory">#F4F0E8</color>
+    <color name="solo_midnight_bronze">#403426</color>
+    <color name="solo_success">#39B980</color>
+    <color name="solo_warning">#E7B65E</color>
+    <color name="solo_danger">#E36F72</color>
+</resources>
