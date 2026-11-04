@@ -9,6 +9,7 @@ PACKAGED_ANDROID = ROOT / "extracted-source/ai-auto-trader-v4-assembly/android/a
 
 BRAND_RESOURCES = (
     "AndroidManifest.xml",
+    "java/com/aiautotrader/v4/MainActivity.kt",
     "res/values/colors.xml",
     "res/values/styles.xml",
     "res/drawable/ic_solo_logo.xml",
@@ -93,3 +94,8 @@ def test_brand_palette_uses_the_approved_hidden_sovereign_tokens():
 def test_root_and_render_assembly_brand_resources_are_byte_identical():
     for relative in BRAND_RESOURCES:
         assert (ROOT_ANDROID / relative).read_bytes() == (PACKAGED_ANDROID / relative).read_bytes()
+
+
+def test_android_header_selects_the_light_emblem_for_light_theme():
+    main_activity = (ROOT_ANDROID / "java/com/aiautotrader/v4/MainActivity.kt").read_text(encoding="utf-8")
+    assert "painterResource(id = if (lightTheme) R.drawable.ic_solo_logo_light else R.drawable.ic_solo_logo)" in main_activity
