@@ -59,6 +59,13 @@ internal fun toTradingViewCandlestickData(rows: List<TradingViewOhlc>): List<Can
     }
 }
 
+internal fun chartDataValidationMessage(rows: List<TradingViewOhlc>): String? = try {
+    toTradingViewCandlestickData(rows)
+    null
+} catch (error: IllegalArgumentException) {
+    "Chart data rejected: ${error.message ?: "invalid OHLCV history"}"
+}
+
 /** TradingView Lightweight Charts renderer; it has no order or execution interface. */
 internal class TradingViewCandlestickChart(context: Context) : FrameLayout(context) {
     private val chartView = ChartsView(context)
