@@ -53,7 +53,7 @@ function validMarketItem(item, now, maxAge) {
   const funding = Date.parse(item.next_funding_at);
   const age = (now - observed) / 1000;
   return Number.isFinite(observed) && age >= -30 && age <= maxAge &&
-    Number.isFinite(funding) && funding > now && Array.isArray(item.candles);
+    Number.isFinite(funding) && funding > now && (item.candles == null || Array.isArray(item.candles));
 }
 
 function marketPayloadExplicitlyUnsafe(payload) {
@@ -65,7 +65,7 @@ function marketPayloadExplicitlyUnsafe(payload) {
 function validMarketPayload(payload, now, maxAge) {
   return Boolean(payload && typeof payload === 'object' &&
     ['HEALTHY', 'DEGRADED'].includes(payload.status) && payload.orders_authorized === false &&
-    Array.isArray(payload.items) && payload.items.length > 0 &&
+    Array.isArray(payload.items) && payload.items.length > 0 && payload.items.length <= 30 &&
     payload.items.every((item) => validMarketItem(item, now, maxAge)));
 }
 
