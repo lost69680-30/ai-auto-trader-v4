@@ -40,10 +40,10 @@
 
 ## 4. Provider limits and why this is not a 24/7 guarantee
 
-- Cloudflare Workers Free currently lists 100,000 requests/day and 10 ms CPU per invocation. This Worker is intentionally lightweight and has no scheduled worker loop.
-- Deno Deploy Free currently lists 1 million inbound requests/month, 20 GiB egress, and 10 active CPU hours/month. Idle applications scale to zero; the Free plan has no reliability SLA. It is an on-demand fallback, not an always-on process.
-- Render Free web services can sleep after inactivity and can restart. The Python worker cannot be promised continuous operation on that plan.
-- Vercel Hobby is intentionally not part of the production architecture: its terms restrict it to personal/non-commercial use, and Hobby cron is limited to once daily. A static GitHub Pages page may be added later for public status/help content, but it cannot run a backend or worker.
+- Cloudflare Workers Free currently lists 100,000 requests/day and 10 ms CPU per invocation. This Worker is intentionally lightweight and has no scheduled worker loop. [Official limits](https://developers.cloudflare.com/workers/platform/limits/).
+- Deno Deploy Free currently lists 1 million inbound requests/month, 20 GiB egress, 10 active CPU hours/month, and 150 GiB-hours of memory time. Idle apps shut down after roughly 20–30 seconds; the Free plan has no reliability SLA. It is an on-demand fallback, not an always-on process. [Official pricing](https://deno.com/deploy/pricing).
+- Render Free web services spin down after 15 minutes without inbound HTTP requests or WebSocket messages, take about a minute to wake, and can restart. A connected foreground WebSocket with keepalives may keep the service active, but that does not cover phone-off/background periods. The Python worker cannot be promised continuous operation on that plan. [Official free-service limits](https://render.com/docs/free).
+- Vercel Hobby is intentionally not part of the production architecture: its terms restrict it to personal/non-commercial use, and Hobby cron is limited to once daily. [Official Hobby terms](https://vercel.com/docs/plans/hobby) and [Cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing). A static GitHub Pages page may be added later for public status/help content, but it cannot run a backend or worker.
 - No free tier in this architecture guarantees uninterrupted 24/7 execution, WebSocket continuity, zero downtime, or 100% availability. The design improves graceful degradation and recovery instead.
 
 ## 5. Existing infrastructure audit and constraints
