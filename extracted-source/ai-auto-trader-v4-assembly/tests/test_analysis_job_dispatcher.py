@@ -48,11 +48,18 @@ def test_dispatcher_runs_only_allowlisted_read_only_analysis_handler():
     "paper_order_execution", "unknown_task",
 ])
 def test_dispatcher_rejects_execution_risk_and_unknown_job_types(job_name):
-    scheduler = FakeScheduler([{
+    class UnfilteredScheduler(FakeScheduler):
+        def claim_next(self, *, owner, allowed_job_names=None):
+            return self.jobs.pop(0) if self.jobs else None
+
+    scheduler = UnfilteredScheduler([{
         "idempotency_key": f"{job_name}:1", "job_name": job_name,
         "payload": {}, "orders_authorized": False,
     }])
-    dispatcher = AnalysisJobDispatcher(scheduler, owner="test-worker", handlers={})
+    dispatcher = AnalysisJobDispatcher(
+        scheduler, owner="test-worker",
+        handlers={"market_feed_health_audit": lambda payload, key: None},
+    )
 
     assert dispatcher.run_once() is False
     assert dispatcher.last_run_status == "FAILED"
