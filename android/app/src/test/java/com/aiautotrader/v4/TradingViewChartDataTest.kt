@@ -48,4 +48,16 @@ class TradingViewChartDataTest {
             ))
         }
     }
+
+    @Test
+    fun reportsRejectedChartDataInsteadOfTreatingItAsAnEmptyFeed() {
+        val malformed = listOf(
+            TradingViewOhlc("bad-time", 100.0, 105.0, 99.0, 103.0, 1.0)
+        )
+
+        val message = chartDataValidationMessage(malformed)
+
+        assertEquals(true, message?.contains("ISO-8601") == true)
+        assertEquals(null, chartDataValidationMessage(emptyList()))
+    }
 }
