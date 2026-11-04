@@ -1297,7 +1297,7 @@ private fun TraderApp() {
     BackendMarketWebSocketEffect()
     PaperLedgerRefreshEffect()
     var screen by remember { mutableStateOf("Dashboard") }
-    val screens = listOf("Dashboard", "AI Agents", "Markets", "Positions", "Risk Center", "Notifications")
+    val screens = listOf("Dashboard", "AI Agents", "Markets", "Opportunities", "Positions", "Risk Center", "Performance", "Notifications", "Security", "Settings")
     Column(Modifier.fillMaxSize().background(Background)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column {
@@ -1325,7 +1325,7 @@ private fun TraderApp() {
                 val selected = screen == item || (item == "Markets" && screen == "Charts & Analysis")
                 Box(Modifier.background(if (selected) Gold.copy(alpha = .16f) else Panel, RoundedCornerShape(12.dp))
                     .border(1.dp, if (selected) Gold.copy(alpha = .8f) else Grid, RoundedCornerShape(12.dp))
-                    .clickable { screen = if (item == "Markets") "Charts & Analysis" else item }.padding(horizontal = 13.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
+                    .clickable { screen = soloScreenDestination(item) }.padding(horizontal = 13.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
                     Text(item, color = if (selected) Gold else Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
@@ -1333,9 +1333,13 @@ private fun TraderApp() {
         when (screen) {
             "Charts & Analysis", "Markets" -> AnalysisScreen()
             "AI Agents" -> AgentNetworkScreen()
+            "Opportunities" -> OpportunitiesScreen()
             "Positions" -> PositionsScreen()
             "Risk Center" -> RiskCenterScreen()
+            "Performance" -> PerformanceScreen()
             "Notifications" -> NotificationsScreen()
+            "Security" -> SecurityScreen()
+            "Settings" -> SettingsScreen()
             else -> DashboardScreen { screen = "Charts & Analysis" }
         }
     }
@@ -1888,6 +1892,140 @@ private fun ReadOnlyBackendConnectionCard() {
         Text("The bearer token is encrypted on this device with Android Keystore. Clearing it here does not change the backend emergency-stop state. Do not use an exchange key here.", color = Muted, fontSize = 10.sp)
     }
 }
+
+
+@Composable
+private fun OpportunitiesScreen() {
+    val items = BackendSession.marketIntelligence.value
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        CardPanel {
+            Text("CONTINUOUS OPPORTUNITY ENGINE", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("Research candidates", color = White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            IndicatorRow("Scan status", BackendSession.marketIntelligenceStatus.value)
+            IndicatorRow("Last assessment", BackendSession.marketIntelligenceAssessedAt.value.ifBlank { "Unavailable" })
+            IndicatorRow("Scan job", BackendSession.marketIntelligenceScanStatus.value)
+        }
+        if (items.isEmpty()) {
+            CardPanel {
+                Text("No validated opportunity assessments", color = White, fontWeight = FontWeight.SemiBold)
+                Text(BackendSession.marketIntelligenceMessage.value, color = Muted, fontSize = 12.sp)
+            }
+        } else items.sortedBy { it.opportunityRank ?: Int.MAX_VALUE }.forEach { item ->
+            CardPanel {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(displaySymbol(item.symbol), color = White, fontWeight = FontWeight.Bold)
+                    Tag(item.decision, if (item.decision == "SELECTED") Green else Gold)
+                }
+                IndicatorRow("Rank", item.opportunityRank?.let { "#$it" } ?: "Not ranked")
+                IndicatorRow("Regime / phase", item.marketRegime + " / " + item.marketPhase)
+                IndicatorRow("Timeframe bias", item.longTermBias + " / " + item.mediumTermBias + " / " + item.shortTermBias)
+                IndicatorRow("Strategy", item.selectedStrategy)
+                IndicatorRow("Fit score", item.fitScore)
+                IndicatorRow("Performance evidence", item.performanceStatus)
+                IndicatorRow("Risk review", if (item.eligibleForRiskReview) "Eligible for independent review · not approved" else "Not eligible")
+                if (item.noTradeReason.isNotBlank()) Text(item.noTradeReason, color = Muted, fontSize = 11.sp)
+                if (item.dataQualityIssues.isNotEmpty()) Text("Data quality: " + item.dataQualityIssues.joinToString("; "), color = Color(0xFFFFC857), fontSize = 10.sp)
+            }
+        }
+        CardPanel { Text("Research only. The opportunity engine cannot authorize orders. Every paper intent must pass the independent Risk Guardian.", color = Muted, fontSize = 11.sp) }
+    }
+}
+
+@Composable
+private fun PerformanceScreen() {
+    val snapshot = BackendSession.paperLedger.value
+    val risk = snapshot?.risk
+    val fills = snapshot?.fills.orEmpty()
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        CardPanel {
+            Text("PERFORMANCE & ANALYTICS", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("Verified paper results", color = White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            IndicatorRow("Ledger", BackendSession.paperLedgerStatus.value)
+            Text(if (snapshot != null) "Last successful snapshot: " + snapshot.fetchedAt else BackendSession.paperLedgerError.value.ifBlank { "No verified ledger history." }, color = Muted, fontSize = 11.sp)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            MetricCard("Paper equity", risk?.accountEquity?.let { String.format(Locale.US, "%.4f", it) } ?: "—", "Verified snapshot", Modifier.weight(1f))
+            MetricCard("Realized P&L", snapshot?.let { String.format(Locale.US, "%.4f", it.performanceRealizedPnl) } ?: "—", "Ledger reported", Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            MetricCard("Open positions", snapshot?.let { it.positions.count { p -> p.status == "OPEN" }.toString() } ?: "—", "Paper ledger", Modifier.weight(1f))
+            MetricCard("Recorded fills", snapshot?.let { fills.size.toString() } ?: "—", "Persisted fills", Modifier.weight(1f))
+        }
+        CardPanel {
+            IndicatorRow("Unrealized P&L", risk?.unrealizedPnl?.let { String.format(Locale.US, "%.4f", it) } ?: "Unavailable")
+            IndicatorRow("Drawdown", risk?.drawdownPct?.let { String.format(Locale.US, "%.3f%%", it) } ?: "Unavailable")
+            IndicatorRow("Win rate", "Unavailable · closed-trade series not exposed")
+            IndicatorRow("Expectancy", "Unavailable · closed-trade series not exposed")
+            IndicatorRow("Profit factor", "Unavailable · closed-trade series not exposed")
+            Text("No synthetic chart points or performance claims are generated. Metrics requiring complete historical equity and closed-trade records remain unavailable until the backend exposes them.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+        }
+    }
+}
+
+@Composable
+private fun SecurityScreen() {
+    val risk = BackendSession.paperLedger.value?.risk
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        CardPanel {
+            Text("SECURITY & AUTHENTICATION", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("Protected backend session", color = White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            IndicatorRow("Backend session", BackendSession.status.value)
+            IndicatorRow("Paper ledger", BackendSession.paperLedgerStatus.value)
+            IndicatorRow("Testnet account", BackendSession.testnetAccountStatus.value)
+        }
+        ReadOnlyBackendConnectionCard()
+        CardPanel {
+            SafetyRow("App mode", "PAPER ONLY", Green)
+            SafetyRow("Order authorization", "FALSE · DISABLED", Green)
+            SafetyRow("Live exchange orders", "PROHIBITED", Green)
+            SafetyRow("Risk authorization", "INDEPENDENT BACKEND ONLY", Green)
+            SafetyRow("Emergency Stop", risk?.let { emergencyStopDisplayLabel(it.emergencyStopActive) } ?: "UNKNOWN", if (risk?.emergencyStopActive == true) Red else Color(0xFFFFC857))
+            Text("Emergency Stop blocks new paper intents. It does not close existing positions and is not a live-exchange kill switch.", color = Muted, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
+private fun SettingsScreen() {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        CardPanel {
+            Text("SOLO PREFERENCES", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("Settings", color = White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Appearance", color = White, fontWeight = FontWeight.SemiBold)
+                    Text(if (lightTheme) "Light theme" else "Dark theme", color = Muted, fontSize = 11.sp)
+                }
+                Switch(checked = lightTheme, onCheckedChange = { lightTheme = it })
+            }
+            Text("Presentation preferences cannot change Risk Guardian authority, order permissions, or backend safety limits.", color = Muted, fontSize = 11.sp)
+        }
+        CardPanel {
+            Text("SOLO · THE HIDDEN SOVEREIGN", color = Gold, fontWeight = FontWeight.Bold)
+            Text("Trade with Confidence. · Intelligence in Every Decision.", color = Muted, fontSize = 12.sp)
+        }
+        CardPanel {
+            Text("SYSTEM OBSERVATORY", color = Gold, fontWeight = FontWeight.Bold)
+            IndicatorRow("Backend", BackendSession.status.value)
+            IndicatorRow("Market feed", BackendSession.feedStatus.value)
+            IndicatorRow("WebSocket", BackendSession.websocketStatus.value)
+            IndicatorRow("Opportunity scan", BackendSession.marketIntelligenceStatus.value)
+            IndicatorRow("Scan job", BackendSession.marketIntelligenceScanStatus.value)
+            IndicatorRow("Paper ledger", BackendSession.paperLedgerStatus.value)
+            IndicatorRow("API transport", if (BuildConfig.PAPER_API_BASE_URL.startsWith("https://")) "HTTPS" else "NOT VERIFIED")
+        }
+        CardPanel {
+            SafetyRow("Paper-only mode", "LOCKED", Green)
+            SafetyRow("Order authorization", "DISABLED", Green)
+            SafetyRow("Risk limits", "BACKEND CONTROLLED", Green)
+            SafetyRow("Credentials", "BACKEND / SECURE SESSION ONLY", Green)
+        }
+    }
+}
+
+internal fun soloScreenDestination(label: String): String =
+    if (label == "Markets") "Charts & Analysis" else label
+
 
 @Composable
 private fun DashboardScreen(openAnalysis: () -> Unit) {
