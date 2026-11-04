@@ -92,7 +92,7 @@ async function readLimitedBody(request, maxBytes) {
 
 async function readJson(response) {
   const text = await response.text();
-  if (text.length > 2_000_000) throw new Error('upstream response too large');
+  if (text.length > 262_144) throw new Error('upstream response too large');
   return JSON.parse(text);
 }
 
