@@ -66,6 +66,12 @@ class DurableJobScheduler:
                    VALUES (%s, %s, %s, %s, %s::jsonb)
                    ON CONFLICT (job_name) DO UPDATE SET
                      interval_seconds = EXCLUDED.interval_seconds,
+                     next_run_at = CASE
+                       WHEN paper_ledger.scheduled_job_definitions.enabled = false
+                            AND EXCLUDED.enabled = true
+                       THEN EXCLUDED.next_run_at
+                       ELSE paper_ledger.scheduled_job_definitions.next_run_at
+                     END,
                      enabled = EXCLUDED.enabled, payload = EXCLUDED.payload,
                      updated_at = now()""",
                 (name, interval_seconds, _utc(first_run_at), enabled, body),
