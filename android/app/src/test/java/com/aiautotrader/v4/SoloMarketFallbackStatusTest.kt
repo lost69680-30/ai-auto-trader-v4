@@ -1,20 +1,18 @@
 package com.aiautotrader.v4
 
-import org.json.JSONObject
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SoloMarketFallbackStatusTest {
     @Test fun acceptsOnlyExplicitPaperOnlyMarketFallbackStatus() {
-        val status = JSONObject("""{"status":"DEGRADED_MARKET_ONLY","mode":"PAPER_ONLY","orders_authorized":false}""")
-        assertTrue(isMarketOnlyFallbackStatus(status))
+        assertTrue(isMarketOnlyFallbackStatus("DEGRADED_MARKET_ONLY", "PAPER_ONLY", false))
     }
 
     @Test fun rejectsFallbackStatusWhenAuthorizationIsUnknownOrEnabled() {
-        assertFalse(isMarketOnlyFallbackStatus(JSONObject("""{"status":"DEGRADED_MARKET_ONLY","mode":"PAPER_ONLY"}""")))
-        assertFalse(isMarketOnlyFallbackStatus(JSONObject("""{"status":"DEGRADED_MARKET_ONLY","mode":"PAPER_ONLY","orders_authorized":true}""")))
-        assertFalse(isMarketOnlyFallbackStatus(JSONObject("""{"status":"READY","mode":"PAPER_ONLY","orders_authorized":false}""")))
+        assertFalse(isMarketOnlyFallbackStatus("DEGRADED_MARKET_ONLY", "PAPER_ONLY", true))
+        assertFalse(isMarketOnlyFallbackStatus("READY", "PAPER_ONLY", false))
+        assertFalse(isMarketOnlyFallbackStatus("DEGRADED_MARKET_ONLY", "LIVE", false))
     }
 
     @Test fun displaysOnlyValidatedDegradedSnapshotsFromExplicitFallback() {
