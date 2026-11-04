@@ -1,3 +1,4 @@
+# Verification note: disabled-feature jobs must remain pending and unclaimed.
 from datetime import datetime, timedelta, timezone
 import os
 
