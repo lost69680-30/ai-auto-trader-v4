@@ -34,7 +34,10 @@ def test_foreground_market_poller_retries_network_errors_but_stops_on_bad_auth()
     assert "fetchMarketSnapshot(sessionToken)" in poller
     assert 'response.backendStatus == "UNAUTHORIZED"' in poller
     assert 'response.backendStatus == "UNSAFE RESPONSE"' in poller
-    assert 'response.feedStatus == "HEALTHY"' in poller
+    assert "shouldDisplayMarketSnapshot(" in poller
+    assert "feedStatus = response.feedStatus" in poller
+    assert 'val feedAllowed = feedStatus == "HEALTHY" || (marketFallback && feedStatus == "DEGRADED")' in source
+    assert "return sourceAllowed && safeResponse && feedAllowed && hasItems" in source
     assert "BackendSession.marketItems.value = response.items" in poller
     assert 'statusJson.optString("mode") == "PAPER_ONLY"' in source
     assert 'statusJson.optBoolean("orders_authorized", true)' in source
