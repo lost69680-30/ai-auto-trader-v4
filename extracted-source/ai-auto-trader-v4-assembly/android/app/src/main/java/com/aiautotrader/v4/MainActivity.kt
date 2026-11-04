@@ -1622,7 +1622,7 @@ private fun PositionsScreen() {
 
 @Composable
 private fun RiskCenterScreen() {
-    PaperLedgerRefreshEffect()
+
     val snapshot = BackendSession.paperLedger.value
     val risk = snapshot?.risk
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -1877,7 +1877,7 @@ private fun ReadOnlyBackendConnectionCard() {
 
 @Composable
 private fun DashboardScreen(openAnalysis: () -> Unit) {
-    PaperLedgerRefreshEffect()
+
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         ReadOnlyBackendConnectionCard()
         CardPanel {
