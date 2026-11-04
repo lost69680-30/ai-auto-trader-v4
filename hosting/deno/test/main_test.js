@@ -67,7 +67,11 @@ test('handler exposes health and GET-only markets; mutation is forbidden', async
 });
 
 test('upstream failure returns safe unavailable response', async () => {
-  const env = (name) => ({ SOLO_MARKET_SYMBOLS: 'BTCUSDT', BINANCE_USDM_TESTNET_REST_ORIGIN: 'https://demo-fapi.binance.com' })[name];
+  const env = (name) => ({
+    SOLO_MARKET_SYMBOLS: 'BTCUSDT',
+    BINANCE_USDM_TESTNET_REST_ORIGIN: 'https://demo-fapi.binance.com',
+    SOLO_FALLBACK_TOKEN: 'solo-test-shared-secret-0123456789abcdef',
+  })[name];
   const handler = createHandler({ env, now: () => NOW, fetchImpl: async () => { throw new Error('network down'); } });
   const response = await handler(new Request('https://deno.example/api/v1/markets', { headers: { authorization: 'Bearer solo-test-shared-secret-0123456789abcdef' } }));
   assert.equal(response.status, 503);
@@ -77,6 +81,27 @@ test('upstream failure returns safe unavailable response', async () => {
   assert.deepEqual(body.items, []);
 });
 
+
+test('unconfigured Deno fallback returns a safe empty market snapshot without upstream access', async () => {
+  let upstreamCalls = 0;
+  const env = (name) => ({
+    SOLO_MARKET_SYMBOLS: 'BTCUSDT',
+    BINANCE_USDM_TESTNET_REST_ORIGIN: 'https://demo-fapi.binance.com',
+  })[name];
+  const handler = createHandler({
+    env,
+    now: () => NOW,
+    fetchImpl: async () => { upstreamCalls += 1; return new Response(JSON.stringify(upstreamRows)); },
+  });
+  const response = await handler(new Request('https://deno.example/api/v1/markets'));
+  assert.equal(response.status, 503);
+  const body = await response.json();
+  assert.equal(body.status, 'UNAVAILABLE');
+  assert.equal(body.error, 'fallback_not_configured');
+  assert.deepEqual(body.items, []);
+  assert.equal(body.orders_authorized, false);
+  assert.equal(upstreamCalls, 0);
+});
 
 test('Deno market fallback requires the private service-to-service token', async () => {
   let upstreamCalls = 0;
