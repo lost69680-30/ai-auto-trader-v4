@@ -545,3 +545,25 @@ def test_persist_equity_snapshot_fails_closed_without_explicit_false_order_autho
             as_of=1_800_000_000.0,
             max_mark_age_seconds=45.0,
         )
+
+def test_disabled_intelligence_flag_disables_persisted_optional_schedules():
+    from backend.shared_market_worker import disable_optional_intelligence_schedules
+
+    class Scheduler:
+        def __init__(self):
+            self.calls = []
+
+        def register_interval(self, name, **kwargs):
+            self.calls.append((name, kwargs))
+
+    scheduler = Scheduler()
+    disable_optional_intelligence_schedules(scheduler)
+
+    names = {name for name, _ in scheduler.calls}
+    assert names == {
+        "market_intelligence_scan",
+        "market_intelligence_scan_spot",
+        "opportunity_reassessment_futures",
+        "opportunity_reassessment_spot",
+    }
+    assert all(kwargs["enabled"] is False for _, kwargs in scheduler.calls)
