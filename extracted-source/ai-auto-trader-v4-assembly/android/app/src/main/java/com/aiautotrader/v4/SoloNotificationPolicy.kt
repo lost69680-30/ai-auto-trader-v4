@@ -128,3 +128,8 @@ internal fun evaluateSoloAlertAdmission(
     ),
     nowEpochMs,
 )
+
+
+/** Paper-ledger alerts are observed only with an authenticated foreground session. */
+internal fun shouldRefreshPaperLedger(sessionToken: String, isForeground: Boolean): Boolean =
+    sessionToken.length >= 32 && isForeground
