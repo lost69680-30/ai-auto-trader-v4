@@ -271,3 +271,17 @@ test('streamed oversized emergency-stop body is capped even without Content-Leng
   assert.equal(response.status, 400);
   assert.equal(calls.length, 0);
 });
+
+
+test('primary market items may omit inline candles because Android loads history separately', async () => {
+  const primary = structuredClone(freshMarket);
+  delete primary.items[0].candles;
+  const response = await handleRequest(new Request('https://edge.example/api/v1/markets', {
+    headers: { authorization: 'Bearer ' + 'x'.repeat(40) },
+  }), env(), {
+    now: () => NOW,
+    fetchImpl: async () => jsonResponse(primary),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-solo-data-mode'), 'PRIMARY');
+});
