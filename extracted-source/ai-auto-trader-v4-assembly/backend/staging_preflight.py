@@ -231,28 +231,59 @@ def check_database_schema(
                 connection.execute("SET TRANSACTION READ ONLY")
                 rows = connection.execute(
                     """
-                    SELECT c.relname, c.relrowsecurity
+                    SELECT
+                        c.relname,
+                        c.relrowsecurity,
+                        current_user::text,
+                        session_user::text,
+                        has_schema_privilege(current_user, n.oid, 'USAGE') AS schema_usage,
+                        (
+                            has_table_privilege(current_user, c.oid, 'SELECT')
+                            AND has_table_privilege(current_user, c.oid, 'INSERT')
+                            AND has_table_privilege(current_user, c.oid, 'UPDATE')
+                            AND has_table_privilege(current_user, c.oid, 'DELETE')
+                        ) AS required_dml_access
                     FROM pg_class AS c
                     JOIN pg_namespace AS n ON n.oid = c.relnamespace
                     WHERE n.nspname = 'paper_ledger' AND c.relkind = 'r'
                     """
                 ).fetchall()
-        present = {str(name) for name, _ in rows}
+        present = {str(row[0]) for row in rows}
         missing = sorted(REQUIRED_PRIVATE_TABLES - present)
         rls_disabled = sorted(
-            str(name) for name, enabled in rows
-            if str(name) in REQUIRED_PRIVATE_TABLES and enabled is not True
+            str(row[0]) for row in rows
+            if str(row[0]) in REQUIRED_PRIVATE_TABLES and row[1] is not True
         )
-        if missing or rls_disabled:
+        runtime_roles = sorted({str(row[2]) for row in rows if len(row) > 2})
+        session_roles = sorted({str(row[3]) for row in rows if len(row) > 3})
+        schema_access_missing = sorted(
+            str(row[0]) for row in rows
+            if str(row[0]) in REQUIRED_PRIVATE_TABLES and (len(row) < 5 or row[4] is not True)
+        )
+        dml_access_missing = sorted(
+            str(row[0]) for row in rows
+            if str(row[0]) in REQUIRED_PRIVATE_TABLES and (len(row) < 6 or row[5] is not True)
+        )
+        if missing or rls_disabled or schema_access_missing or dml_access_missing:
             problems = []
             if missing:
                 problems.append("missing tables: " + ", ".join(missing))
             if rls_disabled:
                 problems.append("row-level security disabled: " + ", ".join(rls_disabled))
-            return PreflightCheck("postgres_schema_read_only", False, "; ".join(problems))
+            if schema_access_missing:
+                problems.append("schema USAGE missing for: " + ", ".join(schema_access_missing))
+            if dml_access_missing:
+                problems.append("required DML privileges missing for: " + ", ".join(dml_access_missing))
+            role_detail = (
+                f"effective role={','.join(runtime_roles) or 'unknown'}; "
+                f"session role={','.join(session_roles) or 'unknown'}; "
+            )
+            return PreflightCheck("postgres_schema_read_only", False, role_detail + "; ".join(problems))
         return PreflightCheck(
             "postgres_schema_read_only", True,
-            f"Read-only catalog inspection found all {len(REQUIRED_PRIVATE_TABLES)} required private tables with row-level security enabled.",
+            f"Read-only catalog inspection as effective role={','.join(runtime_roles)} "
+            f"(session role={','.join(session_roles)}) found all {len(REQUIRED_PRIVATE_TABLES)} "
+            "required private tables with RLS, schema USAGE, and SELECT/INSERT/UPDATE/DELETE privileges.",
         )
     except _RemoteDatabaseTLSRequired:
         return PreflightCheck(
