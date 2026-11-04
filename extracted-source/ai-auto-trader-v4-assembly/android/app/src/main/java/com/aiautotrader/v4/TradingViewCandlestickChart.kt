@@ -105,7 +105,7 @@ internal class TradingViewCandlestickChart(context: Context) : FrameLayout(conte
             }
             grid = gridOptions {
                 vertLines = gridLineOptions { color = gridColor.toIntColor() }
-                horzLines = gridLineOptions { color = grid.toIntColor() }
+                horzLines = gridLineOptions { color = gridColor.toIntColor() }
             }
             rightPriceScale = priceScaleOptions { borderColor = gridColor.toIntColor() }
             timeScale = timeScaleOptions {
