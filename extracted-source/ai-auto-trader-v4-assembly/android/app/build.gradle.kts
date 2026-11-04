@@ -8,7 +8,8 @@ val paperApiBaseUrl = providers.gradleProperty("paperApiBaseUrl").orElse("").get
 
 android {
     namespace = "com.aiautotrader.v4"
-    compileSdk = 35
+    compileSdk = 36
+    buildToolsVersion = "36.0.0"
 
     defaultConfig {
         applicationId = "com.aiautotrader.v4"
