@@ -16,6 +16,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        resValue("string", "app_name", "Solo")
         buildConfigField("String", "PAPER_API_BASE_URL", "\"${paperApiBaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
 
