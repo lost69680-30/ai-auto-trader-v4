@@ -43,11 +43,36 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     steps:
-      - name: Install PostgreSQL client and age
+      - name: Install PostgreSQL client and age with native post-quantum support
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --yes postgresql-client age
+          sudo apt-get install --yes postgresql-client curl
+          age_version="1.3.2"
+          age_archive="/tmp/age-v${age_version}-linux-amd64.tar.gz"
+          curl --fail --location --silent --show-error \
+            "https://github.com/FiloSottile/age/releases/download/v${age_version}/age-v${age_version}-linux-amd64.tar.gz" \
+            --output "$age_archive"
+          echo "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  $age_archive" | sha256sum --check -
+          mkdir -p /tmp/age-release
+          tar -xzf "$age_archive" -C /tmp/age-release
+          age_binary="$(find /tmp/age-release -type f -name age -perm /111 -print -quit)"
+          age_keygen_binary="$(find /tmp/age-release -type f -name age-keygen -perm /111 -print -quit)"
+          test -n "$age_binary"
+          test -n "$age_keygen_binary"
+          sudo install -m 0755 "$age_binary" /usr/local/bin/age
+          sudo install -m 0755 "$age_keygen_binary" /usr/local/bin/age-keygen
+          age --version
+          # Verify native age1pq1... support before touching the database dump.
+          umask 077
+          age-keygen -pq -o /tmp/solo-pq-identity.txt 2>/dev/null
+          pq_recipient="$(age-keygen -y /tmp/solo-pq-identity.txt)"
+          printf 'Solo post-quantum encryption self-test\\n' > /tmp/solo-pq-plain.txt
+          age --recipient "$pq_recipient" --output /tmp/solo-pq-check.age /tmp/solo-pq-plain.txt
+          age --decrypt --identity /tmp/solo-pq-identity.txt --output /tmp/solo-pq-roundtrip.txt /tmp/solo-pq-check.age
+          cmp /tmp/solo-pq-plain.txt /tmp/solo-pq-roundtrip.txt
+          rm -f "$age_archive" /tmp/solo-pq-identity.txt /tmp/solo-pq-plain.txt /tmp/solo-pq-check.age /tmp/solo-pq-roundtrip.txt
+          echo "PASS: pinned age v${age_version} checksum and native post-quantum round-trip."
 
       - name: Preflight the dedicated read-only staging role and RLS coverage
         env:
