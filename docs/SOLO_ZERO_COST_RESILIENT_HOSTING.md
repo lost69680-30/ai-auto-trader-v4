@@ -36,7 +36,7 @@
 - Every returned market item and top-level response explicitly carries `orders_authorized=false` and `mode=PAPER_ONLY`.
 - Deno returns no candles. Chart history, indicators, strategy assessment, opportunity research, and paper simulation remain unavailable when the primary backend is down.
 - The Deno fallback is not connected to the paper worker and cannot feed the Risk Guardian or create paper intents.
-- Bearer tokens are forwarded only to the Render primary for authenticated requests. No API token, exchange credential, database URI, or service-role key is stored in source or sent to Deno.
+- The user's bearer token is forwarded only to the Render primary. Cloudflare and Deno use a separate random service-to-service secret: Cloudflare secret `SECONDARY_MARKET_TOKEN` and Deno secret `SOLO_FALLBACK_TOKEN` must match and be at least 32 characters. Deno rejects unauthenticated market requests; `/healthz` remains public. No API token, exchange credential, database URI, or service-role key is stored in source or sent to Deno.
 
 ## 4. Provider limits and why this is not a 24/7 guarantee
 
@@ -61,7 +61,7 @@ Read-only inventory on 2026-11-05 found:
 
 1. Deploy `hosting/deno/main.js` as a Deno Deploy application. Configure `SOLO_MARKET_SYMBOLS` with the existing ten-symbol allowlist and `BINANCE_USDM_TESTNET_REST_ORIGIN=https://demo-fapi.binance.com`.
 2. Verify Deno `/healthz` and authenticated-independent `/api/v1/markets` output. Confirm all items have fresh timestamps, `data_mode=POLLED_FALLBACK`, and `orders_authorized=false`.
-3. Deploy `hosting/cloudflare/wrangler.toml` and `hosting/cloudflare/src/index.js` as a Cloudflare Worker. Set `PRIMARY_API_ORIGIN=https://solo-ai-auto-trader-staging-api.onrender.com`, `SECONDARY_MARKET_ORIGIN` to the Deno deployment origin, and `MAX_MARKET_AGE_SECONDS=120`.
+3. Set the Deno secret `SOLO_FALLBACK_TOKEN` and the Cloudflare secret `SECONDARY_MARKET_TOKEN` to the same newly generated random value (at least 32 characters). Deploy `hosting/cloudflare/wrangler.toml` and `hosting/cloudflare/src/index.js` as a Cloudflare Worker. Set `PRIMARY_API_ORIGIN=https://solo-ai-auto-trader-staging-api.onrender.com`, `SECONDARY_MARKET_ORIGIN` to the Deno deployment origin, and `MAX_MARKET_AGE_SECONDS=120`. Never commit the shared secret.
 4. Verify Worker `/healthz`, `/readyz`, primary API reads, WebSocket upgrade forwarding, and simulated primary-outage fallback. Confirm `/api/v1/risk`, `/positions`, `/opportunities`, and `/api/v1/emergency-stop` never fall back to Deno.
 5. Only after the above succeeds, set the Android staging build's `PAPER_API_BASE_URL` to the Cloudflare Worker URL. Do not change production builds.
 6. Install the staging APK and physically verify: normal Render WebSocket shows LIVE only while connected; simulated full API outage displays `DEGRADED · MARKET FALLBACK`; market-only outage with ledger still reachable displays `CONNECTED · PAPER ONLY · MARKET FALLBACK`; both show a non-LIVE recent snapshot; no false LIVE state; ledger/risk/history remain unavailable; emergency-stop failure is explicit; restoring Render reconnects the WebSocket and restores primary API data.
