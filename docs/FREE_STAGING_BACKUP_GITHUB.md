@@ -47,7 +47,7 @@ Before starting:
 3. Tick both confirmations: staging-only and free artifact storage.
 4. Run the workflow once.
 
-The workflow stops if the database role is not exactly `solo_backup_reader`, any table lacks RLS or the explicit SELECT policy, the dump fails, the age round-trip fails, the disposable PostgreSQL restore fails, the encrypted archive exceeds 200 MiB, or the recipient secret is invalid. It never connects to production.
+The workflow pins the official [age v1.3.2 Linux amd64 release](https://github.com/FiloSottile/age/releases/tag/v1.3.2) by SHA-256 and uses its native post-quantum support for AgePony recipients beginning `age1pq1...`; it also runs a post-quantum encryption/decryption self-test before connecting to the database. This avoids relying on an external `age-plugin-pq` binary. The workflow stops if the database role is not exactly `solo_backup_reader`, any table lacks RLS or the explicit SELECT policy, the dump fails, the age round-trip fails, the disposable PostgreSQL restore fails, the encrypted archive exceeds 200 MiB, or the recipient secret is invalid. It never connects to production.
 
 ## 5. Download and decrypt on the phone
 
