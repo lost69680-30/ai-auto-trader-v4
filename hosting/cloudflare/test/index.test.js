@@ -20,6 +20,7 @@ function env(overrides = {}) {
   return {
     PRIMARY_API_ORIGIN: 'https://solo-primary.example',
     SECONDARY_MARKET_ORIGIN: 'https://solo-market-fallback.example',
+    SECONDARY_MARKET_TOKEN: 'solo-test-shared-secret-0123456789abcdef',
     MAX_MARKET_AGE_SECONDS: '120',
     ...overrides,
   };
@@ -64,9 +65,10 @@ test('market request falls back to independent Deno source when primary is unava
     headers: { authorization: 'Bearer ' + 'x'.repeat(40) },
   }), env(), {
     now: () => NOW,
-    fetchImpl: async (url) => {
+    fetchImpl: async (url, init) => {
       calls.push(String(url));
       if (String(url).startsWith('https://solo-primary.example')) throw new Error('primary asleep');
+      assert.equal(init.headers.authorization, 'Bearer solo-test-shared-secret-0123456789abcdef');
       return jsonResponse(fallback);
     },
   });
@@ -154,9 +156,10 @@ test('status fallback is explicitly market-only and never fabricates ledger or r
     headers: { authorization: 'Bearer ' + 'x'.repeat(40) },
   }), env(), {
     now: () => NOW,
-    fetchImpl: async (url) => {
+    fetchImpl: async (url, init) => {
       calls.push(String(url));
       if (String(url).startsWith('https://solo-primary.example')) return new Response('unavailable', { status: 503 });
+      assert.equal(init.headers.authorization, 'Bearer solo-test-shared-secret-0123456789abcdef');
       return jsonResponse(fallback);
     },
   });
@@ -179,10 +182,13 @@ test('primary HTTP 500 triggers market-only fallback, while auth errors do not',
     headers: { authorization: 'Bearer ' + 'x'.repeat(40) },
   }), env(), {
     now: () => NOW,
-    fetchImpl: async (url) => {
+    fetchImpl: async (url, init) => {
       calls.push(String(url));
-      return String(url).startsWith('https://solo-primary.example')
-        ? new Response('server error', { status: 500 }) : jsonResponse(fallback);
+      if (!String(url).startsWith('https://solo-primary.example')) {
+        assert.equal(init.headers.authorization, 'Bearer solo-test-shared-secret-0123456789abcdef');
+        return jsonResponse(fallback);
+      }
+      return new Response('server error', { status: 500 });
     },
   });
   assert.equal(response.status, 200);
@@ -284,4 +290,31 @@ test('primary market items may omit inline candles because Android loads history
   });
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('x-solo-data-mode'), 'PRIMARY');
+});
+
+
+test('secondary fallback is disabled when the service-to-service secret is missing', async () => {
+  const calls = [];
+  const response = await handleRequest(new Request('https://edge.example/api/v1/markets', {
+    headers: { authorization: 'Bearer ' + 'x'.repeat(40) },
+  }), env({ SECONDARY_MARKET_TOKEN: '' }), {
+    now: () => NOW,
+    fetchImpl: async (url) => { calls.push(String(url)); return new Response('unavailable', { status: 503 }); },
+  });
+  assert.equal(response.status, 503);
+  assert.equal(calls.length, 1);
+});
+
+test('readyz does not report the secondary ready when its secret is absent', async () => {
+  const calls = [];
+  const response = await handleRequest(new Request('https://edge.example/readyz'), env({ SECONDARY_MARKET_TOKEN: '' }), {
+    fetchImpl: async (url) => {
+      calls.push(String(url));
+      return new Response(null, { status: 200 });
+    },
+  });
+  const body = await response.json();
+  assert.equal(body.status, 'ready');
+  assert.equal(body.market_fallback, 'UNAVAILABLE');
+  assert.equal(calls.length, 1);
 });
