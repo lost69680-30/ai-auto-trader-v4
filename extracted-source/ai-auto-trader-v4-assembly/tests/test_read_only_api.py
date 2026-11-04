@@ -932,3 +932,12 @@ def test_configured_market_symbols_falls_back_to_paper_symbols_and_safe_default(
     )
     assert _configured_market_symbols({}) == ("BTCUSDT", "ETHUSDT")
     assert _configured_market_symbols({"PAPER_MARKET_SYMBOLS": ""}) == ()
+
+
+def test_api_token_environment_value_is_trimmed_without_changing_token_contents():
+    from app.engines.read_only_api import _load_api_token
+
+    expected = "t" * 48
+    assert _load_api_token({"PAPER_API_TOKEN": "  " + expected + " \n"}) == expected
+    assert _load_api_token({"PAPER_API_TOKEN": expected}) == expected
+    assert _load_api_token({"PAPER_API_TOKEN": "   "}) == ""
