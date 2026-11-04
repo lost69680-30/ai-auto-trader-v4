@@ -22,6 +22,15 @@ export function parseSymbols(raw) {
   return unique;
 }
 
+function constantTimeEqual(left, right) {
+  if (typeof left !== 'string' || typeof right !== 'string' || left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
 function finitePositive(value) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : null;
@@ -81,8 +90,32 @@ export function createHandler({ env, fetchImpl = fetch, now = () => Date.now() }
     if (url.pathname === '/healthz' && request.method === 'GET') {
       return json({ status: 'ok', service: 'solo-market-fallback', mode: 'PAPER_ONLY', orders_authorized: false });
     }
+    if (url.pathname === '/readyz' && request.method === 'GET') {
+      const expectedToken = readEnv('SOLO_FALLBACK_TOKEN');
+      if (typeof expectedToken !== 'string' || expectedToken.length < 32) {
+        return json({ status: 'not_ready', orders_authorized: false }, 503);
+      }
+      if (!constantTimeEqual(request.headers.get('authorization') ?? '', `Bearer ${expectedToken}`)) {
+        return json({ error: 'unauthorized', orders_authorized: false }, 401);
+      }
+      try {
+        parseSymbols(readEnv('SOLO_MARKET_SYMBOLS'));
+        const configuredOrigin = new URL(readEnv('BINANCE_USDM_TESTNET_REST_ORIGIN') || 'https://demo-fapi.binance.com');
+        if (configuredOrigin.protocol !== 'https:' || configuredOrigin.username || configuredOrigin.password || configuredOrigin.search || configuredOrigin.hash || configuredOrigin.pathname !== '/') throw new Error('invalid origin');
+      } catch {
+        return json({ status: 'not_ready', orders_authorized: false }, 503);
+      }
+      return json({ status: 'ready', service: 'solo-market-fallback', mode: 'PAPER_ONLY', orders_authorized: false });
+    }
     if (url.pathname !== '/api/v1/markets') return json({ error: 'not_found', orders_authorized: false }, 404);
     if (request.method !== 'GET') return json({ error: 'method_not_allowed', orders_authorized: false }, 405);
+    const expectedToken = readEnv('SOLO_FALLBACK_TOKEN');
+    if (typeof expectedToken !== 'string' || expectedToken.length < 32) {
+      return json({ status: 'UNAVAILABLE', error: 'fallback_not_configured', items: [], orders_authorized: false }, 503);
+    }
+    if (!constantTimeEqual(request.headers.get('authorization') ?? '', `Bearer ${expectedToken}`)) {
+      return json({ error: 'unauthorized', orders_authorized: false }, 401);
+    }
 
     let symbols;
     let origin;
