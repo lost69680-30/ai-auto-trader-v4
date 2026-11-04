@@ -128,7 +128,7 @@ internal object SoloNotificationCenter {
                 Notification.Builder(context)
             }
             notification
-                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setSmallIcon(R.drawable.ic_solo_notification)
                 .setContentTitle(title)
                 .setContentText(message)
                 .setStyle(Notification.BigTextStyle().bigText(message))
