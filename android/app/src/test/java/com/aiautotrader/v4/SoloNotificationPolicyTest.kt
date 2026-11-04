@@ -78,4 +78,24 @@ class SoloNotificationPolicyTest {
             gate.evaluate(event("evt-future").copy(occurredAtEpochMs = 70_001L), 1_000L),
         )
     }
+
+    @Test fun publisherAdmissionUsesFixedSeverityAndConditionCooldown() {
+        val gate = SoloNotificationGate(cooldownMillis = 60_000L)
+
+        fun admit(eventId: String, now: Long) = evaluateSoloAlertAdmission(
+            gate = gate,
+            eventId = eventId,
+            type = SoloAlertType.EMERGENCY_STOP,
+            conditionKey = "active",
+            title = "Emergency Stop active",
+            message = "Emergency Stop is confirmed active. New paper orders are blocked.",
+            occurredAtEpochMs = now,
+            nowEpochMs = now,
+            source = "paper_risk_snapshot",
+            scope = "account",
+        )
+
+        assertEquals(SoloNotificationDecision.ACCEPTED, admit("stop-1", 1_000L))
+        assertEquals(SoloNotificationDecision.COOLED_DOWN, admit("stop-2", 2_000L))
+    }
 }
