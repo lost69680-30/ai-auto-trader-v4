@@ -1,0 +1,8 @@
+{
+  "name": "solo-hosting-resilience",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:hosting": "node --test hosting/cloudflare/test/*.test.js hosting/deno/test/*.test.js"
+  }
+}
