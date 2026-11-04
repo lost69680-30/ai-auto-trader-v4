@@ -930,17 +930,25 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
                 val items = if (marketsCode in 200..299 && safeMarkets) {
                     parseMarketItems(marketJson.optJSONArray("items") ?: JSONArray())
                 } else emptyList()
+                val marketDataFallback = marketJson.optString("data_mode") == "POLLED_FALLBACK"
+                val usingMarketFallback = marketOnlyFallback || marketDataFallback
+                val resolvedBackendStatusLabel = when {
+                    marketOnlyFallback -> "DEGRADED · MARKET FALLBACK"
+                    marketDataFallback -> "CONNECTED · PAPER ONLY · MARKET FALLBACK"
+                    else -> "CONNECTED · PAPER ONLY"
+                }
                 val healthy = marketsCode in 200..299 && feed == "HEALTHY" && items.isNotEmpty() && safeMarkets
                 val message = when {
                     marketOnlyFallback -> "Primary ledger/API unavailable. Independent polled Futures Testnet snapshots are display-only; WebSocket streaming, candle history, positions, risk, opportunities and paper processing remain unavailable. No fallback data is used for paper decisions. $reason"
+                    marketDataFallback -> "Primary API and paper ledger remain connected, but the market feed is using independent polled Futures Testnet snapshots. This is not a live stream and is never used for paper decisions. $reason"
                     healthy -> "Authenticated backend connected. ${items.size} validated instrument(s) loaded; order authorization remains disabled."
                     !safeMarkets -> "Market endpoint returned an unsafe or incomplete response. Data was rejected."
                     reason.isNotBlank() && reason != "null" -> reason
                     else -> "No validated market candles were returned (HTTP $marketsCode)."
                 }
                 MarketFetchResult(
-                    marketsCode, !marketOnlyFallback, backendStatusLabel, feed, items, message, safeMarkets,
-                    marketFallback = marketOnlyFallback
+                    marketsCode, !marketOnlyFallback, resolvedBackendStatusLabel, feed, items, message, safeMarkets,
+                    marketFallback = usingMarketFallback
                 )
             }
         }
@@ -2089,12 +2097,14 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
         ReadOnlyBackendConnectionCard()
         CardPanel {
             val connected = BackendSession.status.value.startsWith("CONNECTED")
-            val marketFallback = BackendSession.status.value == "DEGRADED · MARKET FALLBACK"
+            val marketFallback = BackendSession.status.value.contains("MARKET FALLBACK")
+            val ledgerOfflineFallback = BackendSession.status.value == "DEGRADED · MARKET FALLBACK"
             StatusLine(
                 "●",
                 when {
+                    connected && marketFallback -> "BACKEND CONNECTED · MARKET DATA FALLBACK"
                     connected -> "BACKEND CONNECTED · PAPER ONLY"
-                    marketFallback -> "MARKET FALLBACK · PAPER LEDGER OFFLINE"
+                    ledgerOfflineFallback -> "MARKET FALLBACK · PAPER LEDGER OFFLINE"
                     else -> "BACKEND STATUS · ${BackendSession.status.value}"
                 },
                 if (connected) Green else Color(0xFFFFC857)
@@ -2103,8 +2113,9 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
             Text("Paper mode only", fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text(
                 when {
+                    connected && marketFallback -> "Primary API and paper ledger remain connected. The market feed is temporarily using independent, polled Futures Testnet snapshots; this is not a live stream and is never used for paper decisions. ${BackendSession.marketMessage.value}"
                     connected -> "Authenticated backend session retained across navigation. Market feed: ${BackendSession.feedStatus.value}. ${BackendSession.marketMessage.value}"
-                    marketFallback -> "Only independent, polled Futures Testnet market snapshots may be displayed. This is not a live stream. Paper ledger, positions, risk, opportunities, candle history and paper processing are unavailable; no fallback data is used for paper decisions."
+                    ledgerOfflineFallback -> "Only independent, polled Futures Testnet market snapshots may be displayed. This is not a live stream. Paper ledger, positions, risk, opportunities, candle history and paper processing are unavailable; no fallback data is used for paper decisions."
                     else -> "Live balances, positions and market data remain unavailable until the authenticated API is connected."
                 },
                 color = Muted, fontSize = 13.sp, lineHeight = 19.sp
