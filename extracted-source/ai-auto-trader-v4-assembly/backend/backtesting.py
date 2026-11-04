@@ -24,16 +24,22 @@ class BacktestConfig:
         numeric = (self.initial_equity, self.position_fraction, self.fee_bps_per_side,
                    self.slippage_bps_per_side, self.funding_bps_per_8h,
                    self.minimum_signal_score)
-        if not all(math.isfinite(v) for v in numeric):
-            raise ValueError("backtest configuration values must be finite")
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in numeric):
+            raise ValueError("backtest configuration values must be numeric and finite")
+        if not all(math.isfinite(value) for value in numeric):
+            raise ValueError("backtest configuration values must be numeric and finite")
         if self.initial_equity <= 0:
             raise ValueError("initial_equity must be positive")
         if not 0 < self.position_fraction <= 1:
             raise ValueError("position_fraction must be in (0, 1]")
         if min(self.fee_bps_per_side, self.slippage_bps_per_side, self.funding_bps_per_8h) < 0:
             raise ValueError("cost assumptions must be non-negative")
-        if self.candle_interval_minutes <= 0:
-            raise ValueError("candle_interval_minutes must be positive")
+        if (
+            isinstance(self.candle_interval_minutes, bool)
+            or not isinstance(self.candle_interval_minutes, int)
+            or self.candle_interval_minutes <= 0
+        ):
+            raise ValueError("candle_interval_minutes must be a positive integer")
         if not 0 <= self.minimum_signal_score <= 100:
             raise ValueError("minimum_signal_score must be between 0 and 100")
 

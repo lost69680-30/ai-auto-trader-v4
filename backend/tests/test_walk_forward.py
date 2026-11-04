@@ -70,3 +70,36 @@ def test_walk_forward_rejects_short_or_irregular_data_without_trades():
 def test_walk_forward_rejects_holdout_smaller_than_minimum():
     with pytest.raises(ValueError, match="holdout"):
         WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=5, step_bars=40)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"train_bars": 120.5, "validation_bars": 40, "holdout_bars": 40, "step_bars": 40},
+        {"train_bars": 120, "validation_bars": 40.5, "holdout_bars": 40, "step_bars": 40},
+        {"train_bars": 120, "validation_bars": 40, "holdout_bars": 40, "step_bars": True},
+        {"train_bars": 120, "validation_bars": 40, "holdout_bars": 40, "step_bars": 40, "candle_interval_minutes": 1.5},
+    ],
+)
+def test_walk_forward_rejects_non_integer_fold_geometry(kwargs):
+    with pytest.raises(ValueError, match="integer"):
+        WalkForwardConfig(**kwargs)
+
+
+def test_walk_forward_rejects_overlapping_out_of_sample_windows():
+    with pytest.raises(ValueError, match="step_bars"):
+        WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40, step_bars=20)
+
+
+def test_walk_forward_rejects_candles_after_requested_research_clock():
+    rows = [
+        Candle(row.symbol, row.timestamp + timedelta(minutes=1), row.open, row.high,
+               row.low, row.close, row.volume)
+        for row in make_candles(360)
+    ]
+    with pytest.raises(ValueError, match="future"):
+        evaluate_walk_forward(
+            "BTCUSDT", rows,
+            config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40),
+            research_now=NOW,
+        )
