@@ -485,3 +485,26 @@ This section supersedes earlier historical notes in this file that said the stag
 ### Hosting boundary
 - Existing Render Free services remain Free and unchanged. No keep-alive traffic, paid compute, billing, or payment method was added.
 - A continuously running worker cannot be guaranteed on the current free/sleeping host. The application must surface missing/stale worker heartbeat as degraded, not healthy. Continuous 24/7 processing remains outside the capability of the present $0 hosting allocation.
+
+
+## Verified closure of staging database migration gate — 2026-11-04
+
+- Supavisor session-pooler logs for the same window as the Render staging worker heartbeat show authenticated external application sessions using database login `postgres`; the Render worker heartbeat at 19:57:49 UTC and Render shutdown at 19:58:05 UTC bracket the matching pooler sessions at 19:57:58–19:58:09 UTC.
+- The effective login is therefore identified as `postgres`, not `service_role`. The role is a login role with `rolsuper=false`, `rolbypassrls=true`; it owns all 21 `paper_ledger` tables and has schema USAGE plus SELECT/INSERT/UPDATE/DELETE on all 21.
+- All 21 tables retain RLS. The six opportunity tables have no SELECT grants to `anon`, `authenticated`, or `service_role`. The dedicated `solo_backup_reader` has SELECT-only access and its explicit SELECT policy on all six new tables; it has no write privileges, superuser, or RLS bypass.
+- The Supabase security advisor returned zero security lints. The performance advisor only flagged unused indexes on newly empty opportunity tables; they are retained because they support the active-state/history/lease queries once populated.
+- Enhanced `backend.staging_preflight --check-database` to report the actual effective/session role and fail unless all required private tables have RLS, schema USAGE, and SELECT/INSERT/UPDATE/DELETE privileges. Regression tests cover both permitted runtime access and a denied `service_role` case.
+- The migration gate is closed for the existing staging runtime connection. No credentials were revealed or changed.
+
+## Android risk-alert delivery remediation — 2026-11-04
+
+- WorkManager background risk polling is scheduled from app startup, uses the Android Keystore-encrypted backend token, requires connected network, and polls the authenticated HTTPS risk snapshot endpoint at a 15-minute minimum interval.
+- The worker emits only from a complete, validated risk snapshot with `orders_authorized=false`; no mutation or order endpoint is called. It shares the existing persistent event history, deduplication, acknowledgement and authoritative recovery transitions.
+- Tapping an OS risk notification now opens Solo. Foreground 30-second risk observation remains active.
+- Android staging build and unit tests passed for the background worker and notification-tap changes. Android source and extracted assembly copies match byte-for-byte.
+- Android WorkManager is best-effort under Doze/OEM battery restrictions; physical device validation of a real risk transition, acknowledgement and recovery is not available through the remote repository/hosting tools. No synthetic risk event was created, and no Emergency Stop state was changed to manufacture a test.
+
+## Zero-cost hosting constraint
+
+- The Render staging services remain on Free plans; no payment method, paid service, or keep-alive traffic was added.
+- This architecture cannot promise a continuously running server worker on the current free/sleeping allocation. Worker heartbeat expiry is the authoritative signal and must remain degraded/stale until a real worker resumes. No code change can honestly convert the current free hosting allocation into guaranteed 24/7 compute.
