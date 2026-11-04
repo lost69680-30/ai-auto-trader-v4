@@ -111,7 +111,7 @@ export function createHandler({ env, fetchImpl = fetch, now = () => Date.now() }
     if (request.method !== 'GET') return json({ error: 'method_not_allowed', orders_authorized: false }, 405);
     const expectedToken = readEnv('SOLO_FALLBACK_TOKEN');
     if (typeof expectedToken !== 'string' || expectedToken.length < 32) {
-      return json({ status: 'UNAVAILABLE', error: 'fallback_not_configured', orders_authorized: false }, 503);
+      return json({ status: 'UNAVAILABLE', error: 'fallback_not_configured', items: [], orders_authorized: false }, 503);
     }
     if (!constantTimeEqual(request.headers.get('authorization') ?? '', `Bearer ${expectedToken}`)) {
       return json({ error: 'unauthorized', orders_authorized: false }, 401);
