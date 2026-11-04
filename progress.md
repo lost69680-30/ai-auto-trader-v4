@@ -464,3 +464,24 @@ This section supersedes earlier historical notes in this file that said the stag
 - This is source/CI completion, not phone acceptance or production deployment. No Render deploy, Supabase migration, secret update, billing change, or production change was made.
 - The staging opportunity-registry migration remains unapplied because the actual Render API/worker database login role could not be identified from the available read-only runtime session data. The Supabase activity snapshot showed only platform sessions and no identifiable Render application session. Do not apply the migration until the runtime role and minimum privileges are verified.
 - Android physical-device notification acceptance, genuine risk-alert acknowledgement/resolution, background delivery, and real hosted market-data/worker soak remain unverified and are deferred to the final acceptance phase. The free hosting topology is not an always-on worker; no paid service or keep-alive workaround is used.
+
+
+## Final blocker remediation — 2026-11-04
+
+### Staging opportunity registry
+- Applied migration `20261031170000_create_opportunity_registry.sql` to the isolated Supabase staging project `solo-ai-auto-trader-staging` (`gryjtjobkmredawmymwy`) as migration `20261104202642_create_opportunity_registry`.
+- Verified all six opportunity registry tables exist. The full private `paper_ledger` schema now contains 21 tables; every listed table has RLS enabled.
+- Verified the six new registry tables are owned by `postgres` and have no SELECT grants for `anon`, `authenticated`, or `service_role`. No public Data API access was introduced.
+- This proves the staging schema migration is complete. It does **not** prove the Render staging process is connected to this Supabase project or identify its actual database login role. Render's configured secret values are not readable through the available account tooling; the separate Render Free Postgres instance is IP-allowlisted away from the hosted query tool. No credentials were exposed or changed.
+
+### Android background risk alerts
+- Added persistent WorkManager periodic risk polling, scheduled at app startup with a connected-network constraint and a 15-minute minimum interval.
+- The worker reads the existing Android Keystore-encrypted backend bearer token, calls only authenticated HTTPS `GET /api/v1/risk`, validates the complete response and explicit `orders_authorized=false`, then reuses the existing notification transition/admission policy.
+- No order, position mutation, Emergency Stop mutation, or other control endpoint is called. Missing token/configuration produces no alert; failed or incomplete requests retry and never synthesize an alert.
+- WorkManager persists scheduled work across process death/reboot and is best-effort under Android Doze/OEM battery controls. It is not an exact-time or guaranteed delivery channel. Foreground 30-second refresh remains unchanged.
+- Root and extracted Android sources, build files, and tests were verified byte-for-byte identical.
+- Android build and unit-test workflow is running for this change; physical device acceptance remains unverified in this environment.
+
+### Hosting boundary
+- Existing Render Free services remain Free and unchanged. No keep-alive traffic, paid compute, billing, or payment method was added.
+- A continuously running worker cannot be guaranteed on the current free/sleeping host. The application must surface missing/stale worker heartbeat as degraded, not healthy. Continuous 24/7 processing remains outside the capability of the present $0 hosting allocation.
