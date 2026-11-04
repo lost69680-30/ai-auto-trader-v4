@@ -42,7 +42,7 @@ class AnalysisJobDispatcher:
             raise ValueError("execution and risk mutation handlers are forbidden")
 
     def run_once(self) -> bool:
-        job = self.scheduler.claim_next(owner=self.owner)
+        job = self.scheduler.claim_next(owner=self.owner, allowed_job_names=set(self.handlers))
         if job is None:
             self.last_run_status = "IDLE"
             return False
