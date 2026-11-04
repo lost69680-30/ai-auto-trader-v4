@@ -108,7 +108,7 @@ class DurableJobScheduler:
 
     def claim_next(
         self, *, owner: str | None = None, now: datetime | None = None,
-        max_attempts: int = 5,
+        max_attempts: int = 5, allowed_job_names: set[str] | None = None,
     ) -> dict[str, Any] | None:
         stamp = _utc(now or datetime.now(timezone.utc))
         if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
@@ -116,6 +116,17 @@ class DurableJobScheduler:
         lease_owner = owner or str(uuid.uuid4())
         if not isinstance(lease_owner, str) or not lease_owner.strip() or len(lease_owner) > 120:
             raise ValueError("owner must contain 1 to 120 characters")
+        if allowed_job_names is not None:
+            if not isinstance(allowed_job_names, (set, frozenset)) or any(
+                not isinstance(name, str) or self._validate_name(name) != name
+                for name in allowed_job_names
+            ):
+                raise ValueError("allowed_job_names must be a set of valid job names")
+            allowed_names = sorted(allowed_job_names)
+            if not allowed_names:
+                return None
+        else:
+            allowed_names = None
         with self._connect() as conn:
             conn.execute(
                 """UPDATE paper_ledger.scheduled_jobs
@@ -132,6 +143,7 @@ class DurableJobScheduler:
                      WHERE (status = 'PENDING'
                             OR (status = 'RUNNING' AND lease_expires_at <= %s))
                        AND attempts < %s
+                       AND (%s::text[] IS NULL OR job_name = ANY(%s::text[]))
                      ORDER BY scheduled_for, idempotency_key
                      FOR UPDATE SKIP LOCKED LIMIT 1
                    )
@@ -146,7 +158,8 @@ class DurableJobScheduler:
                    RETURNING job.idempotency_key, job.job_name, job.scheduled_for,
                              job.status, job.attempts, job.lease_owner,
                              job.lease_expires_at, job.payload""",
-                (stamp, max_attempts, lease_owner, stamp, self.lease_seconds, stamp),
+                (stamp, max_attempts, allowed_names, allowed_names,
+                 lease_owner, stamp, self.lease_seconds, stamp),
             ).fetchone()
         if row is None:
             return None
