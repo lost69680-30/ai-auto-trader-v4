@@ -156,8 +156,15 @@ internal object SoloNotificationCenter {
                     }
                 )
             }
-            if (Build.VERSION.SDK_INT >= 33 &&
-                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            val runtimePermissionGranted = Build.VERSION.SDK_INT < 33 ||
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            val channelEnabled = Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+                manager.getNotificationChannel(channelId)?.importance != NotificationManager.IMPORTANCE_NONE
+            if (!shouldPostSystemNotification(
+                    appNotificationsEnabled = manager.areNotificationsEnabled(),
+                    channelEnabled = channelEnabled,
+                    runtimePermissionGranted = runtimePermissionGranted,
+                )
             ) return false
 
             val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
