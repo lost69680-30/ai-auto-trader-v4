@@ -135,3 +135,10 @@ internal fun evaluateSoloAlertAdmission(
  */
 internal fun shouldAttemptPaperLedgerRefresh(sessionToken: String, isForeground: Boolean): Boolean =
     sessionToken.isNotBlank() && isForeground
+
+/** Avoids marking a notification delivered when Android app/channel permission is disabled. */
+internal fun shouldPostSystemNotification(
+    appNotificationsEnabled: Boolean,
+    channelEnabled: Boolean,
+    runtimePermissionGranted: Boolean,
+): Boolean = appNotificationsEnabled && channelEnabled && runtimePermissionGranted
