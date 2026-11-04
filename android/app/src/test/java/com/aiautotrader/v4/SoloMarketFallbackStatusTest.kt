@@ -17,6 +17,7 @@ class SoloMarketFallbackStatusTest {
 
     @Test fun displaysOnlyValidatedDegradedSnapshotsFromExplicitFallback() {
         assertTrue(shouldDisplayMarketSnapshot(false, true, true, "DEGRADED", true))
+        assertTrue(shouldDisplayMarketSnapshot(true, true, true, "DEGRADED", true))
         assertFalse(shouldDisplayMarketSnapshot(false, true, false, "DEGRADED", true))
         assertFalse(shouldDisplayMarketSnapshot(false, true, true, "DEGRADED", false))
         assertFalse(shouldDisplayMarketSnapshot(false, false, true, "DEGRADED", true))
