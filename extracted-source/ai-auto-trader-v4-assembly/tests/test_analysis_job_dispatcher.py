@@ -134,3 +134,20 @@ def test_dispatcher_retries_handler_failure_without_completing_job():
     assert scheduler.completed == []
     assert scheduler.failed[0][0:2] == ("market_feed_health_audit:2", "test-worker")
     assert "temporary audit failure" in scheduler.failed[0][2]
+
+def test_dispatcher_does_not_claim_jobs_for_disabled_features():
+    scheduler = FakeScheduler([{
+        "idempotency_key": "market_intelligence_scan:disabled",
+        "job_name": "market_intelligence_scan",
+        "payload": {"scope": "continuous_opportunity_search"},
+        "orders_authorized": False,
+    }])
+    dispatcher = AnalysisJobDispatcher(scheduler, owner="test-worker", handlers={
+        "market_feed_health_audit": lambda payload, key: None,
+    })
+
+    assert dispatcher.run_once() is False
+    assert dispatcher.last_run_status == "IDLE"
+    assert scheduler.jobs[0]["job_name"] == "market_intelligence_scan"
+    assert scheduler.completed == []
+    assert scheduler.failed == []
