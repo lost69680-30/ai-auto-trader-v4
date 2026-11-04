@@ -16,7 +16,15 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
-        buildConfigField("String", "PAPER_API_BASE_URL", "\"${paperApiBaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "PAPER_API_BASE_URL", "\"\u0024{paperApiBaseUrl.replace("\\\\", "\\\\\\\\").replace("\\\"", "\\\\\"")}\"")
+    }
+
+    // Keep CI/debug staging builds installable beside the user's existing Solo app.
+    // A dedicated staging package avoids uninstalling the working app to test a draft APK.
+    buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".staging"
+        }
     }
 
     buildFeatures {
