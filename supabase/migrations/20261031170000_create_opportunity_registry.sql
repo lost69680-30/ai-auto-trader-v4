@@ -184,6 +184,12 @@ BEGIN
             'opportunity_watch_conditions', 'opportunity_events', 'opportunity_claims'
         ] LOOP
             EXECUTE format('GRANT SELECT ON paper_ledger.%I TO solo_backup_reader', table_name);
+            -- The migration is also used by repeatable disposable-DB test setup.
+            -- Replace only this dedicated policy so reruns remain deterministic.
+            EXECUTE format(
+                'DROP POLICY IF EXISTS solo_backup_reader_select ON paper_ledger.%I',
+                table_name
+            );
             EXECUTE format(
                 'CREATE POLICY solo_backup_reader_select ON paper_ledger.%I FOR SELECT TO solo_backup_reader USING (true)',
                 table_name
