@@ -35,6 +35,10 @@ class SoloRiskAlertWorker(
                 fetchPaperRiskSnapshot(baseUrl, token)
             }
             SoloNotificationCenter.observeVerifiedRiskSnapshot(applicationContext, risk)
+            // Retry OS delivery for persisted alerts that were admitted while permission,
+            // app-level notifications, or the notification channel was unavailable.
+            // This remains read-only: getRecords only retries local notification delivery.
+            SoloNotificationCenter.getRecords(applicationContext)
             Result.success()
         } catch (_: Exception) {
             // A timeout, sleeping free-tier host, auth transition, or invalid response
