@@ -123,6 +123,9 @@ jobs:
           set -euo pipefail
           APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort | tail -n 1)"
+          test -x "$AAPT"
+          "$AAPT" dump badging "$APK" | grep -F "package: name='com.aiautotrader.v4.staging'"
           sha256sum "$APK"
           ls -lh "$APK"
 
