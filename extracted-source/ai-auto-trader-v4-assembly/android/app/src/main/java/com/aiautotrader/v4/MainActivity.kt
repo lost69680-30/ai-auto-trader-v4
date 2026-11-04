@@ -38,6 +38,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1991,7 +1992,8 @@ private fun AnalysisScreen() {
             }
             Text("REST feed: ${BackendSession.feedStatus.value} · WebSocket: ${BackendSession.websocketStatus.value} · ${BackendSession.marketMessage.value}", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
             Text("Selected interval: $timeframe · loaded directly from validated, closed backend candles. No missing candles are fabricated.", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
-            CandlestickChart(Modifier.fillMaxWidth().height(190.dp), displayedCandles)
+            CandlestickChart(Modifier.fillMaxWidth().height(220.dp), displayedCandles)
+            Text("Charting by TradingView · market data supplied and validated by Solo", color = Muted, fontSize = 10.sp)
             if (selectedMarket == null) {
                 Text(if (BackendSession.marketLoading.value || candleHistoryLoading) "Loading authenticated interval-specific candles…" else "No validated candles for $symbol. The chart will remain empty rather than fabricate prices.", color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
             } else {
@@ -2220,35 +2222,23 @@ private fun AnalyticsChartCard(title: String, note: String, kind: ChartKind) {
 
 @Composable
 private fun CandlestickChart(modifier: Modifier = Modifier, candles: List<MarketCandle>) {
-    Canvas(modifier.background(Panel, RoundedCornerShape(10.dp)).padding(8.dp)) {
-        val w = size.width
-        val h = size.height
-        val chartH = h * .78f
-        for (i in 0..4) {
-            val y = chartH * i / 4
-            drawLine(Grid, Offset(0f, y), Offset(w, y), 1f)
-        }
-        val visible = candles.takeLast(60)
-        if (visible.isEmpty() || w <= 0f || chartH <= 0f) return@Canvas
-        val minPrice = visible.minOf { it.low }
-        val maxPrice = visible.maxOf { it.high }
-        val range = (maxPrice - minPrice).takeIf { it > 0.0 } ?: (maxPrice * 0.001).coerceAtLeast(0.00000001)
-        fun priceY(value: Double): Float = (((maxPrice - value) / range) * chartH.toDouble()).toFloat().coerceIn(0f, chartH)
-        val step = w / visible.size
-        val maxVolume = visible.maxOf { it.volume }.coerceAtLeast(0.00000001)
-        visible.forEachIndexed { i, candle ->
-            val x = step * (i + .5f)
-            val color = if (candle.close >= candle.open) Green else Red
-            drawLine(color, Offset(x, priceY(candle.high)), Offset(x, priceY(candle.low)), 2f)
-            val openY = priceY(candle.open)
-            val closeY = priceY(candle.close)
-            val top = minOf(openY, closeY)
-            val bottom = maxOf(openY, closeY)
-            drawRect(color, Offset(x - step * .27f, top), Size(step * .54f, maxOf(2f, bottom - top)))
-            val volumeH = (candle.volume / maxVolume).toFloat() * (h - chartH) * .85f
-            drawRect(color.copy(alpha = .38f), Offset(x - step * .22f, h - volumeH), Size(step * .44f, volumeH))
-        }
-    }
+    AndroidView(
+        factory = { context -> TradingViewCandlestickChart(context) },
+        update = { chart ->
+            chart.setLightTheme(lightTheme)
+            chart.setCandles(candles.map { candle ->
+                TradingViewOhlc(
+                    openTime = candle.openTime,
+                    open = candle.open,
+                    high = candle.high,
+                    low = candle.low,
+                    close = candle.close,
+                    volume = candle.volume,
+                )
+            })
+        },
+        modifier = modifier.background(Panel, RoundedCornerShape(10.dp)).padding(8.dp),
+    )
 }
 
 private fun formatMarketPrice(value: Double): String = when {
