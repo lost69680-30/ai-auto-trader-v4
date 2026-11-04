@@ -64,7 +64,7 @@ Read-only inventory on 2026-11-05 found:
 3. Deploy `hosting/cloudflare/wrangler.toml` and `hosting/cloudflare/src/index.js` as a Cloudflare Worker. Set `PRIMARY_API_ORIGIN=https://solo-ai-auto-trader-staging-api.onrender.com`, `SECONDARY_MARKET_ORIGIN` to the Deno deployment origin, and `MAX_MARKET_AGE_SECONDS=120`.
 4. Verify Worker `/healthz`, `/readyz`, primary API reads, WebSocket upgrade forwarding, and simulated primary-outage fallback. Confirm `/api/v1/risk`, `/positions`, `/opportunities`, and `/api/v1/emergency-stop` never fall back to Deno.
 5. Only after the above succeeds, set the Android staging build's `PAPER_API_BASE_URL` to the Cloudflare Worker URL. Do not change production builds.
-6. Install the staging APK and physically verify: normal Render WebSocket shows LIVE only while connected; simulated Render outage displays `DEGRADED · MARKET FALLBACK` and `RECENT SNAPSHOT · STREAM RECONNECTING`; no false LIVE state; ledger/risk/history remain unavailable; emergency-stop failure is explicit; restoring Render reconnects the WebSocket and restores primary API data.
+6. Install the staging APK and physically verify: normal Render WebSocket shows LIVE only while connected; simulated full API outage displays `DEGRADED · MARKET FALLBACK`; market-only outage with ledger still reachable displays `CONNECTED · PAPER ONLY · MARKET FALLBACK`; both show a non-LIVE recent snapshot; no false LIVE state; ledger/risk/history remain unavailable; emergency-stop failure is explicit; restoring Render reconnects the WebSocket and restores primary API data.
 7. Keep the existing Render API origin available as a rollback target until the staging phone acceptance passes.
 
 ## 7. Remaining external gates
