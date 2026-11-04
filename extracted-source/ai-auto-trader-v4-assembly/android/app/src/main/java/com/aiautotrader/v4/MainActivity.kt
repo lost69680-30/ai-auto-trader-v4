@@ -47,15 +47,15 @@ internal const val BACKEND_MARKET_READ_TIMEOUT_MS = 75_000
 
 // UI-only theme preference. This changes presentation only; it cannot affect trading or risk controls.
 private var lightTheme by mutableStateOf(false)
-private val Background: Color get() = if (lightTheme) Color(0xFFF7F5F0) else Color(0xFF0B1018)
-private val Panel: Color get() = if (lightTheme) Color(0xFFFFFFFF) else Color(0xFF151D29)
-private val PanelAlt: Color get() = if (lightTheme) Color(0xFFEEEAE1) else Color(0xFF1B2635)
-private val Gold = Color(0xFFD8B878)
-private val Green: Color get() = if (lightTheme) Color(0xFF087F5B) else Color(0xFF43D9A3)
-private val Red: Color get() = if (lightTheme) Color(0xFFC6283D) else Color(0xFFFF6B78)
-private val Muted: Color get() = if (lightTheme) Color(0xFF5D6672) else Color(0xFF9BA9BA)
-private val White: Color get() = if (lightTheme) Color(0xFF202630) else Color(0xFFF4F7FB)
-private val Grid: Color get() = if (lightTheme) Color(0xFFD4CEC2) else Color(0xFF2A3544)
+private val Background: Color get() = if (lightTheme) Color(0xFFF4F0E8) else Color(0xFF101216)
+private val Panel: Color get() = if (lightTheme) Color(0xFFFFFFFF) else Color(0xFF1B1E24)
+private val PanelAlt: Color get() = if (lightTheme) Color(0xFFEAE4D8) else Color(0xFF403426)
+private val Gold: Color get() = if (lightTheme) Color(0xFF927547) else Color(0xFFC6A66B)
+private val Green: Color get() = if (lightTheme) Color(0xFF087F5B) else Color(0xFF39B980)
+private val Red: Color get() = if (lightTheme) Color(0xFFB63D4A) else Color(0xFFE36F72)
+private val Muted: Color get() = if (lightTheme) Color(0xFF5D6672) else Color(0xFFD7D9DC)
+private val White: Color get() = if (lightTheme) Color(0xFF202630) else Color(0xFFF4F0E8)
+private val Grid: Color get() = if (lightTheme) Color(0xFFD4CEC2) else Color(0xFF403426)
 
 
 internal data class MarketCandle(
@@ -1415,7 +1415,7 @@ private fun NotificationsScreen() {
                 color = Muted, fontSize = 12.sp, lineHeight = 18.sp
             )
             StatusLine("●", if (permissionGranted) "ANDROID NOTIFICATIONS ENABLED" else "IN-APP ALERTS ONLY · PERMISSION NEEDED",
-                if (permissionGranted) Green else Color(0xFFFFC857))
+                if (permissionGranted) Green else Color(0xFFE7B65E))
             if (!permissionGranted && android.os.Build.VERSION.SDK_INT >= 33) {
                 Button(
                     onClick = {
@@ -1455,7 +1455,7 @@ private fun NotificationsScreen() {
             records.forEach { record ->
                 CardPanel {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text(record.severity, color = if (record.severity == "CRITICAL") Red else Color(0xFFFFC857), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(record.severity, color = if (record.severity == "CRITICAL") Red else Color(0xFFE7B65E), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         Text(if (record.resolved) "RESOLVED" else if (record.acknowledged) "ACKNOWLEDGED" else "UNACKNOWLEDGED",
                             color = if (record.resolved) Green else Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                     }
@@ -1506,7 +1506,7 @@ private fun AgentNetworkScreen() {
     )
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CardPanel {
-            StatusLine("●", "ORCHESTRATOR · NOT CONNECTED", Color(0xFFFFC857))
+            StatusLine("●", "ORCHESTRATOR · NOT CONNECTED", Color(0xFFE7B65E))
             Text("Multi-agent coordination", fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text("This screen shows the intended agent topology. It does not claim agents are running or communicating until the backend is connected.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1538,7 +1538,7 @@ private fun AgentNetworkScreen() {
             CardPanel {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    Tag(status, if (status.startsWith("READY")) Green else Color(0xFFFFC857))
+                    Tag(status, if (status.startsWith("READY")) Green else Color(0xFFE7B65E))
                 }
                 Text(description, color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
             }
@@ -1556,12 +1556,12 @@ private fun AgentNetworkScreen() {
 
 @Composable
 private fun AgentFlowNode(title: String, subtitle: String, modifier: Modifier = Modifier, warning: Boolean = false) {
-    Column(modifier.background(if (warning) Color(0xFFFFC857).copy(alpha = if (lightTheme) .12f else .08f) else PanelAlt, RoundedCornerShape(12.dp))
-        .border(1.dp, if (warning) Color(0xFFFFC857).copy(alpha = .8f) else Grid, RoundedCornerShape(12.dp))
+    Column(modifier.background(if (warning) Color(0xFFE7B65E).copy(alpha = if (lightTheme) .12f else .08f) else PanelAlt, RoundedCornerShape(12.dp))
+        .border(1.dp, if (warning) Color(0xFFE7B65E).copy(alpha = .8f) else Grid, RoundedCornerShape(12.dp))
         .padding(horizontal = 12.dp, vertical = 11.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(title, color = if (warning) Color(0xFFFFC857) else White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text(title, color = if (warning) Color(0xFFE7B65E) else White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         Text(subtitle, color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
-        Text(if (warning) "NOT CONNECTED · REQUIRED GATE" else "PLANNED · OFFLINE", color = if (warning) Color(0xFFFFC857) else Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .5.sp)
+        Text(if (warning) "NOT CONNECTED · REQUIRED GATE" else "PLANNED · OFFLINE", color = if (warning) Color(0xFFE7B65E) else Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .5.sp)
     }
 }
 
@@ -1621,7 +1621,7 @@ private fun PositionsScreen() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CardPanel {
             StatusLine("●", "PAPER LEDGER · ${BackendSession.paperLedgerStatus.value}",
-                if (BackendSession.paperLedgerStatus.value == "CURRENT") Green else Color(0xFFFFC857))
+                if (BackendSession.paperLedgerStatus.value == "CURRENT") Green else Color(0xFFE7B65E))
             Text("Positions & orders", fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text(
                 if (snapshot != null) "Read-only ledger snapshot fetched at ${snapshot.fetchedAt}. Live exchange orders remain disabled."
@@ -1630,7 +1630,7 @@ private fun PositionsScreen() {
             )
             if (BackendSession.paperLedgerStatus.value == "REFRESH FAILED" && snapshot != null) {
                 Text("Showing the last verified snapshot; it may be stale. Do not rely on it for a new decision.",
-                    color = Color(0xFFFFC857), fontSize = 11.sp)
+                    color = Color(0xFFE7B65E), fontSize = 11.sp)
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1647,7 +1647,7 @@ private fun PositionsScreen() {
             CardPanel {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(displaySymbol(position.symbol), fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Tag(position.side, if (position.side == "LONG") Green else Color(0xFFFFC857))
+                    Tag(position.side, if (position.side == "LONG") Green else Color(0xFFE7B65E))
                 }
                 IndicatorRow("Quantity", position.quantity.toString())
                 IndicatorRow("Entry / mark", "${formatMarketPrice(position.entryPrice)} / ${formatMarketPrice(position.markPrice)}")
@@ -1664,7 +1664,7 @@ private fun PositionsScreen() {
             CardPanel {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(displaySymbol(order.symbol), fontWeight = FontWeight.SemiBold)
-                    Tag(order.status, Color(0xFFFFC857))
+                    Tag(order.status, Color(0xFFE7B65E))
                 }
                 IndicatorRow("Side / quantity", "${order.side} · ${order.quantity}")
                 IndicatorRow("Entry", formatMarketPrice(order.entryPrice))
@@ -1679,7 +1679,7 @@ private fun PositionsScreen() {
             CardPanel {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(displaySymbol(fill.symbol), fontWeight = FontWeight.SemiBold)
-                    Tag(fill.side, Color(0xFFFFC857))
+                    Tag(fill.side, Color(0xFFE7B65E))
                 }
                 IndicatorRow("Quantity", fill.quantity.toString())
                 IndicatorRow("Market / fill price", formatMarketPrice(fill.marketPrice) + " / " + formatMarketPrice(fill.fillPrice))
@@ -1690,7 +1690,7 @@ private fun PositionsScreen() {
         SectionTitle("ORDER SAFETY")
         CardPanel {
             SafetyRow("Live exchange orders", "DISABLED", Green)
-            SafetyRow("Data source", snapshot?.risk?.stateStorage ?: "NOT VERIFIED", Color(0xFFFFC857))
+            SafetyRow("Data source", snapshot?.risk?.stateStorage ?: "NOT VERIFIED", Color(0xFFE7B65E))
             SafetyRow("Unknown position state", "BLOCK NEW ORDERS", Red)
         }
     }
@@ -1704,7 +1704,7 @@ private fun RiskCenterScreen() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CardPanel {
             StatusLine("●", risk?.let { emergencyStopDisplayLabel(it.emergencyStopActive) } ?: "EMERGENCY STOP UNKNOWN",
-                when (risk?.emergencyStopActive) { true -> Red; false -> Green; null -> Color(0xFFFFC857) })
+                when (risk?.emergencyStopActive) { true -> Red; false -> Green; null -> Color(0xFFE7B65E) })
             Text("Risk control center", fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text(
                 if (snapshot != null) "Risk state from the authenticated paper ledger. Last successful read: ${snapshot.fetchedAt}."
@@ -1713,7 +1713,7 @@ private fun RiskCenterScreen() {
             )
             if (BackendSession.paperLedgerStatus.value == "REFRESH FAILED" && snapshot != null) {
                 Text("Last known risk state only — current state is unverified. Treat it as unavailable.",
-                    color = Color(0xFFFFC857), fontSize = 11.sp)
+                    color = Color(0xFFE7B65E), fontSize = 11.sp)
             }
         }
         SectionTitle("VERIFIED RISK SNAPSHOT")
@@ -1729,8 +1729,8 @@ private fun RiskCenterScreen() {
         }
         SectionTitle("INDEPENDENT SAFEGUARDS")
         CardPanel {
-            SafetyRow("Risk gate", "BACKEND ONLY · NOT UI AUTHORIZED", Color(0xFFFFC857))
-            SafetyRow("Risk limits", "NOT EXPOSED BY CURRENT API", Color(0xFFFFC857))
+            SafetyRow("Risk gate", "BACKEND ONLY · NOT UI AUTHORIZED", Color(0xFFE7B65E))
+            SafetyRow("Risk limits", "NOT EXPOSED BY CURRENT API", Color(0xFFE7B65E))
             SafetyRow("Stale-data rejection", "REQUIRED · FAIL CLOSED", Green)
             SafetyRow("Unknown account state", "BLOCK NEW ORDERS", Red)
             SafetyRow("Agent direct exchange access", "PROHIBITED", Green)
@@ -1878,7 +1878,7 @@ private fun ReadOnlyBackendConnectionCard() {
             }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background)) {
             Text(if (loading) "CHECKING…" else "CONNECT & LOAD STATUS")
         }
-        Text(status, color = if (status.startsWith("CONNECTED")) Green else Color(0xFFFFC857), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        Text(status, color = if (status.startsWith("CONNECTED")) Green else Color(0xFFE7B65E), fontWeight = FontWeight.Bold, fontSize = 12.sp)
         Text(details, color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
         if (status.startsWith("CONNECTED")) {
             Divider(color = Grid)
@@ -1982,7 +1982,7 @@ private fun OpportunitiesScreen() {
                 IndicatorRow("Performance evidence", item.performanceStatus)
                 IndicatorRow("Risk review", if (item.eligibleForRiskReview) "Eligible for independent review · not approved" else "Not eligible")
                 if (item.noTradeReason.isNotBlank()) Text(item.noTradeReason, color = Muted, fontSize = 11.sp)
-                if (item.dataQualityIssues.isNotEmpty()) Text("Data quality: " + item.dataQualityIssues.joinToString("; "), color = Color(0xFFFFC857), fontSize = 10.sp)
+                if (item.dataQualityIssues.isNotEmpty()) Text("Data quality: " + item.dataQualityIssues.joinToString("; "), color = Color(0xFFE7B65E), fontSize = 10.sp)
             }
         }
         CardPanel { Text("Research only. The opportunity engine cannot authorize orders. Every paper intent must pass the independent Risk Guardian.", color = Muted, fontSize = 11.sp) }
@@ -2037,7 +2037,7 @@ private fun SecurityScreen() {
             SafetyRow("Order authorization", "FALSE · DISABLED", Green)
             SafetyRow("Live exchange orders", "PROHIBITED", Green)
             SafetyRow("Risk authorization", "INDEPENDENT BACKEND ONLY", Green)
-            SafetyRow("Emergency Stop", risk?.let { emergencyStopDisplayLabel(it.emergencyStopActive) } ?: "UNKNOWN", if (risk?.emergencyStopActive == true) Red else Color(0xFFFFC857))
+            SafetyRow("Emergency Stop", risk?.let { emergencyStopDisplayLabel(it.emergencyStopActive) } ?: "UNKNOWN", if (risk?.emergencyStopActive == true) Red else Color(0xFFE7B65E))
             Text("Emergency Stop blocks new paper intents. It does not close existing positions and is not a live-exchange kill switch.", color = Muted, fontSize = 11.sp)
         }
     }
@@ -2107,7 +2107,7 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
                     ledgerOfflineFallback -> "MARKET FALLBACK · PAPER LEDGER OFFLINE"
                     else -> "BACKEND STATUS · ${BackendSession.status.value}"
                 },
-                if (connected) Green else Color(0xFFFFC857)
+                if (connected) Green else Color(0xFFE7B65E)
             )
             Spacer(Modifier.height(8.dp))
             Text("Paper mode only", fontSize = 20.sp, fontWeight = FontWeight.Bold)
@@ -2135,7 +2135,7 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("AUTONOMOUS MARKET SCAN", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Tag(BackendSession.marketIntelligenceStatus.value,
-                    if (BackendSession.marketIntelligenceStatus.value == "HEALTHY") Green else Color(0xFFFFC857))
+                    if (BackendSession.marketIntelligenceStatus.value == "HEALTHY") Green else Color(0xFFE7B65E))
             }
             Text(
                 if (BackendSession.marketIntelligenceAssessedAt.value.isBlank()) {
@@ -2187,7 +2187,7 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
         CardPanel {
             SafetyRow("Exchange order execution", "DISABLED", Green)
             SafetyRow("Risk gate", "BLOCKED · no order authorization", Red)
-            SafetyRow("Emergency stop", BackendSession.emergencyStop.value, if (BackendSession.emergencyStop.value == "ACTIVE") Red else Color(0xFFFFC857))
+            SafetyRow("Emergency stop", BackendSession.emergencyStop.value, if (BackendSession.emergencyStop.value == "ACTIVE") Red else Color(0xFFE7B65E))
         }
         Text("Build milestone 2 · Charts and analysis UI. No exchange credentials are stored in this app. AI analysis is advisory; independent risk validation has final authority.", color = Muted, fontSize = 11.sp, lineHeight = 17.sp)
     }
@@ -2267,7 +2267,7 @@ private fun AnalysisScreen() {
                         val isFutures = selectedMarket.marketContext.marketType == "FUTURES"
                         Text(
                             "${if (isFutures) "Futures mark price" else "Spot last price"}: ${formatMarketPrice(selectedMarket.markPrice)}",
-                            color = if (marketDisplayFreshness == MarketDisplayFreshness.LIVE) Green else Color(0xFFFFC857),
+                            color = if (marketDisplayFreshness == MarketDisplayFreshness.LIVE) Green else Color(0xFFE7B65E),
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
@@ -2277,7 +2277,7 @@ private fun AnalysisScreen() {
                             MarketDisplayFreshness.STALE -> "STALE PRICE · DO NOT RELY ON THIS VALUE"
                             MarketDisplayFreshness.UNAVAILABLE -> "NO VERIFIED PRICE"
                         }
-                        Text(freshnessLabel, color = if (marketDisplayFreshness == MarketDisplayFreshness.LIVE) Green else Color(0xFFFFC857),
+                        Text(freshnessLabel, color = if (marketDisplayFreshness == MarketDisplayFreshness.LIVE) Green else Color(0xFFE7B65E),
                             fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .4.sp)
                     }
                 }
@@ -2285,7 +2285,7 @@ private fun AnalysisScreen() {
                     if (selectedMarket != null && BackendSession.feedStatus.value == "HEALTHY") "VALIDATED FEED"
                     else if (selectedMarket != null) "LAST GOOD SNAPSHOT"
                     else if (BackendSession.marketLoading.value) "LOADING" else "NO LIVE DATA",
-                    if (selectedMarket != null && BackendSession.feedStatus.value == "HEALTHY") Green else Color(0xFFFFC857)
+                    if (selectedMarket != null && BackendSession.feedStatus.value == "HEALTHY") Green else Color(0xFFE7B65E)
                 )
             }
             val visibleSymbols = if (loadedMarkets.isNotEmpty()) loadedMarkets.map { displaySymbol(it.symbol) }.distinct() else listOf("BTC/USDT", "ETH/USDT", "EUR/USD", "GBP/USD")
@@ -2376,7 +2376,7 @@ private fun AnalysisScreen() {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("BACKEND ASSESSMENT", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     Tag(BackendSession.marketIntelligenceStatus.value,
-                        if (BackendSession.marketIntelligenceStatus.value == "HEALTHY") Green else Color(0xFFFFC857))
+                        if (BackendSession.marketIntelligenceStatus.value == "HEALTHY") Green else Color(0xFFE7B65E))
                 }
                 if (selectedIntelligence == null) {
                     Text(
@@ -2409,13 +2409,13 @@ private fun AnalysisScreen() {
                         else -> Text("No valid opportunity. Solo waits instead of forcing a trade. ${selectedIntelligence.noTradeReason}", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
                     }
                     if (selectedIntelligence.conflicts.isNotEmpty()) {
-                        Text("Timeframe conflicts: ${selectedIntelligence.conflicts.joinToString("; ")}", color = Color(0xFFFFC857), fontSize = 10.sp, lineHeight = 14.sp)
+                        Text("Timeframe conflicts: ${selectedIntelligence.conflicts.joinToString("; ")}", color = Color(0xFFE7B65E), fontSize = 10.sp, lineHeight = 14.sp)
                     }
                     if (selectedIntelligence.inProgressTimeframes.isNotEmpty()) {
                         Text("In-progress candles excluded: ${selectedIntelligence.inProgressTimeframes.joinToString(", ")}", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
                     }
                     if (selectedIntelligence.dataQualityIssues.isNotEmpty()) {
-                        Text("Data-quality limitations: ${selectedIntelligence.dataQualityIssues.take(5).joinToString("; ")}", color = Color(0xFFFFC857), fontSize = 10.sp, lineHeight = 14.sp)
+                        Text("Data-quality limitations: ${selectedIntelligence.dataQualityIssues.take(5).joinToString("; ")}", color = Color(0xFFE7B65E), fontSize = 10.sp, lineHeight = 14.sp)
                     }
                     Text(
                         "Scan: ${BackendSession.marketIntelligenceAssessedAt.value} · ${BackendSession.marketIntelligenceEnvironment.value} · ${BackendSession.marketIntelligenceMarketType.value} · ${BackendSession.marketIntelligenceVenue.value}",
@@ -2494,7 +2494,7 @@ private fun AnalysisScreen() {
                     )
                 } else {
                     riskFlags.forEach { flag ->
-                        Text("• $flag", color = Color(0xFFFFC857), fontSize = 11.sp, lineHeight = 16.sp)
+                        Text("• $flag", color = Color(0xFFE7B65E), fontSize = 11.sp, lineHeight = 16.sp)
                     }
                 }
                 Text(
