@@ -183,3 +183,265 @@ Root and extracted-assembly worker, API and new regression-test mirrors were che
 - No live exchange order interface, live trading, secret change, paid hosting, or billing action was introduced.
 
 Do not enable the research or paper-handoff flags as part of CI. Keep both opt-in flags false until the separate operational acceptance gate is satisfied.
+
+## Part 8 — Operational Recovery and End-to-End Validation (2026-11-03)
+
+**Implementation branch:** `feat/solo-part8-operational-recovery`  
+**Draft PR:** [#101 — Part 8 operational recovery](https://github.com/lost69680-30/ai-auto-trader-v4/pull/101)  
+**Base:** PR #97 branch `feat/solo-parts5-7-professional-integration`  
+**Verified code/test head:** `686a13ec404ad8d7a6090af4be0062a3aaa272ae`
+
+### Implemented
+
+- Added a fail-safe worker shutdown helper. If the scheduled-job thread remains alive after its bounded shutdown grace, the process no longer releases the PostgreSQL worker lease or closes the shared paper ledger. The process exits and PostgreSQL lease expiry governs recovery; this prevents a replacement worker from acquiring ownership while the old process may still be executing.
+- Added shutdown regressions for normal shutdown, stuck background thread, no job thread, and lease-release failure. The four tests first failed before the helper existed, then passed after implementation.
+- Added a disposable-PostgreSQL market-worker lease-expiry test: a second owner is blocked before expiry, acquires after expiry, and the old owner cannot heartbeat after ownership changes. Existing durable-scheduler tests already cover expired job-lease reclaim, stale-owner completion rejection, and idempotent retry/completion.
+- Added an end-to-end PostgreSQL paper-service test that asserts the actual `PostgresPaperLedger` backend is selected, a paper-only signal passes through the existing research/Risk Guardian path, Emergency Stop cancels the pending intent, the stop/audit state survives service recreation, and new intents remain blocked after restart.
+- Added a 168-hour deterministic synthetic replay regression: 2,016 intents, fills, protective exits and simulated restarts; zero duplicates; no open positions; Emergency Stop inactive at the end; `orders_authorized=false`.
+- Added the PostgreSQL runtime integration test to the durable-ledger GitHub Actions workflow.
+- Updated `docs/PAPER_SERVICE.md` and the packaged documentation with shutdown/recovery semantics, the 168-hour replay command, and staging-only backup/restore, alerting, real-market soak, deployment, and Android acceptance gates.
+- Kept all relevant root and extracted-assembly source/test/documentation mirrors byte-identical.
+
+### CI verification
+
+All listed results below are for code/test head `686a13ec404ad8d7a6090af4be0062a3aaa272ae`, except the offline backtest workflow, which ran on the preceding root-source commit with no later production-code change.
+
+- [Durable PostgreSQL integration workflow](https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41583879955): 6 PostgreSQL ledger tests passed; 1 PostgreSQL paper-service recovery test passed; 14 opportunity-registry tests passed; full backend suite **606 passed**.
+- [ASGI runtime workflow](https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41583879918): 37 focused tests passed; full suite **545 passed, 48 skipped**.
+- [Market-data and analysis safety workflow](https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41583879924): **108 passed, 14 skipped**; source mirror parity checks passed.
+- [Offline backtest workflow](https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41583661763): 28 focused tests passed; full suite **545 passed, 48 skipped**.
+- The full durable-paper-ledger suite also completed successfully with **606 passed** on the verified code/test head.
+
+The initial PostgreSQL end-to-end scenario first returned `WAITING_FOR_TRIGGER` because the test fixture regenerated a different closed-candle identity. The fixture was corrected to keep the same closed candle while advancing only the mark price; the focused PostgreSQL test then passed. No production runtime behavior change was required for that test-fixture correction.
+
+### Not operationally accepted
+
+- PR #101 remains draft and unmerged. PR #97 remains the Parts 5–7 foundation; no merge or deployment was performed.
+- No Render/Railway or staging deployment, always-on host verification, or real multi-day public-market-data soak.
+- No production Supabase migration, backup/restore rehearsal, migration rollback drill, or alert-delivery verification.
+- The new integration APK has not been installed or phone-tested.
+- No Forex implementation, live exchange order interface, live orders, secret changes, paid provisioning, or billing action.
+
+**Safety state preserved:** paper-only/read-only; `PAPER_ONLY`; `orders_authorized=false`; independent Risk Guardian remains the authorization gate; research and opportunity paper-handoff flags remain disabled by default. Do not enable flags or deploy as part of this PR.
+
+
+## Part 8 staging-readiness checkpoint (2026-11-03)
+
+**Branch:** `feat/solo-part8-operational-recovery`  
+**Draft PR:** [#101 — Solo Part 8 operational recovery](https://github.com/lost69680-30/ai-auto-trader-v4/pull/101)  
+**Latest verified PR head:** `6784ddf6960486dca5873749c74760b720d3e65b`
+
+### Implemented
+
+- Added mirrored `backend.staging_preflight` commands for separate `worker` and `api` processes.
+- Worker preflight requires PostgreSQL configuration, explicit Futures Testnet selection, a 1m archive interval, and a valid `PaperServiceConfig` including the required settings and equity/risk/exposure caps.
+- API preflight requires API-only mode, Futures Testnet, a 32-character minimum bearer token, authenticated WebSocket transport, matching API/worker symbol allowlists and 1m intervals, and loopback binding or declared HTTPS termination.
+- Both profiles fail closed if research, opportunity paper handoff, research-worker, or supervisor opt-in flags are enabled.
+- Added optional `--check-database`: read-only PostgreSQL catalog inspection of all 21 required private tables, row-level security status, and remote TLS negotiation. It does not apply migrations or inspect trading rows.
+- Added staging process commands and a runbook to both root and packaged documentation.
+- CI now applies all repository migrations only to its disposable PostgreSQL service and executes both role preflights plus the read-only database schema check.
+
+### Fresh CI verification on PR head `6784ddf6960486dca5873749c74760b720d3e65b`
+
+- Staging preflight unit tests: **11 passed**.
+- Worker configuration plus PostgreSQL schema/TLS preflight: passed.
+- API configuration preflight: passed.
+- PostgreSQL ledger integration: **6 passed**.
+- PostgreSQL paper-service recovery integration: **1 passed**.
+- Opportunity registry integration: **14 passed**.
+- Full backend suite: **617 passed**.
+- ASGI focused suite: **37 passed**; full suite: **556 passed, 48 skipped**.
+- Market-data/analysis safety suite: **108 passed, 14 skipped**.
+- Root and packaged preflight source, tests and runbook: byte-identical.
+
+### Not performed
+
+No deployment to Render, Railway or another host; no staging or production Supabase migration; no user database backup/restore; no secret or billing changes; no real multi-day market-data soak; no Android installation or phone verification. Live orders remain unavailable and unauthorized.
+
+**Safety state:** paper-only/read-only, `PAPER_ONLY`, `orders_authorized=false`, independent Risk Guardian authority, research and opportunity paper-handoff opt-ins disabled by default.
+
+
+## Read-only hosting inspection (2026-11-03)
+
+No Render or Railway settings were changed.
+
+### Render — My Workspace
+
+- `solo-ai-auto-trader-staging-api`: Frankfurt Free web service, deployed from `feat/solo-ledger-dashboard-integration`, not the Part 8 branch. Its configured start command requests API-only mode, but its application logs show worker cycles, scheduled jobs, market-intelligence scans, equity snapshots, and supervisor child-process shutdown. This indicates the deployed runtime is not behaving as a clean API-only process; the exact environment flag values were not exposed by the read-only service detail tool.
+- `solo-futures-websocket-staging`: Frankfurt Free web service, deployed from `fix/futures-context-mainline`, with start command `python -m backend.shared_market_supervisor`. This starts a supervisor composition, not the separated worker-only command in the current Part 8 runbook. Logs show healthy market cycles and fresh equity snapshots, then SIGTERM and child-process shutdown at 2026-11-02 20:51 UTC. The service returned no CPU, memory, or instance-count samples in the queried period. Treat it as not proven always-on.
+- Both staging services are on Free web-service compute. Render documents that Free web services spin down after 15 minutes without inbound traffic; Free compute is not suitable for the continuous worker requirement.
+- Legacy `ai-auto-trader-v4-backend`: Free web service on `main`; start command writes SQLite under `/tmp/v4data/paper-ledger.sqlite3`. That filesystem is ephemeral and this service is not a durable-ledger staging target.
+- `solo-staging-postgres`: Free PostgreSQL in Frankfurt, created 2026-10-29, scheduled to expire 2026-11-28. The connected read-only Render SQL tool could not connect because the database IP allowlist is empty. No allowlist changes or SQL writes were attempted.
+- The current Render API/worker branches are not `feat/solo-part8-operational-recovery`; PR #101 has not been deployed.
+
+### Railway
+
+- Connected Railway workspace `lost69680-30's Projects` currently has zero projects. No Railway project, service, volume, or deployment was created.
+
+### Operational consequence
+
+The existing Free Render setup cannot be accepted as the continuous staging host. This was the earlier paid-host recommendation and is superseded by the user's strict $0 instruction. Do not provision paid compute. The free-only operating decision and limitations are recorded below in “Free-only hosting decision and constraints (2026-11-03).”
+
+
+## Free-only hosting decision and constraints (2026-11-03)
+
+**User instruction:** No payment. Do not upgrade plans, create paid resources, add billing methods, or accept usage that can trigger charges. No infrastructure changes were made as part of this assessment.
+
+### Read-only Supabase status
+
+- The connected Supabase account currently lists two projects: `solo-ai-auto-trader` and `solo-ai-auto-trader-staging`; both reported `ACTIVE_HEALTHY` on 2026-11-03.
+- The staging project currently reports only five applied migrations: paper ledger, shared market data, durable scheduled jobs, candle archive, and market-intelligence reports.
+- The staging project is therefore **not yet proven to contain the Part 5–8 opportunity/recovery schema**. Its public schema table listing was empty; the migration list is the reliable observation here. Do not deploy the Part 8 worker against this database or run migrations until the expected private-schema objects, backup/restore path, and rollback procedure are verified.
+- The connector did not expose the current Supabase billing plan. Project health is not proof of plan, quota, or cost status. No billing settings were inspected or changed.
+- Supabase documents 500 MB database storage on Free and automatic pausing after a week of low activity. A few real requests per day may help but are not guaranteed to prevent pausing. Source: https://supabase.com/kb/faqs/platform/free-project-pausing and https://supabase.com/kb/faqs/platform/database-only-cost
+
+### Free-tier constraints verified from official documentation
+
+- Render Free web services sleep after 15 minutes without inbound traffic, can take about a minute to wake, have ephemeral local filesystems, and cannot run background-worker service types. Free Render Postgres expires 30 days after creation. Source: https://render.com/docs/free
+- Railway Free provides $1 of monthly credit after the initial trial, with 0.5 GB RAM / 1 vCPU service limits. It is not a reliable continuous-worker plan. Source: https://docs.railway.com/pricing/plans
+- GitHub Actions schedules can run no more frequently than every five minutes, but scheduled events can be delayed or dropped during load; public-repository schedules can be disabled after 60 days without repository activity. Use it for CI, manual jobs, and noncritical batch research only—not as a real-time scheduler or always-on worker. Sources: https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax and https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
+- Cloudflare Workers Free allows 10 ms CPU per HTTP or Cron invocation (although Cron has a 15-minute wall-clock ceiling). It is suitable for lightweight routing/automation, not this Python analysis engine or continuous worker. Source: https://developers.cloudflare.com/workers/platform/limits/
+
+### Approved design direction under a strict $0 budget
+
+1. **Persistent data:** Prefer the existing dedicated Supabase staging project for staging only, after its schema, RLS, TLS, backup/restore and migration rollback are verified. Keep the production Supabase project untouched. Do not use the expiring Render Free Postgres instance as the durable ledger.
+2. **Interactive API:** Keep at most one Render Free web service for development/foreground app access. Expect cold starts and intermittent availability. The API must remain API-only; it must not secretly launch the market worker or supervisor.
+3. **Market-data connection:** Treat WebSockets as foreground/best-effort only. Android must reconnect after sleep/network loss, show last-update age, and mark data stale until a fresh validated snapshot arrives. No background worker may infer freshness from a connected socket alone.
+4. **Scheduled analysis:** Use GitHub Actions only for CI, manually requested runs, and low-frequency noncritical batch research after a safe workflow is designed. Do not use Actions cron as a substitute for a durable worker, a one-minute market watcher, or order execution.
+5. **No continuous worker under $0:** The supervised Python worker, durable one-minute scheduling, multi-day unattended market soak, and guaranteed uninterrupted WebSockets remain unavailable on the currently verified free hosting options. Do not emulate always-on service by sending keep-alive traffic or split the runtime across providers.
+6. **Safe operating mode:** Keep research and opportunity paper-handoff opt-ins disabled. Keep `PAPER_ONLY`, `orders_authorized=false`, independent Risk Guardian authorization, Emergency Stop, and fail-closed stale-data checks. If the API, database, schedule, or market data is unavailable/stale, show degraded/offline state and block new paper intents.
+7. **Future gate:** Reconsider hosting only if a genuinely free, terms-compliant, persistent compute option is verified. Any option requiring a card, paid trial, subscription, usage-based charges, or a possible overage is excluded unless the user explicitly changes the no-payment instruction.
+
+### Explicitly not performed
+
+No Render/Railway service creation or configuration change; no Supabase project/branch creation, migration, pause/restore, or billing change; no GitHub deployment workflow activation; no secret rotation; no production data movement; no APK release; no live exchange orders. This is a free-tier architecture decision and readiness assessment, not an operational deployment acceptance.
+
+
+### Additional zero-cost guardrails verified
+
+- The connected GitHub repository `lost69680-30/ai-auto-trader-v4` is public. GitHub documents standard GitHub-hosted runner usage as free for public repositories. This makes CI and manually dispatched verification jobs a useful $0 tool; scheduled jobs are still non-guaranteed and must not be treated as a continuous worker. Source: https://docs.github.com/en/actions/concepts/billing-and-usage
+- Render Free services count against monthly included outbound bandwidth; Render documents that exceeding the included amount can incur supplementary charges. The current account's usage/billing controls were not inspected, so a Free compute label alone is not a guarantee of zero charges. Keep traffic modest, do not create artificial keep-alive traffic, and do not add high-volume polling. Source: https://render.com/docs/free
+- The connected Supabase project-detail response did not expose the billing plan or usage. Do not infer the current plan from `ACTIVE_HEALTHY`; verify the dashboard's Free plan and quotas before relying on the database for continued operation. No billing settings were changed.
+
+
+### Staging database catalog verification (read-only, 2026-11-03)
+
+A second read-only inspection targeted the actual `paper_ledger` schema in `solo-ai-auto-trader-staging` (not the empty `public` schema):
+
+- Found **15 of the 21** tables required by `backend.staging_preflight.REQUIRED_PRIVATE_TABLES`.
+- The six missing Part 5 opportunity-registry tables are: `opportunities`, `opportunity_assessments`, `opportunity_evidence`, `opportunity_watch_conditions`, `opportunity_events`, and `opportunity_claims`.
+- The 15 existing tables all report RLS enabled. The catalog response showed approximately 470,317 candle rows, 2,270 market-intelligence reports, 1,121 scheduled-job rows, 63 audit events, 63 equity snapshots, and one worker heartbeat. Table counts only were returned; no trading-row payloads or credentials were read.
+- Supabase's security advisor returned one INFO finding: `paper_ledger.market_intelligence_reports` has RLS enabled but no policies. Since this is a private server-side schema, do not add a broad policy merely to silence the advisor; verify schema exposure and backend-only access before any change.
+- The performance advisor reported three unused indexes (INFO only). No index or schema changes were made.
+- **Result:** the existing staging database is not yet compatible with the Part 8 preflight. Do not deploy the Part 8 API/worker against it and do not apply migrations until a reviewed migration/backup/rollback plan is ready. Production Supabase remains untouched.
+
+
+### Read-only Supabase storage snapshot (2026-11-03)
+
+Read-only `pg_database_size` queries returned:
+
+- `solo-ai-auto-trader-staging`: **191 MB** total database size (200,251,059 bytes); `paper_ledger` tables total approximately 180 MB across 15 tables.
+- `solo-ai-auto-trader` (production): **11 MB** total database size (11,368,115 bytes), with 9 `paper_ledger` tables.
+- These are point-in-time size readings, not growth forecasts. If the staging project is on Supabase Free, 191 MB is about 38% of its 500 MB database allowance; approximately 309 MB would remain before the nominal limit. The connector did not expose the current billing plan or quota enforcement settings, so verify the plan in the Supabase dashboard before treating that remaining capacity as confirmed.
+- No table data was selected by these size queries; no database writes, migrations, or billing changes were made. Keep production separate and unchanged.
+
+
+### Staging migration and backup gate (read-only assessment, 2026-11-03)
+
+- Confirmed the connected Supabase organization `lost69680-30's Org` is on the **Free** plan. The staging project is in this organization. This confirms the intended $0 Supabase plan at the organization level; no billing controls were changed.
+- Confirmed the repository branch contains migration `supabase/migrations/20261031170000_create_opportunity_registry.sql`. The staging migration history stops at `20261031155011_create_market_intelligence_reports`; the opportunity-registry migration has not been applied.
+- Reviewed the migration source. It creates exactly the six missing opportunity-registry tables, indexes and foreign keys; enables RLS; revokes public/anon/authenticated/service_role access; and wraps its DDL in a transaction. It contains no INSERT/UPDATE/DELETE of existing ledger rows and does not grant exchange authority. The app's direct database role and connection privileges must still be verified against the actual staging runtime before applying it.
+- The six-table migration is therefore the likely schema repair, but **not applied**. First validate migration hash/source on the exact PR head, confirm backend connection role/permissions, and create an off-project logical backup.
+- Supabase's official Free-plan guidance confirms Free projects have **no automatic daily database backups**. Supabase recommends manual logical exports using `supabase db dump` and off-site retention. Official sources: https://supabase.com/kb/faqs/platform/free-plan-backups and https://supabase.com/docs/guides/platform/backups.
+- Backup gate: create a local/off-project encrypted backup of the staging `paper_ledger` schema and verify archive integrity; document a restore command and rehearse restore to a disposable local PostgreSQL database before any schema migration. Do not store database dumps, credentials, or connection strings in the public GitHub repository or public Actions artifacts.
+- Current staging size is 191 MB (about 38% of the Free plan's 500 MB database-size quota), with roughly 309 MB of nominal headroom if quota remains unchanged. Monitor growth, especially the one-minute candle archive. This is a point-in-time measurement, not a growth forecast.
+- No backup was taken by the connector; no migration was applied; no DB schema, rows, secrets, billing, Render, Railway or production settings were changed.
+
+### Next safe execution sequence
+
+1. Prepare a phone-compatible Termux backup runbook that prompts for the database password locally (never in chat) and saves the dump outside GitHub.
+2. Verify dump integrity and restore it to local disposable PostgreSQL; do not run a restore against staging or production.
+3. Inspect staging backend DB role and verify it can use the new tables while client-facing roles cannot.
+4. Re-run the Part 8 preflight with `--check-database` against staging; expect it to fail until the six-table migration is applied.
+5. Only after backup and permission checks pass, apply the single reviewed opportunity-registry migration to **staging only**, then verify all 21 required tables and RLS. Production remains untouched.
+
+
+### Android backup runbook prepared (2026-11-03)
+
+- Added `docs/FREE_STAGING_BACKUP_TERMUX.md` for the user's Android/Termux workflow.
+- The runbook installs free `postgresql` and `age` packages, prompts for staging session-pooler details, reads the DB password through a hidden prompt (not shell history), dumps only `paper_ledger`, encrypts the archive with a separate passphrase, verifies it with `pg_restore --list`, checks SHA-256 after copying to Android shared storage, and removes the temporary plaintext dump.
+- The runbook explicitly prohibits production access, credential sharing, public GitHub uploads, and restore/migration commands against staging or production.
+- Archive-list validation is not a restore rehearsal. A successful restore to disposable local PostgreSQL remains mandatory before applying the missing migration.
+- This is documentation only. The user has not yet run it; no backup has been created and no database was changed.
+
+
+### Phone-based GitHub/AgePony staging backup (2026-11-03)
+
+- Added `.github/workflows/solo-staging-db-backup.yml` secure manual workflow to the default `main` branch and mirrored it on this Part 8 branch. It uses a phone-held AgePony recipient, uploads only an encrypted artifact with one-day retention, caps the encrypted file at 200 MiB, and requires explicit manual confirmation of staging-only scope and available free Actions storage.
+- Added `docs/FREE_STAGING_BACKUP_GITHUB.md` to `main` and this branch. It replaces the Termux-only path with Android AgePony + GitHub instructions.
+- The workflow performs a pre-dump fail-closed check: exact `solo_backup_reader` identity, no superuser/BYPASSRLS/INHERIT privileges, SELECT-only table grants, no schema CREATE, RLS enabled, and the dedicated SELECT policy on every table. It then runs an age round-trip and a full restore into disposable PostgreSQL before uploading the phone-encrypted archive.
+- Latest read-only Supabase catalog inspection confirmed `solo_backup_reader` exists, can log in, has `rolsuper=false`, `rolbypassrls=false`, `rolinherit=false`, and has SELECT grants on all 15 current tables. However, only 14 of 15 tables have the `solo_backup_reader_select` policy; `market_intelligence_reports` has no policy. The workflow intentionally refuses to dump until this gap is reviewed and corrected with a narrowly scoped SELECT policy. No RLS policy or database role was changed.
+- GitHub standard runners are free for this public repository, but artifact storage has quotas. The workflow does not run unless the user manually confirms sufficient included free storage; if capacity cannot be verified, do not run. No billing changes or paid resources were made.
+- Workflow and guide are committed on `main` (workflow safety commits `79afb98ed501ec1a30157531b1134eeb41bb93cd`, `cbe3338863892fad31302d906e8a00f0bbda0288`; guide `dcdba56ba80c101dd6f2369985986ad0c6a8d874`) and mirrored on this branch (workflow safety commits `49c54abca410e7df5d9c4f59c0433315c92f156c`, `cc7e147637ba7f9812c7ff70bfb832522a003cf4`; guide `f6962c89bb865affe26a7faf44cd36ec25d70df9`).
+- This is implementation only: no workflow was run, no artifact/backup was created, no secret was added, and no staging or production database was changed. The six-table opportunity migration remains blocked until the backup and restore gates pass.
+
+
+## Part 8 continuation checkpoint — 2026-11-04
+
+Continued on the existing `feat/solo-part8-operational-recovery` branch and draft PR #101; no replacement Part 8 branch or duplicate implementation was created.
+
+- Fixed repeatability of `20261031170000_create_opportunity_registry.sql`: the optional `solo_backup_reader_select` policy is now dropped before recreation for each opportunity table. This addresses the disposable-CI failure where repeated test setup reapplied the migration and PostgreSQL raised `DuplicateObject`.
+- The regression was observed in the prior durable-ledger workflow: opportunity-registry integration tests failed on the already-existing policy. The fix was committed at `e1ef797aaa472e2eaa4b1ba24218999b8de3acbf`.
+- Post-fix verification on that exact head:
+  - Durable PostgreSQL workflow: success, including staging preflight, disposable migrations, read-only schema inspection, ledger tests, paper-service recovery, opportunity-registry tests, and complete backend suite: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41820305155
+  - Durable paper-ledger full backend suite: success: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41820304988
+  - ASGI runtime: success: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41820305087
+  - Market-data and analysis safety: success: https://github.com/lost69680-30/ai-auto-trader-v4/actions/runs/41820304977
+- These are CI results on a disposable PostgreSQL service. They do not constitute a user Supabase migration, staging deployment, real-market soak, or Android phone acceptance.
+- Remaining Part 8 operational gates are unchanged: verify the intended Supabase staging schema and backup/restore/rollback evidence, host/API/worker topology acceptance under the $0 budget, alert delivery, real public-market-data soak, and phone verification of the matching APK. No paid compute, migration, secret, billing, production, or live-trading change was made.
+
+
+## Authoritative backup and acceptance correction — 2026-11-04
+
+This section supersedes earlier historical notes in this file that said the staging backup had not yet been created or restored. Those notes describe an earlier checkpoint and must not be used as the current backup status.
+
+### Backup status — completed and user-confirmed
+
+- The encrypted staging backup artifact `solo-staging-paper-ledger-encrypted-41805158431.zip` was successfully created and downloaded by the user.
+- GitHub Actions successfully restored the backup into a disposable PostgreSQL database, verifying all **15 tables** and **470,767 candle rows** at backup time.
+- The user confirmed AgePony successfully decrypted the archive on their Android phone on 2026-11-04.
+- Therefore backup creation, disposable restore verification, download, and phone decryption are **complete**. Do not ask the user to repeat them or describe the backup as incomplete.
+- The six opportunity-registry tables were not in that 15-table backup because the opportunity migration had not yet been applied. A new post-migration backup is a later maintenance task, not a prerequisite to redo the already successful backup.
+
+### Backup workflow source hardening after the successful backup
+
+- A separate workflow run had exposed that the pinned age archive setup needed the `age-plugin-pq` executable explicitly installed.
+- The workflow was hardened to locate, require, install, and version-check `age-plugin-pq` from the same checksum-verified age v1.3.2 archive.
+- The hardened workflow was committed to `main` at `c647dc41cf1ca41b2fedf9bb593402aaf5b47615` and to this Part 8 branch at `0f6bee541c367ac83bfdb7bd75d65e391f547c97`; both versions were fetched and verified to have identical content blob SHA `30f0c5e783f3815055cc21b83a4b682c09d347e5`.
+- No new backup run was started after this source fix. The previously successful encrypted backup remains valid and user-decrypted.
+
+### Current staging schema and backend-role gate — read-only inspection
+
+- The staging Supabase project `solo-ai-auto-trader-staging` (`gryjtjobkmredawmymwy`) still lists only the six migrations through `20261103063947`; the opportunity-registry migration `20261031170000` is **not applied**.
+- A fresh read-only table listing shows the same 15 private `paper_ledger` tables, all with RLS enabled; the six opportunity-registry tables remain absent. The latest listed candle count was 470,317 (a current table listing, distinct from the 470,767 rows in the earlier backup).
+- The security advisor returned no lints at the time of this inspection. `anon`, `authenticated`, and `service_role` have no USAGE on the private `paper_ledger` schema; the dedicated `solo_backup_reader` has USAGE and no CREATE.
+- The current database activity snapshot did not show an identifiable Render application session. The Supabase connector's own administrative session and platform sessions are not evidence of the Render API's actual database login role. Render's service metadata does not expose the secret connection-string username. Therefore the **actual backend runtime database role remains unverified**; do not infer that it is `postgres`, `service_role`, or the backup reader.
+- The Render staging API service remains on the Free plan and is configured to run the API-only command, but it is still attached to the older `feat/solo-ledger-dashboard-integration` branch rather than this Part 8 branch. No deployment or environment change was made.
+- Do not apply the opportunity migration until the actual backend runtime role and its required privileges are verified. Production remains untouched.
+
+### Latest source-level CI and Android build evidence
+
+- Part 8 PR #101 head `0f6bee541c367ac83bfdb7bd75d65e391f547c97`: the latest four PR workflows completed successfully (run IDs `41822717827`, `41822717706`, `41822717823`, `41822717619`). The comprehensive durable PostgreSQL job passed preflight unit tests, disposable migration and six-table backup-reader/RLS assertions, worker/API preflight, ledger/runtime/opportunity integration tests, and the complete backend suite. This is disposable-CI verification, not a staging migration or deployment.
+- Parts 5–7 PR #97 head `1f4df2c1b5f44a686add9335ba95a292a1f10a6f`: all four latest PR workflows completed successfully (run IDs `41581927605`, `41581927517`, `41581927460`, `41581927526`).
+- Integrated notification PR #105 head `f1b235dd4433868f5760966caa73879670ab2785`: Android unit-test task and debug APK build completed successfully in run `41819186986`; root/extracted source mirrors matched. Artifact `solo-staging-market-analysis-debug-apk` (16,594,296 bytes) is available until 2026-11-18. APK SHA-256: `75b850a5d74fa08915278c53421d1238d858a1e8beacc25cc4f90371c7461f74`.
+- PR #104's APK workflow was cancelled on its older branch; PR #105 is the integrated notification branch with the successful build.
+- No physical Android installation/notification permission/background delivery/restart test has been performed. APK build success is not phone acceptance.
+
+### Remaining acceptance gates
+
+1. Verify the actual Render API (and any worker, if separately run) database login role without exposing credentials; check role attributes, schema usage, and minimum required table privileges. Fail closed if the runtime role is privileged or cannot be established.
+2. Keep the opportunity migration unapplied until gate 1 and migration/rollback review are complete. The successful backup above is evidence for the existing 15-table schema; it does not include the six new tables.
+3. After an explicitly authorized staging migration, run the 21-table read-only preflight, backup-reader checks, and restore/rollback rehearsal against staging. Never touch production.
+4. Install the PR #105 APK on the user's Android device and verify in-app alerts, OS permission grant/denial, foreground and background behavior, process restart, acknowledgement versus resolution, and Emergency Stop semantics.
+5. Complete real public-market-data soak and host/API/worker recovery acceptance. The current $0 Render Free topology cannot be represented as a guaranteed always-on worker; do not add keep-alive traffic or paid services.
+6. Keep all PRs draft/unmerged until these product and operational acceptance gates pass. Preserve `PAPER_ONLY`, `orders_authorized=false`, independent Risk Guardian authority, and no-live-trading restrictions.

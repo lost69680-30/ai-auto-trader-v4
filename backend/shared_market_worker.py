@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import signal
 import threading
@@ -209,6 +210,45 @@ def run_scheduled_jobs(
         )
         stop.wait(float(poll_interval))
 
+
+
+def _shutdown_worker(
+    stop: threading.Event, job_runner, store, app, *, grace_seconds: float,
+) -> bool:
+    """Stop background jobs before releasing worker ownership or shared resources.
+
+    If a job thread outlives its grace period, leave the PostgreSQL worker lease
+    and ledger connection untouched. The process is expected to exit; the lease
+    then expires naturally, preventing a second worker from overlapping a still
+    active job handler in the old process.
+    """
+    if not isinstance(stop, threading.Event):
+        raise ValueError("stop must be a threading.Event")
+    if (
+        isinstance(grace_seconds, bool)
+        or not isinstance(grace_seconds, (int, float))
+        or not math.isfinite(float(grace_seconds))
+        or grace_seconds <= 0
+    ):
+        raise ValueError("grace_seconds must be a finite positive number")
+
+    stop.set()
+    if job_runner is not None:
+        if job_runner.is_alive():
+            job_runner.join(timeout=float(grace_seconds))
+        if job_runner.is_alive():
+            logger.error(
+                "scheduled-job runner remains active after shutdown grace; "
+                "preserving worker lease and shared ledger until process exit"
+            )
+            return False
+
+    try:
+        store.release()
+    finally:
+        if app is not None:
+            app.close()
+    return True
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -498,17 +538,10 @@ def main() -> None:
                 delay = 15.0
             stop.wait(delay)
     finally:
-        stop.set()
-        if job_runner is not None:
-            shutdown_grace = max(5.0, float(os.environ.get("PAPER_SCHEDULED_JOB_SHUTDOWN_GRACE_SECONDS", "15")))
-            job_runner.join(timeout=shutdown_grace)
-            if job_runner.is_alive():
-                logger.warning("scheduled-job runner did not stop within shutdown grace; its durable job lease will expire for safe retry")
-        try:
-            store.release()
-        finally:
-            if app is not None:
-                app.close()
+        shutdown_grace = max(5.0, float(os.environ.get("PAPER_SCHEDULED_JOB_SHUTDOWN_GRACE_SECONDS", "15")))
+        _shutdown_worker(
+            stop, job_runner, store, app, grace_seconds=shutdown_grace,
+        )
 
 
 if __name__ == "__main__":

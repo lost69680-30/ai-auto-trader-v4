@@ -36,3 +36,21 @@ def test_24_hour_synthetic_soak_metrics_are_consistent(tmp_path):
     assert report.restart_events == 24
     assert report.stale_market_updates_rejected == 9
     assert report.orders_authorized is False
+
+
+def test_168_hour_synthetic_soak_replays_restarts_and_preserves_paper_only(tmp_path):
+    report = run_paper_soak(database_path=tmp_path / "soak-168h.sqlite3", hours=168)
+
+    assert report.passed is True
+    assert report.simulated_hours == 168
+    assert report.orders_recorded == 2016
+    assert report.duplicate_orders == 0
+    assert report.fills == 2016
+    assert report.closed_positions == 2016
+    assert report.open_positions == 0
+    assert report.protection_exits == 2016
+    assert report.restart_events == 168
+    assert report.stale_market_updates_rejected >= 67
+    assert report.emergency_stop_active is False
+    assert report.orders_authorized is False
+    assert "not a strategy-performance estimate" in report.to_dict()["interpretation"]
