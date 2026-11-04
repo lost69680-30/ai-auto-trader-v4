@@ -1352,7 +1352,7 @@ private fun TraderApp() {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                     Image(
-                        painter = painterResource(id = R.drawable.ic_solo_logo),
+                        painter = painterResource(id = if (lightTheme) R.drawable.ic_solo_logo_light else R.drawable.ic_solo_logo),
                         contentDescription = "Solo logo",
                         modifier = Modifier.size(34.dp)
                     )
