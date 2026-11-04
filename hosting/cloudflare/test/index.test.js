@@ -318,3 +318,22 @@ test('readyz does not report the secondary ready when its secret is absent', asy
   assert.equal(body.market_fallback, 'UNAVAILABLE');
   assert.equal(calls.length, 1);
 });
+
+
+test('readyz authenticates the Deno fallback service-to-service secret', async () => {
+  const calls = [];
+  const response = await handleRequest(new Request('https://edge.example/readyz'), env(), {
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), init });
+      if (String(url).startsWith('https://solo-primary.example')) return new Response('not ready', { status: 503 });
+      assert.equal(new URL(String(url)).pathname, '/readyz');
+      assert.equal(init.headers.authorization, 'Bearer solo-test-shared-secret-0123456789abcdef');
+      return new Response(null, { status: 200 });
+    },
+  });
+  assert.equal(response.status, 503);
+  const body = await response.json();
+  assert.equal(body.status, 'degraded');
+  assert.equal(body.market_fallback, 'READY');
+  assert.equal(calls.length, 2);
+});
