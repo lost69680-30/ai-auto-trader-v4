@@ -252,6 +252,23 @@ private fun fetchTestnetAccountDiagnostic(token: String): TestnetAccountDiagnost
     }
 }
 
+internal fun isMarketOnlyFallbackStatus(statusJson: JSONObject): Boolean =
+    statusJson.optString("status") == "DEGRADED_MARKET_ONLY" &&
+        statusJson.optString("mode") == "PAPER_ONLY" &&
+        !statusJson.optBoolean("orders_authorized", true)
+
+internal fun shouldDisplayMarketSnapshot(
+    backendConnected: Boolean,
+    marketFallback: Boolean,
+    safeResponse: Boolean,
+    feedStatus: String,
+    hasItems: Boolean,
+): Boolean {
+    val sourceAllowed = backendConnected || marketFallback
+    val feedAllowed = feedStatus == "HEALTHY" || (marketFallback && feedStatus == "DEGRADED")
+    return sourceAllowed && safeResponse && feedAllowed && hasItems
+}
+
 private data class MarketFetchResult(
     val httpCode: Int,
     val backendConnected: Boolean,
@@ -264,6 +281,7 @@ private data class MarketFetchResult(
     val scanStartedAt: String = "",
     val scanCompletedAt: String = "",
     val scanAttempts: Int = 0,
+    val marketFallback: Boolean = false,
 )
 
 private data class MarketIntelligenceItem(
@@ -874,6 +892,8 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
                 "Backend status check failed (HTTP $statusCode).", false)
         } else {
             val statusJson = JSONObject(statusBody)
+            val marketOnlyFallback = isMarketOnlyFallbackStatus(statusJson)
+            val backendStatusLabel = if (marketOnlyFallback) "DEGRADED · MARKET FALLBACK" else "CONNECTED · PAPER ONLY"
             val safeStatus = statusJson.optString("mode") == "PAPER_ONLY" &&
                 !statusJson.optBoolean("orders_authorized", true)
             if (!safeStatus) {
@@ -887,9 +907,14 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
                     // authenticated /status check and falsely ask the user to reconnect.
                     // Keep the feed unavailable and fail closed, while preserving backend auth status.
                     return MarketFetchResult(
-                        -1, true, "CONNECTED · PAPER ONLY", "OFFLINE", emptyList(),
-                        "Backend status is reachable, but the market-feed request failed (${e.javaClass.simpleName}). Retrying automatically; saved token retained.",
-                        false
+                        -1, !marketOnlyFallback, backendStatusLabel, "OFFLINE", emptyList(),
+                        if (marketOnlyFallback) {
+                            "The primary ledger/API is unavailable and the independent market fallback could not be reached. No market, ledger, risk or paper-processing data is available."
+                        } else {
+                            "Backend status is reachable, but the market-feed request failed (${e.javaClass.simpleName}). Retrying automatically; saved token retained."
+                        },
+                        false,
+                        marketFallback = marketOnlyFallback
                     )
                 }
                 val (marketsCode, marketsBody) = marketsResponse
@@ -902,12 +927,16 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
                 } else emptyList()
                 val healthy = marketsCode in 200..299 && feed == "HEALTHY" && items.isNotEmpty() && safeMarkets
                 val message = when {
+                    marketOnlyFallback -> "Primary ledger/API unavailable. Independent polled Futures Testnet snapshots are display-only; WebSocket streaming, candle history, positions, risk, opportunities and paper processing remain unavailable. No fallback data is used for paper decisions. $reason"
                     healthy -> "Authenticated backend connected. ${items.size} validated instrument(s) loaded; order authorization remains disabled."
                     !safeMarkets -> "Market endpoint returned an unsafe or incomplete response. Data was rejected."
                     reason.isNotBlank() && reason != "null" -> reason
                     else -> "No validated market candles were returned (HTTP $marketsCode)."
                 }
-                MarketFetchResult(marketsCode, true, "CONNECTED · PAPER ONLY", feed, items, message, safeMarkets)
+                MarketFetchResult(
+                    marketsCode, !marketOnlyFallback, backendStatusLabel, feed, items, message, safeMarkets,
+                    marketFallback = marketOnlyFallback
+                )
             }
         }
     } catch (_: Exception) {
@@ -1169,8 +1198,13 @@ private fun BackendMarketSessionEffect() {
 
                 // Keep the last validated snapshot while the feed reconnects.
                 // It is never promoted to a live/healthy feed unless a fresh response passes validation.
-                if (response.backendConnected && response.safeResponse &&
-                    response.feedStatus == "HEALTHY" && response.items.isNotEmpty()) {
+                if (shouldDisplayMarketSnapshot(
+                        backendConnected = response.backendConnected,
+                        marketFallback = response.marketFallback,
+                        safeResponse = response.safeResponse,
+                        feedStatus = response.feedStatus,
+                        hasItems = response.items.isNotEmpty(),
+                    )) {
                     BackendSession.marketItems.value = response.items
                 }
                 BackendSession.marketLoading.value = false
@@ -2050,10 +2084,26 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
         ReadOnlyBackendConnectionCard()
         CardPanel {
             val connected = BackendSession.status.value.startsWith("CONNECTED")
-            StatusLine("●", if (connected) "BACKEND CONNECTED · PAPER ONLY" else "BACKEND STATUS · ${BackendSession.status.value}", if (connected) Green else Color(0xFFFFC857))
+            val marketFallback = BackendSession.status.value == "DEGRADED · MARKET FALLBACK"
+            StatusLine(
+                "●",
+                when {
+                    connected -> "BACKEND CONNECTED · PAPER ONLY"
+                    marketFallback -> "MARKET FALLBACK · PAPER LEDGER OFFLINE"
+                    else -> "BACKEND STATUS · ${BackendSession.status.value}"
+                },
+                if (connected) Green else Color(0xFFFFC857)
+            )
             Spacer(Modifier.height(8.dp))
             Text("Paper mode only", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text(if (connected) "Authenticated backend session retained across navigation. Market feed: ${BackendSession.feedStatus.value}. ${BackendSession.marketMessage.value}" else "Live balances, positions and market data remain unavailable until the authenticated API is connected.", color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
+            Text(
+                when {
+                    connected -> "Authenticated backend session retained across navigation. Market feed: ${BackendSession.feedStatus.value}. ${BackendSession.marketMessage.value}"
+                    marketFallback -> "Only independent, polled Futures Testnet market snapshots may be displayed. This is not a live stream. Paper ledger, positions, risk, opportunities, candle history and paper processing are unavailable; no fallback data is used for paper decisions."
+                    else -> "Live balances, positions and market data remain unavailable until the authenticated API is connected."
+                },
+                color = Muted, fontSize = 13.sp, lineHeight = 19.sp
+            )
         }
         SectionTitle("ACCOUNT OVERVIEW")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
