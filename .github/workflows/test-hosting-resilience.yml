@@ -1,0 +1,57 @@
+name: Solo hosting resilience tests
+
+on:
+  pull_request:
+    paths:
+      - "hosting/**"
+      - "package.json"
+      - "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+      - "android/app/src/test/java/com/aiautotrader/v4/SoloMarketFallbackStatusTest.kt"
+      - ".github/workflows/test-hosting-resilience.yml"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/SoloMarketFallbackStatusTest.kt"
+  push:
+    branches:
+      - "feat/solo-zero-cost-hosting-resilience"
+      - "feat/solo-ledger-dashboard-integration"
+    paths:
+      - "hosting/**"
+      - "package.json"
+      - "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+      - "android/app/src/test/java/com/aiautotrader/v4/SoloMarketFallbackStatusTest.kt"
+      - ".github/workflows/test-hosting-resilience.yml"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/SoloMarketFallbackStatusTest.kt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solo-hosting-resilience
+  cancel-in-progress: false
+
+jobs:
+  hosting-resilience:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Check edge and fallback source syntax
+        run: |
+          node --check hosting/cloudflare/src/index.js
+          node --check hosting/deno/main.js
+      - name: Run hosting failover contract tests
+        run: npm run test:hosting
+      - name: Type-check Deno deployment entry point
+        run: deno check hosting/deno/main.js
+      - name: Verify root and extracted Android source/test mirrors
+        run: |
+          cmp android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt
+          cmp android/app/src/test/java/com/aiautotrader/v4/SoloMarketFallbackStatusTest.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/SoloMarketFallbackStatusTest.kt
