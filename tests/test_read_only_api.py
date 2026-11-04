@@ -468,3 +468,24 @@ def test_api_token_environment_value_is_trimmed_without_changing_token_contents(
     assert _load_api_token({"PAPER_API_TOKEN": "  " + expected + " \n"}) == expected
     assert _load_api_token({"PAPER_API_TOKEN": expected}) == expected
     assert _load_api_token({"PAPER_API_TOKEN": "   "}) == ""
+
+
+def test_market_symbol_configuration_accepts_existing_paper_symbols_setting():
+    from app.engines.read_only_api import _configured_market_symbols
+
+    configured = _configured_market_symbols({
+        "PAPER_SYMBOLS": "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT",
+    })
+
+    assert configured == ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT")
+
+
+def test_market_symbol_configuration_prefers_explicit_market_symbols_setting():
+    from app.engines.read_only_api import _configured_market_symbols
+
+    configured = _configured_market_symbols({
+        "PAPER_MARKET_SYMBOLS": "BTCUSDT,ETHUSDT",
+        "PAPER_SYMBOLS": "BTCUSDT,ETHUSDT,BNBUSDT",
+    })
+
+    assert configured == ("BTCUSDT", "ETHUSDT")
