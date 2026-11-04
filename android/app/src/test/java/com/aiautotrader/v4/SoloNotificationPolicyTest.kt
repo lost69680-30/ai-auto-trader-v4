@@ -99,10 +99,10 @@ class SoloNotificationPolicyTest {
         assertEquals(SoloNotificationDecision.COOLED_DOWN, admit("stop-2", 2_000L))
     }
 
-    @Test fun paperLedgerRefreshRequiresAuthenticatedForegroundSession() {
-        assertEquals(true, shouldRefreshPaperLedger("x".repeat(32), true))
-        assertEquals(false, shouldRefreshPaperLedger("short-token", true))
-        assertEquals(false, shouldRefreshPaperLedger("x".repeat(32), false))
-        assertEquals(false, shouldRefreshPaperLedger("", false))
+    @Test fun paperLedgerRefreshRequiresNonblankTokenAndForeground() {
+        assertEquals(true, shouldAttemptPaperLedgerRefresh("short-token", true))
+        assertEquals(false, shouldAttemptPaperLedgerRefresh("", true))
+        assertEquals(false, shouldAttemptPaperLedgerRefresh("short-token", false))
+        assertEquals(false, shouldAttemptPaperLedgerRefresh("", false))
     }
 }
