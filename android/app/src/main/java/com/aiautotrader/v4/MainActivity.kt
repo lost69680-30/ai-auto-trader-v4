@@ -252,10 +252,11 @@ private fun fetchTestnetAccountDiagnostic(token: String): TestnetAccountDiagnost
     }
 }
 
-internal fun isMarketOnlyFallbackStatus(statusJson: JSONObject): Boolean =
-    statusJson.optString("status") == "DEGRADED_MARKET_ONLY" &&
-        statusJson.optString("mode") == "PAPER_ONLY" &&
-        !statusJson.optBoolean("orders_authorized", true)
+internal fun isMarketOnlyFallbackStatus(
+    status: String,
+    mode: String,
+    ordersAuthorized: Boolean,
+): Boolean = status == "DEGRADED_MARKET_ONLY" && mode == "PAPER_ONLY" && !ordersAuthorized
 
 internal fun shouldDisplayMarketSnapshot(
     backendConnected: Boolean,
@@ -892,7 +893,11 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
                 "Backend status check failed (HTTP $statusCode).", false)
         } else {
             val statusJson = JSONObject(statusBody)
-            val marketOnlyFallback = isMarketOnlyFallbackStatus(statusJson)
+            val marketOnlyFallback = isMarketOnlyFallbackStatus(
+                status = statusJson.optString("status"),
+                mode = statusJson.optString("mode"),
+                ordersAuthorized = statusJson.optBoolean("orders_authorized", true),
+            )
             val backendStatusLabel = if (marketOnlyFallback) "DEGRADED · MARKET FALLBACK" else "CONNECTED · PAPER ONLY"
             val safeStatus = statusJson.optString("mode") == "PAPER_ONLY" &&
                 !statusJson.optBoolean("orders_authorized", true)
