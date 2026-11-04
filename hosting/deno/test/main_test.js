@@ -55,6 +55,10 @@ test('handler exposes health and GET-only markets; mutation is forbidden', async
   const health = await handler(new Request('https://deno.example/healthz'));
   assert.equal(health.status, 200);
   assert.equal((await health.json()).orders_authorized, false);
+  const readyDenied = await handler(new Request('https://deno.example/readyz'));
+  assert.equal(readyDenied.status, 401);
+  const ready = await handler(new Request('https://deno.example/readyz', { headers: { authorization: 'Bearer solo-test-shared-secret-0123456789abcdef' } }));
+  assert.equal(ready.status, 200);
   const denied = await handler(new Request('https://deno.example/api/v1/markets', { method: 'POST' }));
   assert.equal(denied.status, 405);
   const market = await handler(new Request('https://deno.example/api/v1/markets', { headers: { authorization: 'Bearer solo-test-shared-secret-0123456789abcdef' } }));
