@@ -1295,6 +1295,7 @@ private fun TraderApp() {
     BackendMarketSessionEffect()
     BackendMarketIntelligenceEffect()
     BackendMarketWebSocketEffect()
+    PaperLedgerRefreshEffect()
     var screen by remember { mutableStateOf("Dashboard") }
     val screens = listOf("Dashboard", "AI Agents", "Markets", "Positions", "Risk Center", "Notifications")
     Column(Modifier.fillMaxSize().background(Background)) {
@@ -1342,7 +1343,6 @@ private fun TraderApp() {
 
 @Composable
 private fun NotificationsScreen() {
-    PaperLedgerRefreshEffect()
     val context = androidx.compose.ui.platform.LocalContext.current
     var records by remember { mutableStateOf(SoloNotificationCenter.getRecords(context)) }
     val permissionGranted = android.os.Build.VERSION.SDK_INT < 33 ||
@@ -1501,10 +1501,15 @@ private fun NetworkArrow(label: String) {
 private fun PaperLedgerRefreshEffect() {
     val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     val token = BackendSession.activeToken.value
-    LaunchedEffect(token) {
+    val isForeground = BackendSession.appInForeground.value
+    LaunchedEffect(token, isForeground) {
         if (token.isBlank()) {
             BackendSession.paperLedgerStatus.value = "NOT CONNECTED"
             BackendSession.paperLedgerError.value = "Connect the authenticated backend to load paper-ledger data."
+            return@LaunchedEffect
+        }
+        if (!shouldRefreshPaperLedger(token, isForeground)) {
+            BackendSession.paperLedgerStatus.value = "PAUSED"
             return@LaunchedEffect
         }
         while (true) {
@@ -1532,7 +1537,6 @@ private fun PaperLedgerRefreshEffect() {
 
 @Composable
 private fun PositionsScreen() {
-    PaperLedgerRefreshEffect()
     val snapshot = BackendSession.paperLedger.value
     val open = snapshot?.positions.orEmpty().filter { it.status == "OPEN" }
     val pendingOrders = snapshot?.orders.orEmpty().filter {
