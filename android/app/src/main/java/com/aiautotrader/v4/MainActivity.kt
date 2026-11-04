@@ -1344,6 +1344,7 @@ private fun TraderApp() {
 
 @Composable
 private fun NotificationsScreen() {
+    PaperLedgerRefreshEffect()
     val context = androidx.compose.ui.platform.LocalContext.current
     var records by remember { mutableStateOf(SoloNotificationCenter.getRecords(context)) }
     val permissionGranted = android.os.Build.VERSION.SDK_INT < 33 ||
