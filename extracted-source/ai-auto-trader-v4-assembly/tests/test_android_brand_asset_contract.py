@@ -2,7 +2,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 
-ROOT = Path(__file__).parents[2]
+ROOT = Path(__file__).parents[3]
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
 ROOT_ANDROID = ROOT / "android/app/src/main"
 PACKAGED_ANDROID = ROOT / "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main"
