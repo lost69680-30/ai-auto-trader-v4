@@ -130,9 +130,9 @@ def run_preflight(role: str, environ: Mapping[str, str] | None = None) -> Prefli
             else "Paper runtime settings or risk limits are invalid; verify required PAPER_* values and safety caps. Values are redacted.",
         ))
 
+    # Read-only opportunity research is permitted in staging. The separate
+    # paper-intent handoff and experimental worker/supervisor opt-ins remain off.
     for name, check_name, description in (
-        ("PAPER_MARKET_INTELLIGENCE_ENABLED", "market_intelligence_disabled",
-         "PAPER_MARKET_INTELLIGENCE_ENABLED"),
         ("PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED", "paper_handoff_disabled",
          "PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED"),
         ("PAPER_RESEARCH_WORKER_ENABLED", "research_worker_disabled",
