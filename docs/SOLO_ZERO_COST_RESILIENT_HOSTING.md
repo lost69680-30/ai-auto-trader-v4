@@ -15,7 +15,7 @@
 ### Primary-first behavior
 
 - `GET /healthz` reports only that the edge Worker is alive; it does not claim Render or the database are healthy.
-- `GET /readyz` checks the Render `/readyz` and Deno `/healthz` endpoints. It reports `ready` only when Render is ready; a healthy Deno fallback with a failed Render primary is reported as `degraded` and HTTP 503.
+- `GET /readyz` checks Render `/readyz` and the authenticated Deno `/readyz` endpoint. Deno readiness verifies the shared service token and its configuration without fetching market data. It reports `ready` only when Render is ready; a healthy Deno fallback with a failed Render primary is reported as `degraded` and HTTP 503.
 - Authenticated `GET /api/v1/status` and `GET /api/v1/markets` use Render first.
 - If Render is unavailable or its market snapshot is invalid/stale, and the primary response does not explicitly violate the order-authorization contract, the Worker may use Deno for **market display only**. An unsafe or malformed authorization state from the primary is rejected rather than hidden by fallback. The fallback status is explicitly `DEGRADED_MARKET_ONLY`, with `orders_authorized=false`, no fabricated Emergency Stop state, no fabricated positions, and no paper-ledger values.
 - Deno snapshots are labeled `POLLED_FALLBACK`; they are not WebSocket/live-stream data. The Android UI must show a degraded market-fallback state and must not label these snapshots `LIVE`.
