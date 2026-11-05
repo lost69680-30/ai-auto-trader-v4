@@ -43,6 +43,7 @@ class MarketAssessmentConfig:
     high_volatility_pct: float = 2.5
     trending_efficiency_ratio: float = 0.35
     ranging_efficiency_ratio: float = 0.20
+    # Baseline one-minute continuity limit; longer bars scale by sqrt(duration).
     max_candle_price_change_pct: float = 5.0
 
     def __post_init__(self) -> None:
@@ -123,6 +124,14 @@ def _expected_close(opened: datetime, timeframe: str) -> datetime:
     return _next_open(opened, timeframe) - timedelta(milliseconds=1)
 
 
+def _max_candle_price_change_pct(timeframe: str, config: MarketAssessmentConfig) -> float:
+    """Scale the one-minute discontinuity guard for longer aggregation windows."""
+    if timeframe in _FIXED_SECONDS:
+        multiplier = math.sqrt(_FIXED_SECONDS[timeframe] / 60.0)
+        return min(300.0, config.max_candle_price_change_pct * multiplier)
+    return 300.0
+
+
 def _interval_freshness_seconds(timeframe: str) -> float:
     if timeframe in _FIXED_SECONDS:
         return max(90.0, _FIXED_SECONDS[timeframe] * 2.0)
@@ -183,7 +192,7 @@ def _invalid_series_reason(
             abs(value / reference_price - 1.0) * 100.0
             for value in relative_prices
         )
-        if largest_change_pct > config.max_candle_price_change_pct:
+        if largest_change_pct > _max_candle_price_change_pct(timeframe, config):
             return "price discontinuity detected between consecutive candles"
     latest_close = _utc(rows[-1].close_time, "latest close_time")
     age = (now - latest_close).total_seconds()
