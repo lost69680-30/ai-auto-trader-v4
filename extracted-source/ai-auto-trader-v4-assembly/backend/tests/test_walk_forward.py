@@ -26,7 +26,7 @@ def test_walk_forward_has_chronological_disjoint_folds_and_untouched_holdout():
         "BTCUSDT", rows,
         config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40,
                                  step_bars=40, candle_interval_minutes=1),
-        research_now=NOW,
+        research_now=NOW, dataset_provider="binance-public", dataset_venue="binance-spot-public",
     )
     assert result.orders_authorized is False
     assert result.holdout is not None
@@ -42,7 +42,7 @@ def test_walk_forward_reports_buy_hold_and_cash_baselines():
         "BTCUSDT", make_candles(360),
         config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40,
                                  step_bars=40),
-        research_now=NOW,
+        research_now=NOW, dataset_provider="binance-public", dataset_venue="binance-spot-public",
     )
     assert result.folds
     for fold in result.folds:
@@ -58,14 +58,14 @@ def test_walk_forward_rejects_short_or_irregular_data_without_trades():
     with pytest.raises(ValueError, match="not enough"):
         evaluate_walk_forward("BTCUSDT", rows,
             config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40),
-            research_now=NOW)
+            research_now=NOW, dataset_provider="binance-public", dataset_venue="binance-spot-public")
     rows = make_candles(360)
     rows[200] = Candle(rows[200].symbol, rows[200].timestamp + timedelta(minutes=1),
                        rows[200].open, rows[200].high, rows[200].low, rows[200].close, rows[200].volume)
     with pytest.raises(ValueError, match="interval"):
         evaluate_walk_forward("BTCUSDT", rows,
             config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40),
-            research_now=NOW)
+            research_now=NOW, dataset_provider="binance-public", dataset_venue="binance-spot-public")
 
 
 def test_walk_forward_rejects_holdout_smaller_than_minimum():
