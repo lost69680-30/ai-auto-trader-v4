@@ -167,7 +167,8 @@ def test_assessment_quarantines_extreme_single_candle_price_discontinuity():
 
 
 def test_assessment_quarantines_suspicious_double_digit_intrabar_wick():
-    rows = list(_fixed_series(3600, count=60))
+    # The assessment key is 1m, so the fixture must contain one-minute bars.
+    rows = list(_fixed_series(60, count=60))
     previous = rows[39]
     anomalous = rows[40]
     rows[40] = MarketCandle(
