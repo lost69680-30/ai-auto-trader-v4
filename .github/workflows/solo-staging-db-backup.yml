@@ -1,6 +1,9 @@
 name: Solo staging PostgreSQL backup
 
 on:
+  schedule:
+    # Weekly Sunday at 06:00 UTC (09:00 Africa/Addis_Ababa).
+    - cron: "0 6 * * 0"
   workflow_dispatch:
     inputs:
       confirm_staging_only:
@@ -25,7 +28,7 @@ concurrency:
 jobs:
   backup-paper-ledger:
     name: Encrypt, restore-test, and export staging paper_ledger
-    if: inputs.confirm_staging_only == true && inputs.confirm_free_artifact_storage == true
+    if: github.event_name == 'schedule' || (inputs.confirm_staging_only == true && inputs.confirm_free_artifact_storage == true)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -207,7 +210,7 @@ jobs:
             solo-paper-ledger.dump.age
             solo-paper-ledger.dump.age.sha256
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
           compression-level: 0
 
       - name: Remove plaintext and temporary key material
