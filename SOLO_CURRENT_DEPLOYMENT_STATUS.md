@@ -18,8 +18,9 @@ This is the current deployment-specific status. It supersedes older runtime desc
 - Start command launches the API/supervisor in the packaged assembly. The supervisor coordinates the API and shared market worker; the legacy separate worker service is not relied upon as a second active worker.
 - Latest successful staging deployment: commit `1d3eda70b16325a3d05aff1ede8427e75bdaebae`, deployment `dep-dblvo9rncjis738ku580`, completed 2026-11-05 03:47:45 UTC.
 - After deployment, logs showed successful market cycles, all ten configured symbols healthy, scheduler jobs completing, 10 new candles archived, historical archive caught up, and paper equity snapshots persisted with `orders_authorized=False`.
-- **Latest runtime check at 2026-11-05 04:22:06 UTC did not show a current healthy worker.** The most recent database heartbeat was 04:02:35 UTC (1,172 seconds old); its lease expired at 04:04:05 UTC. The latest Render application logs also ended around 04:00 UTC. Treat the worker as stale/not currently verified, not RUNNING.
-- The five-minute GitHub keep-warm workflow is a best-effort liveness/readiness probe. A scheduled workflow may be delayed, skipped, or fail; it cannot guarantee uninterrupted processing on Render Free. Never present this arrangement as guaranteed 24/7 hosting.
+- At 04:22:06 UTC the worker heartbeat was stale (last heartbeat 04:02:35 UTC; lease expired 04:04:05 UTC). A manual staging redeploy of the same integration commit was then triggered at 04:23:23 UTC and completed at 04:24:18 UTC.
+- **Recovery re-verified at 04:25:21 UTC:** latest heartbeat 04:25:15 UTC (6 seconds old), lease valid until 04:26:45 UTC, status `RUNNING`, analysis `ANALYZED`, all ten configured symbols healthy, no unhealthy symbols, no analysis/equity snapshot error, scheduled-job runner `RUNNING`, four new candles archived, historical archive caught up, and `orders_authorized=false`.
+- This confirms recovery and repeated cycles immediately after redeploy, not uninterrupted multi-hour uptime. The five-minute GitHub keep-warm workflow is a best-effort liveness/readiness probe. A scheduled workflow may be delayed, skipped, or fail; it cannot guarantee uninterrupted processing on Render Free. Never present this arrangement as guaranteed 24/7 hosting.
 
 ## Staging database and analysis evidence
 
