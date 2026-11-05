@@ -1,0 +1,82 @@
+name: Solo staging Render keep-warm and readiness
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solo-staging-render-keepwarm
+  cancel-in-progress: false
+
+jobs:
+  keep-warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Wake staging API and verify paper-only readiness
+        env:
+          SOLO_STAGING_API_ORIGIN: https://solo-ai-auto-trader-staging-api.onrender.com
+        shell: bash
+        run: |
+          set -euo pipefail
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
+
+          health_code="000"
+          for attempt in 1 2 3 4; do
+            health_code="$(curl -sS --connect-timeout 5 --max-time 10 \
+              -o "$temp_dir/health.json" -w '%{http_code}' \
+              "$SOLO_STAGING_API_ORIGIN/healthz" || true)"
+            if [[ "$health_code" == "200" ]]; then
+              break
+            fi
+            sleep 5
+          done
+
+          if [[ "$health_code" != "200" ]]; then
+            echo "Staging liveness probe failed: HTTP $health_code"
+            [[ -f "$temp_dir/health.json" ]] && cat "$temp_dir/health.json"
+            exit 1
+          fi
+
+          python3 - "$temp_dir/health.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              payload = json.load(stream)
+          if payload.get("status") != "ok" or payload.get("mode") != "PAPER_ONLY":
+              raise SystemExit("Liveness response is not the expected paper-only API")
+          if payload.get("orders_authorized") is not False:
+              raise SystemExit("Liveness response did not explicitly deny order authorization")
+          print("Staging API liveness is healthy and paper-only.")
+          PY
+
+          ready_code="000"
+          for attempt in $(seq 1 12); do
+            ready_code="$(curl -sS --connect-timeout 5 --max-time 10 \
+              -o "$temp_dir/ready.json" -w '%{http_code}' \
+              "$SOLO_STAGING_API_ORIGIN/readyz" || true)"
+            if [[ "$ready_code" == "200" ]]; then
+              python3 - "$temp_dir/ready.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              payload = json.load(stream)
+          if payload.get("status") != "ready":
+              raise SystemExit("Readiness endpoint returned HTTP 200 without ready status")
+          if payload.get("worker_status") != "RUNNING":
+              raise SystemExit("Readiness endpoint did not confirm a running worker")
+          if payload.get("orders_authorized") is not False:
+              raise SystemExit("Readiness endpoint did not explicitly deny order authorization")
+          print("Staging worker is ready; orders_authorized=false.")
+          PY
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "Staging API did not become ready within the bounded startup window: HTTP $ready_code"
+          [[ -f "$temp_dir/ready.json" ]] && cat "$temp_dir/ready.json"
+          exit 1
