@@ -9,7 +9,7 @@
 - **Cloudflare Workers edge gateway:** `hosting/cloudflare/src/index.js` is the Android HTTPS/WebSocket entry point. It forwards the allowlisted API reads and the authenticated market WebSocket to Render. It never stores the user's API bearer token.
 - **Deno Deploy secondary market source:** `hosting/deno/main.js` fetches public Binance USDⓈ-M Futures Testnet premium-index snapshots on demand. It has no database, credentials, account access, order routes, or write capability.
 - **Supabase PostgreSQL:** remains the single authoritative paper ledger and audit database. No second database, multi-master writes, or cross-provider ledger replication is introduced.
-- **GitHub Actions:** runs source checks and failover contract tests. Existing encrypted backup/restore workflows remain the database recovery mechanism.
+- **GitHub Actions:** runs source checks and failover contract tests. Existing encrypted backup/restore workflows remain the database recovery mechanism. A five-minute scheduled keep-warm workflow also calls the public staging `/healthz` and `/readyz` endpoints; it verifies paper-only readiness and can reduce Render Free idle sleeps when GitHub's scheduler runs on time. It requires no API token or database secret. This is best-effort only: GitHub scheduled workflows can be delayed or skipped, so it does not create an uptime guarantee.
 
 ## 2. Failover contract
 
@@ -46,6 +46,14 @@
 - Render Free web services spin down after 15 minutes without inbound HTTP requests or WebSocket messages, take about a minute to wake, and can restart. A connected foreground WebSocket with keepalives may keep the service active, but that does not cover phone-off/background periods. The Python worker cannot be promised continuous operation on that plan. [Official free-service limits](https://render.com/docs/free).
 - Vercel Hobby is intentionally not part of the production architecture: its terms restrict it to personal/non-commercial use, and Hobby cron is limited to once daily. [Official Hobby terms](https://vercel.com/docs/plans/hobby) and [Cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing). A static GitHub Pages page may be added later for public status/help content, but it cannot run a backend or worker.
 - No free tier in this architecture guarantees uninterrupted 24/7 execution, WebSocket continuity, zero downtime, or 100% availability. The design improves graceful degradation and recovery instead.
+
+### Best-effort Render Free keep-warm
+
+- Workflow: `.github/workflows/solo-render-keepwarm.yml`, scheduled every five minutes and manually dispatchable.
+- It first calls public `GET /healthz` to wake the staging web service, then polls public `GET /readyz` for a bounded period.
+- It succeeds only when the API reports `status=ready`, `worker_status=RUNNING`, and `orders_authorized=false`. It does not send credentials, access the database directly, or invoke any mutation endpoint.
+- A failed readiness check is recorded as a failed GitHub Actions run. The workflow is a keep-warm/monitoring aid, not a worker supervisor and not a reliability SLA. GitHub schedule delays, missed runs, Render restarts, and free-tier limits can still cause downtime.
+- The workflow does not increase the Render plan, add paid resources, or require a payment method.
 
 ## 5. Existing infrastructure audit and constraints
 
