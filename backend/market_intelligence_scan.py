@@ -163,11 +163,17 @@ def market_intelligence_scan(
                         in_progress_by_symbol[symbol].append(interval)
                     fetched[(symbol, interval)] = tuple(row for row in rows if row.is_closed)
                 except Exception as exc:
-                    errors_by_symbol[symbol][interval] = type(exc).__name__
+                    error_type = type(exc).__name__
+                    error_detail = str(exc)[:240]
+                    cause = exc.__cause__ or exc.__context__
+                    cause_type = type(cause).__name__ if cause is not None else "none"
+                    cause_detail = str(cause)[:240] if cause is not None else ""
+                    errors_by_symbol[symbol][interval] = error_type
                     fetched[(symbol, interval)] = ()
                     logger.warning(
-                        "market intelligence timeframe unavailable symbol=%s interval=%s error=%s",
-                        symbol, interval, type(exc).__name__,
+                        "market intelligence timeframe unavailable symbol=%s interval=%s "
+                        "error_type=%s detail=%s cause_type=%s cause_detail=%s",
+                        symbol, interval, error_type, error_detail, cause_type, cause_detail,
                     )
 
         reports: list[dict[str, Any]] = []
