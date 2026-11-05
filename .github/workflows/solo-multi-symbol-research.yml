@@ -83,7 +83,7 @@ jobs:
                   if len(candles) < 700:
                       raise ValueError(f"Insufficient closed hourly candles: need 700, got {len(candles)}")
                   result = evaluate_walk_forward(symbol, candles, config=cfg, backtest_config=bt_cfg,
-                                                 research_now=candles[-1].timestamp)
+                                                 research_now=candles[-1].timestamp, dataset_provider="binance-public", dataset_venue="binance-spot-public")
 
                   def metrics(window):
                       bt = window.strategy
@@ -104,7 +104,11 @@ jobs:
                   reports.append({
                       "symbol": symbol, "status": "evaluated", "interval": interval,
                       "interval_minutes": interval_minutes,
-                      "candle_count": len(candles), "first_candle_utc": candles[0].timestamp.isoformat(),
+                      "candle_count": len(candles),
+                      "dataset_provenance": {"provider": result.dataset_provenance.provider, "venue": result.dataset_provenance.venue,
+                                            "timeframe": result.dataset_provenance.timeframe, "window_start": result.dataset_provenance.window_start.isoformat(),
+                                            "window_end": result.dataset_provenance.window_end.isoformat(), "data_sha256": result.dataset_provenance.data_sha256},
+                      "first_candle_utc": candles[0].timestamp.isoformat(),
                       "last_candle_utc": candles[-1].timestamp.isoformat(), "evaluated_at_utc": now.isoformat(),
                       "protocol": {"train_bars_warmup_only": 500, "validation_bars": 100,
                                    "holdout_bars": 100, "step_bars": 100,

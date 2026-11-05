@@ -59,7 +59,7 @@ jobs:
           cfg = WalkForwardConfig(train_bars=500, validation_bars=100, holdout_bars=100, step_bars=100, candle_interval_minutes=60)
           result = evaluate_walk_forward(symbol, candles, config=cfg,
                     backtest_config=BacktestConfig(candle_interval_minutes=60, funding_bps_per_8h=0.0),
-                    research_now=candles[-1].timestamp)
+                    research_now=candles[-1].timestamp, dataset_provider="binance-public", dataset_venue="binance-spot-public")
           def metrics(window):
               bt = window.strategy
               return {"window": window.name, "start_index": window.start_index, "end_index_exclusive": window.end_index,
@@ -81,6 +81,9 @@ jobs:
           ]
           report = {"report_type": "historical_research_only", "source": "Binance Spot public klines REST API",
                     "symbol": symbol, "interval": "1h", "candle_count": len(candles),
+                    "dataset_provenance": {"provider": result.dataset_provenance.provider, "venue": result.dataset_provenance.venue,
+                                           "timeframe": result.dataset_provenance.timeframe, "window_start": result.dataset_provenance.window_start.isoformat(),
+                                           "window_end": result.dataset_provenance.window_end.isoformat(), "data_sha256": result.dataset_provenance.data_sha256},
                     "first_candle_utc": candles[0].timestamp.isoformat(), "last_candle_utc": candles[-1].timestamp.isoformat(),
                     "evaluated_at_utc": now.isoformat(),
                     "protocol": {"train_bars_warmup_only": 500, "validation_bars": 100,
