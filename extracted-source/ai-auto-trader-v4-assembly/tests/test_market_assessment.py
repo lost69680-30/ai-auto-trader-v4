@@ -148,3 +148,46 @@ def test_assessment_marks_bullish_reversal_attempt_inside_lower_structure():
     assert hourly.structure == "LOWER_HIGHS_LOWER_LOWS"
     assert hourly.structure_event == "REVERSAL_ATTEMPT_UP"
     assert result.market_phase == "REVERSAL_ATTEMPT_UP"
+
+
+def test_assessment_quarantines_extreme_single_candle_price_discontinuity():
+    rows = list(_fixed_series(3600, count=60))
+    anomalous = rows[40]
+    rows[40] = _candle(
+        "BTCUSDT", anomalous.open_time, anomalous.close_time, 10_000.0,
+    )
+
+    result = assess_market("BTCUSDT", {"1h": rows}, now=NOW)
+    hourly = next(item for item in result.timeframes if item.timeframe == "1h")
+
+    assert hourly.status == "INVALID_DATA"
+    assert hourly.direction == "INSUFFICIENT_DATA"
+    assert any("price discontinuity" in reason.lower() for reason in hourly.reasons)
+    assert result.orders_authorized is False
+
+
+def test_assessment_quarantines_suspicious_double_digit_intrabar_wick():
+    # The assessment key is 1m, so the fixture must contain one-minute bars.
+    rows = list(_fixed_series(60, count=60))
+    previous = rows[39]
+    anomalous = rows[40]
+    rows[40] = MarketCandle(
+        symbol="BTCUSDT",
+        open_time=anomalous.open_time,
+        close_time=anomalous.close_time,
+        open=previous.close,
+        high=previous.close * 1.12,
+        low=previous.close * 0.995,
+        close=previous.close * 1.002,
+        volume=anomalous.volume,
+        quote_volume=anomalous.quote_volume,
+        trades=anomalous.trades,
+        is_closed=True,
+    )
+
+    result = assess_market("BTCUSDT", {"1m": rows}, now=NOW)
+    one_minute = next(item for item in result.timeframes if item.timeframe == "1m")
+
+    assert one_minute.status == "INVALID_DATA"
+    assert any("price discontinuity" in reason.lower() for reason in one_minute.reasons)
+    assert result.orders_authorized is False

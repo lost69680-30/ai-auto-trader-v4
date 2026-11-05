@@ -309,3 +309,26 @@ def test_postgres_store_reclaims_expired_worker_lease_after_process_loss():
 
     replacement.heartbeat("RUNNING", now=now + timedelta(seconds=32))
     replacement.release(now=now + timedelta(seconds=33))
+
+
+def test_postgres_store_reports_expired_running_lease_as_stale():
+    reset_tables()
+    now = datetime.now(timezone.utc)
+    store = PostgresMarketFeedStore(
+        DSN, worker_id="test-market-worker", owner_id="owner-expired",
+    )
+    assert store.acquire_lease(now=now) is True
+    expired_at = now - timedelta(seconds=120)
+    store.heartbeat(
+        "RUNNING",
+        now=expired_at,
+        details={"orders_authorized": False},
+    )
+
+    status = store.status()
+
+    assert status["status"] == "STALE"
+    assert status["worker_status"] == "STALE"
+    assert status["last_reported_worker_status"] == "RUNNING"
+    assert status["orders_authorized"] is False
+    store.release(now=now)
