@@ -6,8 +6,8 @@ on:
     paths:
       - .github/workflows/solo-render-keepwarm.yml
   schedule:
-    # Offset five-minute pings away from the busiest top-of-hour minute.
-    - cron: "2-59/5 * * * *"
+    # Standard five-minute schedule; GitHub scheduled execution is best-effort.
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
