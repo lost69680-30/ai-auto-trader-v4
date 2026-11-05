@@ -302,6 +302,7 @@ private data class MarketIntelligenceItem(
     val performanceStatus: String,
     val eligibleForRiskReview: Boolean,
     val noTradeReason: String,
+    val strategyDecisionDetails: List<String>,
     val conflicts: List<String>,
     val inProgressTimeframes: List<String>,
     val dataQualityIssues: List<String>,
@@ -1051,6 +1052,7 @@ private fun fetchMarketIntelligence(token: String): MarketIntelligenceFetchResul
                     dataIssues.add("${key}: request ${errors.optString(key, "failed")}")
                 }
             }
+            val strategyDecisionDetails = parseStrategyDecisionSummaries(selection)
             val selectedStrategy = selection.optString("selected_strategy", "")
                 .takeIf { it.isNotBlank() && it != "null" } ?: "None"
             val score = selection.optDouble("fit_score", Double.NaN)
@@ -1073,6 +1075,7 @@ private fun fetchMarketIntelligence(token: String): MarketIntelligenceFetchResul
                 performanceStatus = selection.optString("performance_status", "NOT_CALIBRATED"),
                 eligibleForRiskReview = selection.optBoolean("eligible_for_risk_review", false),
                 noTradeReason = selection.optString("no_trade_reason", "").takeIf { it != "null" }.orEmpty(),
+                strategyDecisionDetails = strategyDecisionDetails,
                 conflicts = conflicts,
                 inProgressTimeframes = inProgress,
                 dataQualityIssues = dataIssues,
@@ -2425,6 +2428,12 @@ private fun AnalysisScreen() {
                         "SELECTED" -> Text("Solo selected a strategy candidate. It must still pass the independent Risk Manager; this is not an order approval.", color = Gold, fontSize = 11.sp, lineHeight = 16.sp)
                         "ANALYSIS_ONLY" -> Text("Long-term analysis only. This result cannot become a trade proposal.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
                         else -> Text("No valid opportunity. Solo waits instead of forcing a trade. ${selectedIntelligence.noTradeReason}", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                    }
+                    if (selectedIntelligence.strategyDecisionDetails.isNotEmpty()) {
+                        Text("INDIVIDUAL STRATEGY CHECKS", color = Gold, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        selectedIntelligence.strategyDecisionDetails.forEach { detail ->
+                            Text("• $detail", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                        }
                     }
                     if (selectedIntelligence.conflicts.isNotEmpty()) {
                         Text("Timeframe conflicts: ${selectedIntelligence.conflicts.joinToString("; ")}", color = Color(0xFFE7B65E), fontSize = 10.sp, lineHeight = 14.sp)
