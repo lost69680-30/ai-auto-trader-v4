@@ -164,7 +164,11 @@ def _evaluate_window(
     ) / 10_000.0
     # Buy-and-hold is a long-only benchmark; this deliberately does not model dividends,
     # borrow, funding, spread variation, or market impact.
-    buy_hold_return = (gross_return - round_trip_cost) * 100.0
+    # Compare returns on the same fraction of starting equity as the strategy;
+    # the unused fraction remains cash in both paths.
+    buy_hold_return = (
+        (gross_return - round_trip_cost) * backtest_config.position_fraction * 100.0
+    )
     return EvaluationWindow(
         name=name,
         start_index=start,
