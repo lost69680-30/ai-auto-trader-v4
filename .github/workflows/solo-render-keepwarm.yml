@@ -2,7 +2,7 @@ name: Solo staging Render keep-warm and readiness
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/solo-keepwarm-cold-start-window]
     paths:
       - .github/workflows/solo-render-keepwarm.yml
   schedule:
