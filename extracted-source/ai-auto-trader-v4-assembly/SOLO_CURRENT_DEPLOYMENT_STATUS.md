@@ -6,7 +6,7 @@ This is the current deployment-specific status. It supersedes older runtime desc
 
 - Default branch: `main`, current observed head `448960021cf669d397b736f5b10d7a33632ddaad`.
 - Parts 1–8 integration was merged into `main` through PR #80. PR #80 is closed as merged.
-- At the time of mainline reconciliation, integration head `1d3eda70b16325a3d05aff1ede8427e75bdaebae` had the same application source tree as `main`. Subsequent changes on `main` added the keep-warm workflow and updated deployment-status documentation. The integration branch is now eight commits behind `main`; the current diff is limited to that workflow and documentation files, with no application-source divergence.
+- PR #127 has now merged the mainline keep-warm workflow and current deployment-status documentation into the Render integration branch. `main` and `feat/solo-ledger-dashboard-integration` have identical file trees; the integration branch is one merge commit ahead of main, with zero file differences and no application-source divergence.
 - The current `main` head includes a five-minute GitHub Actions Render keep-warm/readiness probe. It is explicitly best-effort, not an uptime guarantee.
 - PR #124 fixed the worker's graceful-shutdown false failure and is merged. Regression tests were first observed failing (2 failed, 589 passed, 50 skipped); after the fix, all four checks passed: Python, PostgreSQL, ASGI, and read-only market-data safety. Root and packaged worker/test files were verified identical.
 - PR #117's hosting/API contract work passed its hosting-resilience, Python, PostgreSQL, ASGI, read-only safety, and Android staging APK/unit-test checks before merge.
@@ -16,17 +16,17 @@ This is the current deployment-specific status. It supersedes older runtime desc
 
 - Staging service: `solo-ai-auto-trader-staging-api`, Render Free, Frankfurt, auto-deploy enabled, tracking `feat/solo-ledger-dashboard-integration`.
 - Start command launches the API/supervisor in the packaged assembly. The supervisor coordinates the API and shared market worker; the legacy separate worker service is not relied upon as a second active worker.
-- Latest successful staging deployment: commit `1d3eda70b16325a3d05aff1ede8427e75bdaebae`, deployment `dep-dblvo9rncjis738ku580`, completed 2026-11-05 03:47:45 UTC.
-- After deployment, logs showed successful market cycles, all ten configured symbols healthy, scheduler jobs completing, 10 new candles archived, historical archive caught up, and paper equity snapshots persisted with `orders_authorized=False`.
-- At 04:22:06 UTC the worker heartbeat was stale (last heartbeat 04:02:35 UTC; lease expired 04:04:05 UTC). A manual staging redeploy of the same integration commit was then triggered at 04:23:23 UTC and completed at 04:24:18 UTC.
-- **Recovery re-verified at 04:25:21 UTC:** latest heartbeat 04:25:15 UTC (6 seconds old), lease valid until 04:26:45 UTC, status `RUNNING`, analysis `ANALYZED`, all ten configured symbols healthy, no unhealthy symbols, no analysis/equity snapshot error, scheduled-job runner `RUNNING`, four new candles archived, historical archive caught up, and `orders_authorized=false`.
-- This confirms recovery and repeated cycles immediately after redeploy, not uninterrupted multi-hour uptime. The five-minute GitHub keep-warm workflow is a best-effort liveness/readiness probe. A scheduled workflow may be delayed, skipped, or fail; it cannot guarantee uninterrupted processing on Render Free. Never present this arrangement as guaranteed 24/7 hosting.
+- Latest successful staging deployment: commit `e740ecdca08d614f869ddac45803d8fc6d9a9d15`, deployment `dep-dbm0ar67bikc73eddghg`, completed 2026-11-05 04:27:15 UTC. It includes only the mainline keep-warm workflow and synchronized documentation; application source and safety behavior were unchanged.
+- The deployment handover respected the PostgreSQL worker lease: the new worker refused duplicate polling while the old 90-second lease remained active, retried with backoff, then acquired the lease after expiry. It resumed its first complete analysis cycle at 04:29:33 UTC. This produced a short readiness gap but did not permit duplicate market polling.
+- **Recovery re-verified at 04:30:11 UTC:** latest heartbeat 04:30:03 UTC (8 seconds old), lease valid until 04:31:33 UTC, status `RUNNING`, analysis `ANALYZED`, all ten configured symbols healthy, no unhealthy symbols, no analysis/equity snapshot error, scheduled-job runner `RUNNING`, historical archive caught up, and `orders_authorized=false`.
+- Earlier, at 04:22:06 UTC, the worker heartbeat was stale and its lease had expired; a manual redeploy restored it. The current check confirms recovery and repeated cycles after restart, not uninterrupted multi-hour uptime.
+- The five-minute GitHub keep-warm workflow is a best-effort liveness/readiness probe. Actual scheduled-run continuity has not been independently verified, and a scheduled workflow may be delayed, skipped, or fail. It cannot guarantee uninterrupted processing on Render Free. Never present this arrangement as guaranteed 24/7 hosting.
 
 ## Staging database and analysis evidence
 
 - Isolated staging Supabase project: `solo-ai-auto-trader-staging` (project reference `gryjtjobkmredawmymwy`).
-- Latest read-only query returned 4,100 market-intelligence reports across 10 symbols, latest assessment at 04:01:26 UTC. All report rows explicitly have `orders_authorized=false`.
-- The opportunity registry currently contains zero persisted opportunity rows. No eligible opportunity should be invented or shown as available.
+- Latest read-only query returned 4,130 market-intelligence reports across 10 symbols, latest assessment at 04:29:00 UTC. All report rows explicitly have `orders_authorized=false`.
+- The opportunity registry contained zero persisted opportunity rows at the latest direct count. No eligible opportunity should be invented or shown as available.
 - Futures candle archive query returned 499,827 one-minute candles for `BINANCE_USDM_TESTNET/FUTURES`, latest close at 04:01:59 UTC.
 - Latest ledger query returned zero paper order records and zero open positions.
 - Latest heartbeat had `analysis_status=ANALYZED`, no analysis or equity snapshot error, and `orders_authorized=false`; however, that heartbeat is stale as described above.
