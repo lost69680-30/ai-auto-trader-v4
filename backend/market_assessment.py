@@ -43,12 +43,14 @@ class MarketAssessmentConfig:
     high_volatility_pct: float = 2.5
     trending_efficiency_ratio: float = 0.35
     ranging_efficiency_ratio: float = 0.20
+    max_candle_price_change_pct: float = 300.0
 
     def __post_init__(self) -> None:
         values = (
             self.max_future_skew_seconds, self.freshness_intervals,
             self.minimum_directional_score, self.high_volatility_pct,
             self.trending_efficiency_ratio, self.ranging_efficiency_ratio,
+            self.max_candle_price_change_pct,
         )
         if not all(math.isfinite(value) for value in values):
             raise ValueError("market assessment thresholds must be finite")
@@ -58,6 +60,8 @@ class MarketAssessmentConfig:
             raise ValueError("minimum_directional_score must be between 0 and 50")
         if self.high_volatility_pct <= 0:
             raise ValueError("high_volatility_pct must be positive")
+        if self.max_candle_price_change_pct <= 0:
+            raise ValueError("max_candle_price_change_pct must be positive")
         if not 0 <= self.ranging_efficiency_ratio < self.trending_efficiency_ratio <= 1:
             raise ValueError("efficiency-ratio thresholds are invalid")
 
@@ -165,9 +169,22 @@ def _invalid_series_reason(
         opened.append(open_time)
     if any(opened[index] <= opened[index - 1] for index in range(1, len(opened))):
         return "duplicate or out-of-order candle timestamps"
-    for previous, current in zip(opened, opened[1:]):
-        if current != _next_open(previous, timeframe):
+    for index, (previous, current) in enumerate(zip(rows, rows[1:])):
+        if opened[index + 1] != _next_open(opened[index], timeframe):
             return "candle gap detected between consecutive bars"
+        reference_price = float(previous.close)
+        if reference_price <= 0:
+            return "candle price discontinuity has a non-positive reference price"
+        relative_prices = (
+            float(current.open), float(current.high),
+            float(current.low), float(current.close),
+        )
+        largest_change_pct = max(
+            abs(value / reference_price - 1.0) * 100.0
+            for value in relative_prices
+        )
+        if largest_change_pct > config.max_candle_price_change_pct:
+            return "price discontinuity detected between consecutive candles"
     latest_close = _utc(rows[-1].close_time, "latest close_time")
     age = (now - latest_close).total_seconds()
     if age < -config.max_future_skew_seconds:
