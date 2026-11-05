@@ -334,7 +334,7 @@ def external_rule_minimum_candles(rule_spec: ExternalRuleSpec) -> int:
         raise ValueError("an explicit supported ExternalRuleSpec is required")
     params = rule_spec.parameters
     if rule_spec.family == "SMA_CROSS":
-        return int(params["slow_period"])
+        return int(params["slow_period"]) + 1
     if rule_spec.family in {"MOMENTUM", "BREAKOUT"}:
         return int(params["lookback"]) + 1
     return int(params["period"]) + 1
@@ -356,7 +356,11 @@ def evaluate_external_rule(rule_spec: ExternalRuleSpec, candles: Any) -> str:
         slow_period = int(params["slow_period"])
         fast = math.fsum(closes[-fast_period:]) / fast_period
         slow = math.fsum(closes[-slow_period:]) / slow_period
-        return "LONG" if fast > slow else "SHORT" if fast < slow else "NEUTRAL"
+        previous_fast = math.fsum(closes[-fast_period - 1:-1]) / fast_period
+        previous_slow = math.fsum(closes[-slow_period - 1:-1]) / slow_period
+        crossed_up = previous_fast <= previous_slow and fast > slow
+        crossed_down = previous_fast >= previous_slow and fast < slow
+        return "LONG" if crossed_up else "SHORT" if crossed_down else "NEUTRAL"
 
     if rule_spec.family == "MOMENTUM":
         lookback = int(params["lookback"])
@@ -545,8 +549,11 @@ def assess_walk_forward_decay(
     """
     from backend.walk_forward import WalkForwardResult
 
-    if not isinstance(walk_forward_result, WalkForwardResult):
-        raise ValueError("walk_forward_result must be a WalkForwardResult")
+    if (
+        not isinstance(walk_forward_result, WalkForwardResult)
+        or walk_forward_result.orders_authorized is not False
+    ):
+        raise ValueError("a paper-only WalkForwardResult is required")
     for name, value in (("recent_folds", recent_folds), ("minimum_folds", minimum_folds)):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(f"{name} must be a positive integer")
@@ -569,12 +576,14 @@ def assess_walk_forward_decay(
     for fold in folds:
         strategy = fold.strategy
         if (
-            not math.isfinite(strategy.initial_equity)
+            strategy.orders_authorized is not False
+            or fold.market_regime.orders_authorized is not False
+            or not math.isfinite(strategy.initial_equity)
             or strategy.initial_equity <= 0
             or not math.isfinite(strategy.net_pnl)
             or not math.isfinite(fold.buy_hold_return_pct)
         ):
-            raise ValueError("walk-forward fold contains invalid performance evidence")
+            raise ValueError("walk-forward fold contains invalid or unauthorized performance evidence")
         strategy_return = strategy.net_pnl / strategy.initial_equity * 100.0
         excess_returns.append(strategy_return - fold.buy_hold_return_pct)
 
