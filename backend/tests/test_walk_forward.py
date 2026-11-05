@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from backend.strategy_research import Candle
+from backend.dataset_lineage import DatasetProvenance
 from backend.walk_forward import WalkForwardConfig, evaluate_walk_forward
 
 NOW = datetime(2026, 10, 10, 7, 0, tzinfo=timezone.utc)
@@ -102,4 +103,39 @@ def test_walk_forward_rejects_candles_after_requested_research_clock():
             "BTCUSDT", rows,
             config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40),
             research_now=NOW,
+        )
+
+
+def test_walk_forward_returns_content_addressed_dataset_provenance():
+    rows = make_candles(360)
+    result = evaluate_walk_forward(
+        "BTCUSDT", rows,
+        config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40),
+        research_now=NOW, dataset_provider="binance-public", dataset_venue="spot",
+    )
+    provenance = result.dataset_provenance
+    assert isinstance(provenance, DatasetProvenance)
+    assert provenance.provider == "binance-public"
+    assert provenance.venue == "spot"
+    assert provenance.symbol == "BTCUSDT"
+    assert provenance.timeframe == "1m"
+    assert provenance.candle_count == len(rows)
+    assert len(provenance.data_sha256) == 64
+    assert result.orders_authorized is False
+
+
+def test_walk_forward_rejects_overlapping_reference_dataset_before_evaluation():
+    from backend.dataset_lineage import candle_dataset_sha256
+    rows = make_candles(360)
+    reference = DatasetProvenance(
+        provider="binance-public", venue="spot", symbol="BTCUSDT", timeframe="1m",
+        window_start=rows[100].timestamp, window_end=rows[200].timestamp,
+        candle_count=101, data_sha256="f" * 64,
+    )
+    with pytest.raises(ValueError, match="windows overlap"):
+        evaluate_walk_forward(
+            "BTCUSDT", rows,
+            config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40),
+            research_now=NOW, dataset_provider="binance-public", dataset_venue="spot",
+            reference_datasets=(reference,),
         )
