@@ -148,3 +148,19 @@ def test_assessment_marks_bullish_reversal_attempt_inside_lower_structure():
     assert hourly.structure == "LOWER_HIGHS_LOWER_LOWS"
     assert hourly.structure_event == "REVERSAL_ATTEMPT_UP"
     assert result.market_phase == "REVERSAL_ATTEMPT_UP"
+
+
+def test_assessment_quarantines_extreme_single_candle_price_discontinuity():
+    rows = list(_fixed_series(3600, count=60))
+    anomalous = rows[40]
+    rows[40] = _candle(
+        "BTCUSDT", anomalous.open_time, anomalous.close_time, 10_000.0,
+    )
+
+    result = assess_market("BTCUSDT", {"1h": rows}, now=NOW)
+    hourly = next(item for item in result.timeframes if item.timeframe == "1h")
+
+    assert hourly.status == "INVALID_DATA"
+    assert hourly.direction == "INSUFFICIENT_DATA"
+    assert any("price discontinuity" in reason.lower() for reason in hourly.reasons)
+    assert result.orders_authorized is False
