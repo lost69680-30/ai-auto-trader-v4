@@ -184,9 +184,9 @@ def test_assessment_quarantines_suspicious_double_digit_intrabar_wick():
         is_closed=True,
     )
 
-    result = assess_market("BTCUSDT", {"1h": rows}, now=NOW)
-    hourly = next(item for item in result.timeframes if item.timeframe == "1h")
+    result = assess_market("BTCUSDT", {"1m": rows}, now=NOW)
+    one_minute = next(item for item in result.timeframes if item.timeframe == "1m")
 
-    assert hourly.status == "INVALID_DATA"
-    assert any("price discontinuity" in reason.lower() for reason in hourly.reasons)
+    assert one_minute.status == "INVALID_DATA"
+    assert any("price discontinuity" in reason.lower() for reason in one_minute.reasons)
     assert result.orders_authorized is False
