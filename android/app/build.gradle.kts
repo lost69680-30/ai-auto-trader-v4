@@ -8,7 +8,8 @@ val paperApiBaseUrl = providers.gradleProperty("paperApiBaseUrl").orElse("").get
 
 android {
     namespace = "com.aiautotrader.v4"
-    compileSdk = 35
+    compileSdk = 36
+    buildToolsVersion = "36.0.0"
 
     defaultConfig {
         applicationId = "com.aiautotrader.v4"
@@ -41,6 +42,7 @@ android {
 }
 
 dependencies {
+    implementation("com.tradingview:lightweightcharts:5.2.0")
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.work:work-runtime-ktx:2.10.0")

@@ -9,6 +9,7 @@ on:
       - ".github/workflows/build-solo-v4-timeframes.yml"
       - "android/app/src/main/AndroidManifest.xml"
       - "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+      - "android/app/src/main/java/com/aiautotrader/v4/TradingViewCandlestickChart.kt"
       - "android/app/src/main/res/drawable/ic_solo_logo.xml"
       - "android/app/src/test/**"
       - "android/app/build.gradle.kts"
@@ -17,6 +18,7 @@ on:
       - "app/engines/paper_ledger.py"
       - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/AndroidManifest.xml"
       - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/TradingViewCandlestickChart.kt"
       - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/res/drawable/ic_solo_logo.xml"
       - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/**"
       - "extracted-source/ai-auto-trader-v4-assembly/android/app/build.gradle.kts"
@@ -115,10 +117,25 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Install Android API 36 platform and build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${ANDROID_HOME:-}" ]]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          elif [[ -n "${ANDROID_SDK_ROOT:-}" ]]; then
+            SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          else
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: "8.14.2"
 
       - name: Run Android market-analysis unit tests
         run: gradle :android:app:testDebugUnitTest -PpaperApiBaseUrl=https://ai-auto-trader-v4-backend.onrender.com --no-daemon

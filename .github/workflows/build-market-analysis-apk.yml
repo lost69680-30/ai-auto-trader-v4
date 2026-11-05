@@ -39,6 +39,21 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Install Android API 36 platform and build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${ANDROID_HOME:-}" ]]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          elif [[ -n "${ANDROID_SDK_ROOT:-}" ]]; then
+            SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          else
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+
       - name: Set project directory
         shell: bash
         run: |
@@ -65,7 +80,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: "8.14.2"
 
       - name: Select staging API target
         shell: bash
@@ -91,13 +106,15 @@ jobs:
             java/com/aiautotrader/v4/MainActivity.kt \
             java/com/aiautotrader/v4/MarketObservationFreshness.kt \
             java/com/aiautotrader/v4/MarketWebSocketClient.kt \
-            java/com/aiautotrader/v4/PaperLedgerClient.kt; do
+            java/com/aiautotrader/v4/PaperLedgerClient.kt \
+            java/com/aiautotrader/v4/TradingViewCandlestickChart.kt; do
             cmp "$ROOT_MAIN/$relative" "$EXTRACTED_MAIN/$relative" || { echo "Android main-source mirror mismatch: $relative"; exit 1; }
           done
           for relative in \
             java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt \
             java/com/aiautotrader/v4/MarketWebSocketClientTest.kt \
-            java/com/aiautotrader/v4/PaperLedgerClientTest.kt; do
+            java/com/aiautotrader/v4/PaperLedgerClientTest.kt \
+            java/com/aiautotrader/v4/TradingViewChartDataTest.kt; do
             cmp "$ROOT_TEST/$relative" "$EXTRACTED_TEST/$relative" || { echo "Android test-source mirror mismatch: $relative"; exit 1; }
           done
 
