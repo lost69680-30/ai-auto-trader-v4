@@ -1,9 +1,10 @@
 package com.aiautotrader.v4
 
 import android.Manifest
-import android.app.Application
 import android.app.NotificationManager
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.PackageManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -12,25 +13,24 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class SoloNotificationRuntimeTest {
-    private lateinit var application: Application
-    private lateinit var context: Context
+    private lateinit var baseContext: Context
+    private lateinit var context: PermissionOverrideContext
     private lateinit var manager: NotificationManager
 
     @Before
     fun setUp() {
-        application = RuntimeEnvironment.getApplication()
-        context = application
-        context.getSharedPreferences("solo_notification_center", Context.MODE_PRIVATE)
+        baseContext = RuntimeEnvironment.getApplication()
+        context = PermissionOverrideContext(baseContext)
+        baseContext.getSharedPreferences("solo_notification_center", Context.MODE_PRIVATE)
             .edit().clear().commit()
-        manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager = baseContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.cancelAll()
-        shadowOf(application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        context.notificationPermissionGranted = true
     }
 
     @Test
@@ -66,6 +66,17 @@ class SoloNotificationRuntimeTest {
 
         assertTrue(SoloNotificationCenter.getRecords(context).isEmpty())
         assertEquals(0, manager.activeNotifications.size)
+    }
+
+    private class PermissionOverrideContext(base: Context) : ContextWrapper(base) {
+        var notificationPermissionGranted: Boolean = true
+
+        override fun checkSelfPermission(permission: String): Int =
+            if (permission != Manifest.permission.POST_NOTIFICATIONS || notificationPermissionGranted) {
+                PackageManager.PERMISSION_GRANTED
+            } else {
+                PackageManager.PERMISSION_DENIED
+            }
     }
 
     private fun risk(emergencyStopActive: Boolean) = PaperRiskView(
