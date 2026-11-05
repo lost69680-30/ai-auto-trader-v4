@@ -36,6 +36,36 @@ jobs:
             echo "::error::Add the dedicated read-only PostgreSQL connection as the SOLO_BACKUP_DATABASE_URL GitHub Actions secret."
             exit 1
           fi
+          # Fail closed if any RLS table would be silently omitted by the backup role.
+          current_role="$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "SELECT current_user")"
+          if [ "$current_role" != "solo_backup_reader" ]; then
+            echo "::error::Backup DSN must authenticate as solo_backup_reader."
+            exit 1
+          fi
+          missing_policy_count="$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "
+            SELECT count(*) FROM pg_class c
+            JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname='paper_ledger' AND c.relkind='r' AND c.relrowsecurity
+              AND NOT EXISTS (
+                SELECT 1 FROM pg_policies p
+                WHERE p.schemaname=n.nspname AND p.tablename=c.relname
+                  AND p.roles @> ARRAY['solo_backup_reader']::name[]
+                  AND p.cmd IN ('SELECT','ALL')
+              )")"
+          write_privilege_count="$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "
+            SELECT count(*) FROM pg_class c
+            JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname='paper_ledger' AND c.relkind='r'
+              AND (has_table_privilege('solo_backup_reader',c.oid,'INSERT')
+                OR has_table_privilege('solo_backup_reader',c.oid,'UPDATE')
+                OR has_table_privilege('solo_backup_reader',c.oid,'DELETE'))")"
+          bypass_rls="$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "
+            SELECT rolbypassrls FROM pg_roles WHERE rolname='solo_backup_reader'")"
+          if [ "$missing_policy_count" -ne 0 ] || [ "$write_privilege_count" -ne 0 ] || [ "$bypass_rls" != "f" ]; then
+            echo "::error::Backup role preflight failed: missing_select_policies=$missing_policy_count write_privilege_tables=$write_privilege_count bypass_rls=$bypass_rls"
+            exit 1
+          fi
+          echo "PASS: backup role has SELECT policy coverage for all RLS tables, no write privileges, and no BYPASSRLS."
           # The dedicated backup role is intentionally not BYPASSRLS.
           # Explicitly apply its SELECT-only RLS policies to include authorized rows.
           pg_dump --format=custom --enable-row-security --inserts --no-owner --no-acl --schema=paper_ledger \
