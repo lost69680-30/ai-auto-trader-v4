@@ -1,6 +1,10 @@
 name: Solo staging Render keep-warm and readiness
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/solo-render-keepwarm.yml
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
