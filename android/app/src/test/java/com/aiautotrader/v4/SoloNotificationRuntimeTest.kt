@@ -1,6 +1,7 @@
 package com.aiautotrader.v4
 
 import android.Manifest
+import android.app.Application
 import android.app.NotificationManager
 import android.content.Context
 import org.junit.Assert.assertEquals
@@ -17,17 +18,19 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class SoloNotificationRuntimeTest {
+    private lateinit var application: Application
     private lateinit var context: Context
     private lateinit var manager: NotificationManager
 
     @Before
     fun setUp() {
-        context = RuntimeEnvironment.getApplication()
+        application = RuntimeEnvironment.getApplication()
+        context = application
         context.getSharedPreferences("solo_notification_center", Context.MODE_PRIVATE)
             .edit().clear().commit()
         manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.cancelAll()
-        shadowOf(context).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        shadowOf(application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     @Test
