@@ -17,7 +17,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [33])
 class SoloNotificationReactivationTest {
     private lateinit var context: PermissionOverrideContext
     private lateinit var manager: NotificationManager
