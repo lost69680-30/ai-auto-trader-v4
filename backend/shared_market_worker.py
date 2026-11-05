@@ -239,6 +239,11 @@ def run_scheduled_jobs(
 
 
 
+def scheduled_job_runner_stopped_unexpectedly(job_runner, stop: threading.Event) -> bool:
+    """Distinguish a crashed scheduler thread from the normal SIGTERM shutdown path."""
+    return job_runner is not None and not stop.is_set() and not job_runner.is_alive()
+
+
 def _shutdown_worker(
     stop: threading.Event, job_runner, store, app, *, grace_seconds: float,
 ) -> bool:
@@ -549,7 +554,7 @@ def main() -> None:
                     "shared market cycle status=%s healthy=%s unhealthy=%s open_positions=%d archived_new_candles=%d archive_caught_up=%s orders_authorized=False",
                     report.analysis_status, report.healthy_symbols, report.unhealthy_symbols, report.open_positions, archived_count, archive_caught_up,
                 )
-                if job_runner is not None and not job_runner.is_alive():
+                if scheduled_job_runner_stopped_unexpectedly(job_runner, stop):
                     raise RuntimeError("durable scheduled-job runner stopped unexpectedly")
                 delay = app.worker.next_delay_seconds
             except Exception as exc:
