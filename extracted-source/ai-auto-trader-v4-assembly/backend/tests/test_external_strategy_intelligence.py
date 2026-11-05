@@ -497,6 +497,7 @@ def test_sma_cross_detects_a_new_transition_not_an_existing_trend_state():
             for index, close in enumerate(closes)
         ]
 
+    assert evaluate_external_rule(rule, candles([10.0, 10.0, 12.0])) == "NEUTRAL"
     assert evaluate_external_rule(rule, candles([10.0, 10.0, 10.0, 12.0])) == "LONG"
     assert evaluate_external_rule(rule, candles([10.0, 10.0, 12.0, 12.0])) == "NEUTRAL"
     assert evaluate_external_rule(rule, candles([12.0, 12.0, 12.0, 10.0])) == "SHORT"
@@ -529,3 +530,11 @@ def test_walk_forward_decay_rejects_authorized_or_non_paper_evidence():
     forged = replace(baseline, folds=(forged_fold,) + baseline.folds[1:])
     with pytest.raises(ValueError, match="authorization"):
         assess_walk_forward_decay(forged)
+
+    forged_regime = replace(baseline.folds[0].market_regime, orders_authorized=True)
+    forged_regime_fold = replace(baseline.folds[0], market_regime=forged_regime)
+    forged_regime_result = replace(
+        baseline, folds=(forged_regime_fold,) + baseline.folds[1:],
+    )
+    with pytest.raises(ValueError, match="authorization"):
+        assess_walk_forward_decay(forged_regime_result)
