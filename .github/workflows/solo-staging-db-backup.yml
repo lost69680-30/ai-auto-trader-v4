@@ -2,6 +2,11 @@ name: Solo staging PostgreSQL backup
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - fix/solo-restore-validation
+    paths:
+      - .github/workflows/solo-staging-db-backup.yml
 
 permissions:
   contents: read
