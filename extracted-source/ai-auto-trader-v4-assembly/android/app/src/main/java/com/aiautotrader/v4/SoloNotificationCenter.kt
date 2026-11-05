@@ -110,7 +110,10 @@ internal object SoloNotificationCenter {
             gate = admissionGate,
             eventId = eventId,
             type = alertType,
-            // The persisted state machine already suppresses repeated active snapshots.\n            // Key this admission by transition so a new activation after recovery is not\n            // hidden by the cooldown applied to an earlier, resolved event.\n            conditionKey = eventId,
+            // The persisted state machine already suppresses repeated active snapshots.
+            // Key this admission by transition so a new activation after recovery is not
+            // hidden by the cooldown applied to an earlier, resolved event.
+            conditionKey = eventId,
             title = title,
             message = message,
             occurredAtEpochMs = now,
