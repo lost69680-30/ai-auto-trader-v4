@@ -11,6 +11,7 @@ import math
 from typing import Iterable
 
 from backend.backtesting import BacktestConfig, BacktestResult, run_backtest
+from backend.dataset_lineage import DatasetProvenance, assert_independent_dataset, candle_dataset_sha256
 from backend.strategy_research import Candle, ResearchConfig
 
 
@@ -62,6 +63,12 @@ class WalkForwardResult:
     holdout: EvaluationWindow
     warnings: tuple[str, ...]
     orders_authorized: bool = False
+    dataset_provenance: DatasetProvenance | None = None
+
+
+def _canonical_timeframe(minutes: int) -> str:
+    known = {1: "1m", 3: "3m", 5: "5m", 15: "15m", 30: "30m", 60: "1h", 120: "2h", 240: "4h", 360: "6h", 480: "8h", 720: "12h", 1440: "1d", 4320: "3d", 10080: "1w"}
+    return known.get(minutes, f"{minutes}m")
 
 
 def _validate_dataset(symbol: str, rows: list[Candle], interval_minutes: int) -> None:
@@ -135,6 +142,9 @@ def evaluate_walk_forward(
     backtest_config: BacktestConfig | None = None,
     research_config: ResearchConfig | None = None,
     research_now: datetime,
+    dataset_provider: str = "binance-public",
+    dataset_venue: str = "unspecified",
+    reference_datasets: Iterable[DatasetProvenance] = (),
 ) -> WalkForwardResult:
     """Evaluate fixed strategy settings over rolling chronological windows.
 
@@ -150,6 +160,14 @@ def evaluate_walk_forward(
     rs_cfg = research_config or ResearchConfig()
     rows = list(candles)
     _validate_dataset(symbol, rows, cfg.candle_interval_minutes)
+    provenance = DatasetProvenance(
+        provider=dataset_provider, venue=dataset_venue, symbol=symbol,
+        timeframe=_canonical_timeframe(cfg.candle_interval_minutes),
+        window_start=rows[0].timestamp, window_end=rows[-1].timestamp,
+        candle_count=len(rows), data_sha256=candle_dataset_sha256(rows),
+    )
+    for reference in reference_datasets:
+        assert_independent_dataset(provenance, reference)
     if rows and rows[-1].timestamp.astimezone(timezone.utc) > (
         research_now.astimezone(timezone.utc)
         + timedelta(seconds=rs_cfg.max_future_skew_seconds)
@@ -191,4 +209,5 @@ def evaluate_walk_forward(
             "Research only: orders_authorized is false.",
         ),
         orders_authorized=False,
+        dataset_provenance=provenance,
     )
