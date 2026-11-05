@@ -162,7 +162,7 @@ def test_explicit_external_rules_are_evaluated_with_costs_and_untouched_holdout(
     ("rule_spec", "closes", "expected"),
     [
         (ExternalRuleSpec("SMA_CROSS", {"fast_period": 5, "slow_period": 20}, "ONE_BAR"),
-         [100 + index for index in range(25)], "LONG"),
+         [100.0] * 20 + [101.0], "LONG"),
         (ExternalRuleSpec("MOMENTUM", {"lookback": 5, "threshold_pct": 1.0}, "ONE_BAR"),
          [100.0] * 14 + [102.0], "LONG"),
         (ExternalRuleSpec("BREAKOUT", {"lookback": 10, "buffer_pct": 0.1}, "ONE_BAR"),
