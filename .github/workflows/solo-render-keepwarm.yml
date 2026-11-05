@@ -2,12 +2,13 @@ name: Solo staging Render keep-warm and readiness
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/solo-keepwarm-cold-start-window]
     paths:
       - .github/workflows/solo-render-keepwarm.yml
   schedule:
-    # Standard five-minute schedule; GitHub scheduled execution is best-effort.
-    - cron: "*/5 * * * *"
+    # Ten-minute cadence reduces idle spin-down while keeping public Actions usage bounded.
+    # GitHub scheduled execution remains best-effort, not an uptime guarantee.
+    - cron: "*/10 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -20,7 +21,7 @@ concurrency:
 jobs:
   keep-warm:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 7
     steps:
       - name: Wake staging API and verify paper-only readiness
         env:
@@ -32,13 +33,14 @@ jobs:
           trap 'rm -rf "$temp_dir"' EXIT
 
           health_code="000"
-          for attempt in 1 2 3 4; do
+          for attempt in $(seq 1 8); do
             health_code="$(curl -sS --connect-timeout 5 --max-time 10 \
               -o "$temp_dir/health.json" -w '%{http_code}' \
               "$SOLO_STAGING_API_ORIGIN/healthz" || true)"
             if [[ "$health_code" == "200" ]]; then
               break
             fi
+            echo "Waiting for Render API wake-up: attempt $attempt/8 (HTTP $health_code)"
             sleep 5
           done
 
@@ -60,7 +62,7 @@ jobs:
           PY
 
           ready_code="000"
-          for attempt in $(seq 1 12); do
+          for attempt in $(seq 1 24); do
             ready_code="$(curl -sS --connect-timeout 5 --max-time 10 \
               -o "$temp_dir/ready.json" -w '%{http_code}' \
               "$SOLO_STAGING_API_ORIGIN/readyz" || true)"
@@ -79,9 +81,10 @@ jobs:
           PY
               exit 0
             fi
+            echo "Waiting for worker readiness: attempt $attempt/24 (HTTP $ready_code)"
             sleep 10
           done
 
-          echo "Staging API did not become ready within the bounded startup window: HTTP $ready_code"
+          echo "Staging API did not become ready within the bounded cold-start window: HTTP $ready_code"
           [[ -f "$temp_dir/ready.json" ]] && cat "$temp_dir/ready.json"
           exit 1
