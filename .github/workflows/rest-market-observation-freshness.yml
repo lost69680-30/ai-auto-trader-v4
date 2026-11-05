@@ -1,0 +1,43 @@
+name: Solo REST Market Observation Freshness
+
+on:
+  pull_request:
+    branches:
+      - fix/futures-context-mainline
+    paths:
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MarketObservationFreshness.kt"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MarketWebSocketClient.kt"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/MarketWebSocketClientTest.kt"
+      - ".github/workflows/rest-market-observation-freshness.yml"
+  push:
+    branches:
+      - fix/android-rest-market-observation-freshness-v2
+    paths:
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MarketObservationFreshness.kt"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MarketWebSocketClient.kt"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+      - "extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/MarketWebSocketClientTest.kt"
+      - ".github/workflows/rest-market-observation-freshness.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rest-market-observation-freshness
+  cancel-in-progress: false
+
+jobs:
+  android-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Run Android unit tests and build APK
+        run: gradle -p extracted-source/ai-auto-trader-v4-assembly :android:app:testDebugUnitTest :android:app:assembleDebug --no-daemon --max-workers=2

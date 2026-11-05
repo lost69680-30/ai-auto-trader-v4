@@ -6,7 +6,7 @@ account, leverage, or order-placement interface.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import math
 from typing import Any, Callable, Mapping
@@ -99,6 +99,66 @@ def _aware_utc(value: datetime | None) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("now must be timezone-aware")
     return value.astimezone(timezone.utc)
+
+
+_FIXED_KLINE_INTERVAL_MS = {
+    "1m": 60_000,
+    "3m": 180_000,
+    "5m": 300_000,
+    "15m": 900_000,
+    "30m": 1_800_000,
+    "1h": 3_600_000,
+    "2h": 7_200_000,
+    "4h": 14_400_000,
+    "6h": 21_600_000,
+    "8h": 28_800_000,
+    "12h": 43_200_000,
+    "1d": 86_400_000,
+    "3d": 259_200_000,
+    "1w": 604_800_000,
+}
+
+
+def _validate_kline_interval_boundaries(
+    open_time: datetime, close_time: datetime, interval: str
+) -> None:
+    """Reject candles whose UTC timestamps do not match their exchange interval."""
+    if interval == "1M":
+        if (
+            open_time.day != 1
+            or open_time.hour != 0
+            or open_time.minute != 0
+            or open_time.second != 0
+            or open_time.microsecond != 0
+        ):
+            raise MarketDataError("kline open time is not aligned to interval boundary")
+        next_month = (
+            datetime(open_time.year + 1, 1, 1, tzinfo=timezone.utc)
+            if open_time.month == 12
+            else datetime(open_time.year, open_time.month + 1, 1, tzinfo=timezone.utc)
+        )
+        expected_close = next_month - timedelta(milliseconds=1)
+    else:
+        interval_ms = _FIXED_KLINE_INTERVAL_MS.get(interval)
+        if interval_ms is None:
+            raise MarketDataError("unsupported kline interval boundary")
+        if interval == "1w":
+            aligned = (
+                open_time.weekday() == 0
+                and open_time.hour == 0
+                and open_time.minute == 0
+                and open_time.second == 0
+                and open_time.microsecond == 0
+            )
+        else:
+            open_ms = int(open_time.timestamp() * 1000)
+            aligned = open_ms % interval_ms == 0
+        if not aligned:
+            raise MarketDataError("kline open time is not aligned to interval boundary")
+        expected_close = open_time + timedelta(milliseconds=interval_ms - 1)
+
+    if close_time != expected_close:
+        raise MarketDataError("kline close time does not match interval boundary")
 
 
 class BinanceUsdMFuturesAdapter:
@@ -366,20 +426,30 @@ class BinanceUsdMFuturesAdapter:
         interval: str = "1m",
         limit: int = 100,
         now: datetime | None = None,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
     ) -> tuple[MarketCandle, ...]:
         """Retrieve validated klines; current in-progress candle is marked open."""
+
         if not isinstance(symbol, str) or not symbol or symbol != symbol.upper():
             raise ValueError("symbol must be non-empty and uppercase-normalized")
         if interval not in SUPPORTED_INTERVALS:
             raise ValueError("unsupported kline interval")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1500:
             raise ValueError("limit must be an integer from 1 through 1500")
+        for name, value in (("start_time_ms", start_time_ms), ("end_time_ms", end_time_ms)):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+                raise ValueError(f"{name} must be a non-negative integer")
+        if start_time_ms is not None and end_time_ms is not None and end_time_ms < start_time_ms:
+            raise ValueError("end_time_ms must be greater than or equal to start_time_ms")
         supplied_clock = now is not None
         requested_at = _aware_utc(now)
-        payload = self._list_payload(
-            self._get(self.kline_path, {"symbol": symbol, "interval": interval, "limit": limit}),
-            self.kline_path,
-        )
+        params = {"symbol": symbol, "interval": interval, "limit": limit}
+        if start_time_ms is not None:
+            params["startTime"] = start_time_ms
+        if end_time_ms is not None:
+            params["endTime"] = end_time_ms
+        payload = self._list_payload(self._get(self.kline_path, params), self.kline_path)
         # Resolve the wall clock at response completion by default, so a request
         # crossing a candle boundary does not misclassify the new candle as future.
         now_utc = requested_at if supplied_clock else datetime.now(timezone.utc)
@@ -390,6 +460,7 @@ class BinanceUsdMFuturesAdapter:
                 raise MarketDataError("malformed kline row")
             open_time = _epoch_ms(row[0], "kline open time")
             close_time = _epoch_ms(row[6], "kline close time")
+            _validate_kline_interval_boundaries(open_time, close_time, interval)
             opened = _number(row[1], "kline open")
             high = _number(row[2], "kline high")
             low = _number(row[3], "kline low")
@@ -425,13 +496,106 @@ class BinanceSpotMarketDataAdapter(BinanceUsdMFuturesAdapter):
     it is not a futures mark price or index price. It has no trading interface.
     """
 
-    SPOT_BASE_URL = "https://data-api.binance.vision"
+    SPOT_BASE_URL = "https://testnet.binance.vision"
 
     def __init__(self, *, base_url: str | None = None, timeout_seconds: float = 5.0,
                  transport: Transport | None = None) -> None:
         super().__init__(base_url=base_url or self.SPOT_BASE_URL,
                          timeout_seconds=timeout_seconds, transport=transport)
         self.kline_path = "/api/v3/klines"
+
+    def fetch_market_universe(self, *, now: datetime | None = None) -> MarketUniverse:
+        """Join Spot exchange metadata, 24h tickers and book quotes using public GETs."""
+        supplied_clock = now is not None
+        requested_at = _aware_utc(now)
+        exchange_path = "/api/v3/exchangeInfo"
+        ticker_path = "/api/v3/ticker/24hr"
+        book_path = "/api/v3/ticker/bookTicker"
+        exchange_payload = self._get(exchange_path)
+        if not isinstance(exchange_payload, Mapping) or not isinstance(exchange_payload.get("symbols"), list):
+            raise MarketDataError("unexpected response shape from /api/v3/exchangeInfo")
+
+        contracts: list[Contract] = []
+        seen: set[str] = set()
+        for row in exchange_payload["symbols"]:
+            if not isinstance(row, Mapping):
+                raise MarketDataError("malformed Spot exchangeInfo symbol row")
+            symbol, status, quote_asset = row.get("symbol"), row.get("status"), row.get("quoteAsset")
+            if not all(isinstance(value, str) and value for value in (symbol, status, quote_asset)):
+                raise MarketDataError("Spot exchangeInfo row missing required contract fields")
+            if symbol != symbol.upper() or symbol in seen:
+                raise MarketDataError(f"invalid or duplicate Spot exchangeInfo symbol: {symbol}")
+            seen.add(symbol)
+            tick_size = quantity_step = min_quantity = max_quantity = min_notional = None
+            filters = row.get("filters")
+            if isinstance(filters, list):
+                def exactly_one(filter_type: str):
+                    matches = [item for item in filters if isinstance(item, Mapping)
+                               and item.get("filterType") == filter_type]
+                    return matches[0] if len(matches) == 1 else None
+                try:
+                    price_filter = exactly_one("PRICE_FILTER")
+                    lot_filter = exactly_one("LOT_SIZE")
+                    notional_filter = exactly_one("NOTIONAL") or exactly_one("MIN_NOTIONAL")
+                    parsed_tick = _number(price_filter.get("tickSize"), "tickSize") if price_filter else 0.0
+                    parsed_step = _number(lot_filter.get("stepSize"), "stepSize") if lot_filter else 0.0
+                    parsed_min = _number(lot_filter.get("minQty"), "minQty") if lot_filter else 0.0
+                    raw_max = lot_filter.get("maxQty") if lot_filter else None
+                    parsed_max = _number(raw_max, "maxQty") if raw_max not in (None, "") else 0.0
+                    raw_notional = (notional_filter.get("minNotional", notional_filter.get("notional"))
+                                    if notional_filter else None)
+                    parsed_notional = _number(raw_notional, "minNotional") if raw_notional not in (None, "") else 0.0
+                    if parsed_tick > 0:
+                        tick_size = parsed_tick
+                    if parsed_step > 0 and parsed_min > 0:
+                        quantity_step, min_quantity = parsed_step, parsed_min
+                        if parsed_max >= parsed_min:
+                            max_quantity = parsed_max
+                    if parsed_notional > 0:
+                        min_notional = parsed_notional
+                except (MarketDataError, AttributeError):
+                    # Missing or malformed sizing metadata remains absent; consumers fail closed.
+                    pass
+            contracts.append(Contract(
+                symbol=symbol, status=status, contract_type="SPOT", quote_asset=quote_asset,
+                tick_size=tick_size, quantity_step=quantity_step, min_quantity=min_quantity,
+                max_quantity=max_quantity, min_notional=min_notional,
+            ))
+
+        ticker_rows = self._unique_symbol_rows(
+            self._list_payload(self._get(ticker_path), ticker_path), "Spot 24h ticker"
+        )
+        book_rows = self._unique_symbol_rows(
+            self._list_payload(self._get(book_path), book_path), "Spot book ticker"
+        )
+        fetched_at = requested_at if supplied_clock else datetime.now(timezone.utc)
+        snapshots: list[MarketSnapshot] = []
+        for symbol in sorted(ticker_rows.keys() & book_rows.keys()):
+            ticker, book = ticker_rows[symbol], book_rows[symbol]
+            try:
+                last = _number(ticker.get("lastPrice"), "lastPrice")
+                quote_volume = _number(ticker.get("quoteVolume"), "quoteVolume")
+                high = _number(ticker.get("highPrice"), "highPrice")
+                low = _number(ticker.get("lowPrice"), "lowPrice")
+                bid = _number(book.get("bidPrice"), "bidPrice")
+                ask = _number(book.get("askPrice"), "askPrice")
+                if last <= 0 or quote_volume < 0 or low <= 0 or high < low or bid <= 0 or ask < bid:
+                    continue
+                mid = (bid + ask) / 2.0
+                if mid <= 0:
+                    continue
+                spread_bps = (ask - bid) / mid * 10_000.0
+                volatility_pct = (high - low) / last * 100.0
+                if not all(math.isfinite(value) for value in (spread_bps, volatility_pct)):
+                    continue
+                snapshots.append(MarketSnapshot(
+                    symbol=symbol, observed_at=fetched_at, last_price=last,
+                    quote_volume_24h=quote_volume, spread_bps=spread_bps,
+                    volatility_pct=volatility_pct,
+                ))
+            except MarketDataError:
+                continue
+        return MarketUniverse(tuple(contracts), tuple(snapshots), fetched_at, False)
 
     def fetch_mark_price(self, symbol: str) -> MarkPriceSnapshot:
         """Return Spot last price with local receive time, not Futures mark data.

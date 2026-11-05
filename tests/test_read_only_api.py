@@ -1,6 +1,6 @@
 import json
 import io
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -461,10 +461,483 @@ def test_audit_endpoint_returns_empty_list_for_empty_sqlite_ledger(tmp_path):
     assert body["orders_authorized"] is False
 
 
+
+def _closed_monthly_candles(year=2025):
+    from backend.market_data_adapter import MarketCandle
+
+    rows = []
+    for month in range(1, 13):
+        opened = datetime(year, month, 1, tzinfo=timezone.utc)
+        next_month = (
+            datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+            if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc)
+        )
+        rows.append(MarketCandle(
+            symbol="BTCUSDT",
+            open_time=opened,
+            close_time=next_month - timedelta(milliseconds=1),
+            open=100.0 + month,
+            high=120.0 + month,
+            low=90.0 + month,
+            close=110.0 + month,
+            volume=10.0 * month,
+            quote_volume=1000.0 * month,
+            trades=month,
+            is_closed=True,
+        ))
+    return rows
+
+
+def test_yearly_candle_api_assembles_only_complete_closed_months_and_status():
+    from app.engines.read_only_api import build_market_candle_payload
+
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit):
+            if interval == "1M":
+                return _closed_monthly_candles()
+            return []
+
+    payload = build_market_candle_payload(
+        source=Source(),
+        symbol="BTCUSDT",
+        allowed_symbols=("BTCUSDT",),
+        intervals=("1M", "1d"),
+        limit=100,
+    )
+
+    yearly = payload["candles_by_interval"]["1y"]
+    assert payload["symbol"] == "BTCUSDT"
+    assert payload["interval_status"]["1M"] == "HEALTHY"
+    assert payload["interval_status"]["1y"] == "HEALTHY"
+    assert len(yearly) == 1
+    assert yearly[0]["open"] == 101.0
+    assert yearly[0]["high"] == 132.0
+    assert yearly[0]["low"] == 91.0
+    assert yearly[0]["close"] == 122.0
+    assert yearly[0]["volume"] == 780.0
+    assert yearly[0]["is_closed"] is True
+    assert payload["orders_authorized"] is False
+    assert payload["mode"] == "PAPER_ONLY"
+
+
+def test_yearly_candle_api_reports_monthly_fetch_failure_without_fabricating_data():
+    from app.engines.read_only_api import build_market_candle_payload
+
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit):
+            if interval == "1M":
+                raise RuntimeError("monthly history unavailable")
+            return []
+
+    payload = build_market_candle_payload(
+        source=Source(),
+        symbol="BTCUSDT",
+        allowed_symbols=("BTCUSDT",),
+        intervals=("1M", "1d"),
+        limit=100,
+    )
+
+    assert payload["candles_by_interval"]["1y"] == []
+    assert payload["interval_status"]["1M"] == "UNAVAILABLE:RuntimeError"
+    assert payload["interval_status"]["1y"] == "UNAVAILABLE:MONTHLY_INTERVAL"
+    assert payload["orders_authorized"] is False
+
+
+def test_candle_api_contract_reports_all_native_intervals_and_isolates_failure():
+    from types import SimpleNamespace
+    from app.engines.read_only_api import build_market_candle_payload
+
+    native_intervals = ("1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M")
+
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit):
+            if interval == "15m":
+                raise RuntimeError("temporary interval outage")
+            if interval == "1M":
+                return _closed_monthly_candles(year=2024)
+            return [SimpleNamespace(
+                open_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                close_time=datetime(2024, 1, 1, 0, 0, 59, tzinfo=timezone.utc),
+                open=100.0, high=105.0, low=95.0, close=102.0,
+                volume=12.0, is_closed=True,
+            )]
+
+    payload = build_market_candle_payload(
+        source=Source(),
+        symbol="BTCUSDT",
+        allowed_symbols=("BTCUSDT",),
+        intervals=native_intervals,
+        limit=100,
+    )
+
+    assert tuple(payload["candles_by_interval"]) == (*native_intervals, "1y")
+    for interval in native_intervals:
+        if interval == "15m":
+            assert payload["interval_status"][interval] == "UNAVAILABLE:RuntimeError"
+            assert payload["candles_by_interval"][interval] == []
+        else:
+            assert payload["interval_status"][interval] == "HEALTHY"
+            assert len(payload["candles_by_interval"][interval]) == (12 if interval == "1M" else 1)
+
+    assert payload["interval_status"]["1y"] == "HEALTHY"
+    assert len(payload["candles_by_interval"]["1y"]) == 1
+    assert payload["orders_authorized"] is False
+    assert payload["mode"] == "PAPER_ONLY"
+
+
+def test_archived_market_history_endpoint_is_authenticated_and_read_only(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    seen = {}
+
+    def history(symbol, start, end, limit):
+        seen.update(symbol=symbol, start=start, end=end, limit=limit)
+        return {
+            "symbol": symbol,
+            "venue": "BINANCE_USDM_TESTNET",
+            "market_type": "FUTURES",
+            "interval": "1m",
+            "candles": [{
+                "open_time": "2026-10-31T03:40:00+00:00",
+                "close_time": "2026-10-31T03:40:59.999000+00:00",
+                "open": 100.0, "high": 102.0, "low": 99.0,
+                "close": 101.0, "volume": 12.0, "is_closed": True,
+            }],
+            "orders_authorized": False,
+        }
+
+    app = create_app(database_path=db, token=TOKEN, market_history=history)
+    path = ("/api/v1/markets/history?symbol=BTCUSDT"
+            "&start=2026-10-31T03%3A00%3A00%2B00%3A00"
+            "&end=2026-10-31T04%3A00%3A00%2B00%3A00&limit=250")
+    status, _, body = request(app, path=path, auth="Bearer " + TOKEN)
+
+    assert status.startswith("200")
+    assert seen["symbol"] == "BTCUSDT"
+    assert seen["start"].tzinfo is not None
+    assert seen["end"].tzinfo is not None
+    assert seen["limit"] == 250
+    assert body["venue"] == "BINANCE_USDM_TESTNET"
+    assert body["candles"][0]["is_closed"] is True
+    assert body["orders_authorized"] is False
+
+
+def test_archived_market_history_endpoint_rejects_invalid_query_without_calling_provider(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    calls = []
+
+    def history(*args):
+        calls.append(args)
+        return {}
+
+    app = create_app(database_path=db, token=TOKEN, market_history=history)
+    invalid_paths = [
+        "/api/v1/markets/history?symbol=BTCUSDT&start=not-a-date&end=2026-10-31T04%3A00%3A00Z",
+        "/api/v1/markets/history?symbol=BTCUSDT&start=2026-10-31T04%3A00%3A00Z&end=2026-10-31T03%3A00%3A00Z",
+        "/api/v1/markets/history?symbol=BTCUSDT&start=2026-10-31T03%3A00%3A00Z&end=2026-10-31T04%3A00%3A00Z&limit=0",
+    ]
+    for path in invalid_paths:
+        status, _, body = request(app, path=path, auth="Bearer " + TOKEN)
+        assert status.startswith("400")
+        assert body["orders_authorized"] is False
+    assert calls == []
+
+
+def test_archived_market_history_endpoint_fails_closed_when_provider_is_unavailable_or_unsafe(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+    path = ("/api/v1/markets/history?symbol=BTCUSDT"
+            "&start=2026-10-31T03%3A00%3A00Z&end=2026-10-31T04%3A00%3A00Z")
+    status, _, body = request(app, path=path, auth="Bearer " + TOKEN)
+    assert status.startswith("503")
+    assert body["orders_authorized"] is False
+
+    unsafe = create_app(
+        database_path=db, token=TOKEN,
+        market_history=lambda *args: {
+            "symbol": "BTCUSDT", "venue": "BINANCE_USDM_TESTNET",
+            "market_type": "FUTURES", "interval": "1m",
+            "candles": [], "orders_authorized": True,
+        },
+    )
+    status, _, body = request(unsafe, path=path, auth="Bearer " + TOKEN)
+    assert status.startswith("503")
+    assert body["orders_authorized"] is False
+    assert body["candles"] == []
+
+
+
+def test_public_healthz_reports_process_liveness_without_authentication(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+
+    status, headers, body = request(app, path="/healthz")
+
+    assert status.startswith("200")
+    assert body == {
+        "status": "ok", "service": "solo-api", "mode": "PAPER_ONLY",
+        "orders_authorized": False,
+    }
+    assert headers["Cache-Control"] == "no-store"
+
+
+def test_public_readyz_requires_fresh_healthy_shared_worker(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(
+        database_path=db, token=TOKEN,
+        market_status=lambda: {
+            "status": "HEALTHY", "worker_status": "RUNNING", "orders_authorized": False,
+        },
+    )
+
+    status, _, body = request(app, path="/readyz")
+
+    assert status.startswith("200")
+    assert body["status"] == "ready"
+    assert body["worker_status"] == "RUNNING"
+    assert body["orders_authorized"] is False
+
+
+def test_public_readyz_fails_closed_when_worker_is_stale_or_missing(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(
+        database_path=db, token=TOKEN,
+        market_status=lambda: {
+            "status": "STALE", "worker_status": "STOPPED", "orders_authorized": False,
+        },
+    )
+
+    status, _, body = request(app, path="/readyz")
+
+    assert status.startswith("503")
+    assert body["status"] == "not_ready"
+    assert body["worker_status"] == "STOPPED"
+    assert body["orders_authorized"] is False
+
+def test_market_assessment_endpoint_exposes_only_authenticated_advisory_results(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    report = {
+        "status": "HEALTHY",
+        "assessed_at": "2026-10-31T12:00:00+00:00",
+        "market_type": "FUTURES",
+        "scan_id": "scan-123",
+        "scan_job_status": "RUNNING",
+        "scan_started_at": "2026-10-31T12:00:00+00:00",
+        "scan_attempts": 1,
+        "items": [{
+            "symbol": "BTCUSDT",
+            "assessment": {"direction": "MIXED"},
+            "selection": {"decision": "NO_TRADE"},
+            "orders_authorized": False,
+        }],
+        "orders_authorized": False,
+    }
+    app = create_app(
+        database_path=db, token=TOKEN,
+        market_intelligence=lambda: report,
+    )
+    status, _, body = request(app, path="/api/v1/markets/assessment")
+    assert status.startswith("401")
+    status, _, body = request(app, path="/api/v1/markets/assessment", auth="Bearer " + TOKEN)
+    assert status.startswith("200")
+    assert body["items"][0]["symbol"] == "BTCUSDT"
+    assert body["items"][0]["orders_authorized"] is False
+    assert body["scan_job_status"] == "RUNNING"
+    assert body["scan_attempts"] == 1
+    assert body["orders_authorized"] is False
+
+
+def test_market_assessment_endpoint_rejects_unsafe_provider_payload(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(
+        database_path=db, token=TOKEN,
+        market_intelligence=lambda: {
+            "status": "HEALTHY",
+            "items": [{"symbol": "BTCUSDT", "orders_authorized": True}],
+            "orders_authorized": False,
+        },
+    )
+    status, _, body = request(app, path="/api/v1/markets/assessment", auth="Bearer " + TOKEN)
+    assert status.startswith("503")
+    assert body["items"] == []
+    assert body["orders_authorized"] is False
+
+
+def test_fills_endpoint_returns_read_only_ledger_fills(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+
+    status, _, body = request(app, path="/api/v1/fills", auth="Bearer " + TOKEN)
+
+    assert status.startswith("200")
+    assert body["items"] == []
+    assert body["orders_authorized"] is False
+
+
+def test_fills_endpoint_rejects_non_get_methods(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+
+    status, _, body = request(app, path="/api/v1/fills", method="POST", auth="Bearer " + TOKEN)
+
+    assert status.startswith("405")
+    assert body["orders_authorized"] is False
+
+
+def test_authenticated_opportunity_registry_endpoints_are_read_only(tmp_path):
+    from types import SimpleNamespace
+
+    class Registry:
+        def __init__(self):
+            self.calls = []
+
+        def list_opportunities(self, **kwargs):
+            self.calls.append(("list", kwargs))
+            return SimpleNamespace(items=({
+                "opportunity_id": "opp-spot-123",
+                "symbol": "BTCUSDT",
+                "market_type": "SPOT",
+                "venue": "BINANCE_SPOT_TESTNET",
+                "state": "WAITING",
+                "orders_authorized": False,
+            },), next_cursor=None)
+
+        def get_opportunity(self, opportunity_id):
+            self.calls.append(("get", opportunity_id))
+            if opportunity_id != "opp-spot-123":
+                return None
+            return {
+                "opportunity_id": opportunity_id,
+                "symbol": "BTCUSDT",
+                "market_type": "SPOT",
+                "venue": "BINANCE_SPOT_TESTNET",
+                "state": "WAITING",
+                "orders_authorized": False,
+            }
+
+        def list_events(self, opportunity_id):
+            self.calls.append(("events", opportunity_id))
+            return [{
+                "event_id": "event-1", "to_state": "WAITING",
+                "orders_authorized": False,
+            }]
+
+        def list_assessments(self, opportunity_id):
+            return [{"assessment_id": "assessment-1", "orders_authorized": False}]
+
+        def list_evidence(self, opportunity_id):
+            return [{"evidence_id": "evidence-1", "orders_authorized": False}]
+
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    registry = Registry()
+    app = create_app(
+        database_path=db, token=TOKEN, opportunity_registry=registry,
+    )
+
+    status, _, body = request(
+        app,
+        path="/api/v1/opportunities?market_type=SPOT&venue=BINANCE_SPOT_TESTNET&limit=10",
+        auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("200")
+    assert body["items"][0]["opportunity_id"] == "opp-spot-123"
+    assert body["orders_authorized"] is False
+    assert registry.calls[0][1]["market_type"] == "SPOT"
+
+    status, _, detail = request(
+        app, path="/api/v1/opportunities/opp-spot-123",
+        auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("200")
+    assert detail["opportunity"]["venue"] == "BINANCE_SPOT_TESTNET"
+
+    status, _, events = request(
+        app, path="/api/v1/opportunities/opp-spot-123/events",
+        auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("200")
+    assert events["items"][0]["event_id"] == "event-1"
+
+    status, _, denied = request(app, path="/api/v1/opportunities", auth=None)
+    assert status.startswith("401")
+    assert denied["orders_authorized"] is False
+
+    status, _, forbidden = request(
+        app, path="/api/v1/opportunities", method="POST",
+        auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("405")
+    assert forbidden["orders_authorized"] is False
+
+
+def test_opportunity_api_rejects_partial_venue_filter_and_missing_registry(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+    status, _, body = request(
+        app, path="/api/v1/opportunities?market_type=SPOT",
+        auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("503")
+    assert body["orders_authorized"] is False
+
+    class Registry:
+        def list_opportunities(self, **kwargs):
+            raise AssertionError("partial venue filters must be rejected before database access")
+
+    app = create_app(database_path=db, token=TOKEN, opportunity_registry=Registry())
+    status, _, body = request(
+        app, path="/api/v1/opportunities?market_type=SPOT",
+        auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("400")
+    assert body["orders_authorized"] is False
+
+def test_configured_market_symbols_prefers_explicit_market_allowlist():
+    from app.engines.read_only_api import _configured_market_symbols
+
+    assert _configured_market_symbols({
+        "PAPER_MARKET_SYMBOLS": " btcusdt, ETHUSDT, btcusdt ",
+        "PAPER_SYMBOLS": "SOLUSDT",
+    }) == ("BTCUSDT", "ETHUSDT")
+
+
+def test_configured_market_symbols_falls_back_to_paper_symbols_and_safe_default():
+    from app.engines.read_only_api import _configured_market_symbols
+
+    assert _configured_market_symbols({"PAPER_SYMBOLS": " solusdt, ethusdt "}) == (
+        "SOLUSDT", "ETHUSDT"
+    )
+    assert _configured_market_symbols({}) == ("BTCUSDT", "ETHUSDT")
+    assert _configured_market_symbols({"PAPER_MARKET_SYMBOLS": ""}) == ()
+
+
 def test_api_token_environment_value_is_trimmed_without_changing_token_contents():
     from app.engines.read_only_api import _load_api_token
 
-    expected = "unit-test-token-that-is-at-least-32-characters-long"
+    expected = "t" * 48
     assert _load_api_token({"PAPER_API_TOKEN": "  " + expected + " \n"}) == expected
     assert _load_api_token({"PAPER_API_TOKEN": expected}) == expected
     assert _load_api_token({"PAPER_API_TOKEN": "   "}) == ""

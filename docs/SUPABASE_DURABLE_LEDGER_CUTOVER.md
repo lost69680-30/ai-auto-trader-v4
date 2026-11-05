@@ -12,7 +12,7 @@
 
 ## Production migration and cutover (requires explicit approval)
 
-1. Apply `supabase/migrations/20261028010000_create_paper_ledger_schema.sql` to the intended Supabase project only after verifying the project ref in the dashboard. The migration creates the private `paper_ledger` schema and does not grant access to `anon`, `authenticated`, or `service_role`; the server connects through a trusted PostgreSQL connection string.
+1. Apply `supabase/migrations/20261029205318_create_paper_ledger_schema.sql` to the intended Supabase project only after verifying the project ref in the dashboard. The migration creates the private `paper_ledger` schema and does not grant access to `anon`, `authenticated`, or `service_role`; the server connects through a trusted PostgreSQL connection string.
 2. Verify all nine tables exist in schema `paper_ledger`, RLS is enabled, and the schema is not exposed through the Supabase Data API. Do not loosen grants to make a connection test pass.
 3. In Render service `ai-auto-trader-v4-backend`, add `PAPER_DATABASE_URL` as a secret environment variable containing the Session pooler connection string. Do not remove `PAPER_DATABASE_PATH` yet; it remains the SQLite development/fallback setting only when the PostgreSQL variable is absent.
 4. Keep the service paper-only. Deploy the reviewed branch only after confirming the intended branch/build source and any APK clients remain compatible.

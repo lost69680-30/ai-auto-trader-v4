@@ -1,0 +1,109 @@
+from pathlib import Path
+
+ROOT = Path(__file__).parents[1]
+SOURCE = ROOT / "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+
+
+def test_authenticated_market_polling_belongs_to_foreground_app_session():
+    source = SOURCE.read_text(encoding="utf-8")
+    trader_app = source.split("@Composable\nprivate fun TraderApp()", 1)[1].split(
+        "@Composable\nprivate fun AgentNetworkScreen()", 1
+    )[0]
+    analysis_screen = source.split("@Composable\nprivate fun AnalysisScreen()", 1)[1].split(
+        "@Composable\nprivate fun AnalyticsChartCard", 1
+    )[0]
+
+    assert "BackendMarketSessionEffect()" in trader_app
+    assert "val activeToken = mutableStateOf(\"\")" in source
+    assert "val appInForeground = mutableStateOf(false)" in source
+    assert "override fun onStart()" in source
+    assert "override fun onStop()" in source
+    assert "LaunchedEffect(sessionToken, isForeground)" in source
+    assert "delay(30_000)" in source
+    assert "LaunchedEffect(sessionToken)" not in analysis_screen
+
+
+def test_foreground_market_poller_retries_network_errors_but_stops_on_bad_auth():
+    source = SOURCE.read_text(encoding="utf-8")
+    poller = source.split("@Composable\nprivate fun BackendMarketSessionEffect()", 1)[1].split(
+        "@Composable\nprivate fun TraderApp()", 1
+    )[0]
+
+    assert "BackendSession.activeToken.value" in poller
+    assert "BackendSession.appInForeground.value" in poller
+    assert "fetchMarketSnapshot(sessionToken)" in poller
+    assert 'response.backendStatus == "UNAUTHORIZED"' in poller
+    assert 'response.backendStatus == "UNSAFE RESPONSE"' in poller
+    assert "shouldDisplayMarketSnapshot(" in poller
+    assert "feedStatus = response.feedStatus" in poller
+    assert 'val feedAllowed = feedStatus == "HEALTHY" || (marketFallback && feedStatus == "DEGRADED")' in source
+    assert "return sourceAllowed && safeResponse && feedAllowed && hasItems" in source
+    assert "BackendSession.marketItems.value = response.items" in poller
+    assert 'statusJson.optString("mode") == "PAPER_ONLY"' in source
+    assert 'statusJson.optBoolean("orders_authorized", true)' in source
+
+def test_market_analysis_acceptance_apk_is_staging_only_and_never_targets_production():
+    root = Path(__file__).resolve().parents[1]
+    workflow_path = root / ".github/workflows/build-market-analysis-apk.yml"
+    if not workflow_path.exists():
+        workflow_path = root.parents[1] / ".github/workflows/build-market-analysis-apk.yml"
+    workflow = workflow_path.read_text(encoding="utf-8")
+
+    staging_url = "https://solo-ai-auto-trader-staging-api.onrender.com"
+    assert f'PAPER_API_BASE_URL="{staging_url}"' in workflow
+    assert staging_url in workflow
+    assert "Unexpected staging API target" in workflow
+    assert '-PpaperApiBaseUrl="$PAPER_API_BASE_URL"' in workflow
+    assert "No bearer or exchange credentials are embedded" in workflow
+    assert 'PAPER_API_BASE_URL="https://ai-auto-trader-v4-backend.onrender.com"' not in workflow
+    assert 'PAPER_API_BASE_URL="https://solo-futures-websocket-staging.onrender.com"' not in workflow
+
+def test_futures_index_funding_and_next_funding_are_validated_and_displayed():
+    source = SOURCE.read_text(encoding="utf-8")
+    for field in ("market_type", "price_type", "index_price", "funding_rate", "next_funding_at"):
+        assert f'"{field}"' in source
+    assert '"FUTURES_MARK_PRICE"' in source
+    assert '"SPOT_LAST_PRICE"' in source
+    assert "validateMarketDataContext(" in source
+    assert "parsedFundingTime.isAfter(now)" in source
+    assert 'IndicatorRow("Index price"' in source
+    assert 'IndicatorRow("Latest funding rate"' in source
+    assert 'IndicatorRow("Next funding"' in source
+    assert "formatFundingTimestamp" in source
+    assert "positive means longs pay shorts; negative means shorts pay longs" in source
+    assert "Latest exchange-published rate" in source
+    assert "account-specific payment history" in source
+
+def test_chart_candle_refreshes_pause_when_android_app_enters_background():
+    source = SOURCE.read_text(encoding="utf-8")
+    analysis_screen = source.split("@Composable\nprivate fun AnalysisScreen()", 1)[1].split(
+        "@Composable\nprivate fun AnalyticsChartCard", 1
+    )[0]
+
+    assert "val isForeground = BackendSession.appInForeground.value" in analysis_screen
+    assert "LaunchedEffect(sessionToken, selectedMarket?.symbol, candleSymbolKey, isForeground)" in analysis_screen
+    assert "if (isForeground && sessionToken.length >= 32" in analysis_screen
+
+
+def test_staging_apk_uses_the_deployed_staging_api_with_paper_ledger_endpoints():
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github/workflows/build-market-analysis-apk.yml").read_text(encoding="utf-8")
+    staging_api = "https://solo-ai-auto-trader-staging-api.onrender.com"
+
+    assert f'PAPER_API_BASE_URL="{staging_api}"' in workflow
+    assert staging_api in workflow
+    assert "solo-futures-websocket-staging.onrender.com" not in workflow
+    # The workflow must contain a production-URL rejection guard, not the production URL as its target.
+    assert "Production backend URL found in staging APK configuration" in workflow
+    assert 'PAPER_API_BASE_URL="https://ai-auto-trader-v4-backend.onrender.com"' not in workflow
+
+def test_valid_market_instrument_is_retained_when_inline_candles_are_empty():
+    source = SOURCE.read_text(encoding="utf-8")
+    parser = source.split("private fun parseMarketItems(", 1)[1].split(
+        "private data class TimeframeSnapshot", 1
+    )[0]
+
+    # Per-symbol candle history is fetched separately by the chart screen.
+    # An empty inline snapshot must not remove the instrument and block that fetch.
+    assert "result += MarketInstrument(" in parser
+    assert "if (candles.isNotEmpty())" not in parser

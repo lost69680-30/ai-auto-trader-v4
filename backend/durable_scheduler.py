@@ -66,6 +66,12 @@ class DurableJobScheduler:
                    VALUES (%s, %s, %s, %s, %s::jsonb)
                    ON CONFLICT (job_name) DO UPDATE SET
                      interval_seconds = EXCLUDED.interval_seconds,
+                     next_run_at = CASE
+                       WHEN paper_ledger.scheduled_job_definitions.enabled = false
+                            AND EXCLUDED.enabled = true
+                       THEN EXCLUDED.next_run_at
+                       ELSE paper_ledger.scheduled_job_definitions.next_run_at
+                     END,
                      enabled = EXCLUDED.enabled, payload = EXCLUDED.payload,
                      updated_at = now()""",
                 (name, interval_seconds, _utc(first_run_at), enabled, body),
@@ -122,9 +128,9 @@ class DurableJobScheduler:
                 for name in allowed_job_names
             ):
                 raise ValueError("allowed_job_names must be a set of valid job names")
-            if not allowed_job_names:
-                return None
             allowed_names = sorted(allowed_job_names)
+            if not allowed_names:
+                return None
         else:
             allowed_names = None
         with self._connect() as conn:
@@ -158,7 +164,8 @@ class DurableJobScheduler:
                    RETURNING job.idempotency_key, job.job_name, job.scheduled_for,
                              job.status, job.attempts, job.lease_owner,
                              job.lease_expires_at, job.payload""",
-                (stamp, max_attempts, allowed_names, allowed_names, lease_owner, stamp, self.lease_seconds, stamp),
+                (stamp, max_attempts, allowed_names, allowed_names,
+                 lease_owner, stamp, self.lease_seconds, stamp),
             ).fetchone()
         if row is None:
             return None

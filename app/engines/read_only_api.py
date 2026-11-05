@@ -14,6 +14,7 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 from urllib.parse import parse_qs
@@ -54,6 +55,20 @@ def _safe_startup_error(exc: Exception) -> str:
         message = message.replace(dsn, "[database URI redacted]")
     message = " ".join(message.split())[:240]
     return f"{type(exc).__name__}: {message}"
+
+def _api_value(value):
+    if isinstance(value, datetime):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("API timestamps must be timezone-aware")
+        return value.astimezone(timezone.utc).isoformat()
+    if is_dataclass(value):
+        return _api_value(asdict(value))
+    if isinstance(value, dict):
+        return {str(key): _api_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_api_value(item) for item in value]
+    return value
+
 
 def _json_bytes(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), allow_nan=False).encode("utf-8")
@@ -142,11 +157,41 @@ def _fetch_candle_intervals(source, symbol: str, intervals: tuple[str, ...], lim
     return interval_payloads, interval_status, rows_by_interval
 
 
+def build_market_candle_payload(
+    *, source, symbol: str, allowed_symbols: Iterable[str],
+    intervals: tuple[str, ...], limit: int,
+) -> dict[str, object]:
+    """Build the authenticated read-only candle response, including complete yearly bars."""
+    if symbol not in allowed_symbols:
+        raise ValueError("symbol is not in the configured market allowlist")
+    interval_payloads, interval_status, rows_by_interval = _fetch_candle_intervals(
+        source, symbol, intervals, limit
+    )
+    yearly = aggregate_complete_yearly_candles(rows_by_interval.get("1M", ()))
+    interval_payloads["1y"] = yearly
+    if yearly:
+        interval_status["1y"] = "HEALTHY"
+    elif interval_status.get("1M", "").startswith("UNAVAILABLE:"):
+        interval_status["1y"] = "UNAVAILABLE:MONTHLY_INTERVAL"
+    else:
+        interval_status["1y"] = "INSUFFICIENT_HISTORY"
+    return {
+        "symbol": symbol,
+        "candles_by_interval": interval_payloads,
+        "interval_status": interval_status,
+        "orders_authorized": False,
+        "mode": "PAPER_ONLY",
+    }
+
+
 def create_app(*, database_path: str, token: str, market_status: Callable[[], dict] | None = None,
                market_items: Callable[[], list[dict]] | None = None,
                market_candles: Callable[[str], dict] | None = None,
+               market_history: Callable[[str, datetime, datetime, int], dict] | None = None,
                account_status: Callable[[], dict] | None = None,
-               analysis_status: Callable[[], dict] | None = None):
+               analysis_status: Callable[[], dict] | None = None,
+               market_intelligence: Callable[[], dict] | None = None,
+               opportunity_registry=None):
     """Create WSGI app. A strong API token is mandatory; no permissive defaults."""
     if not isinstance(token, str) or len(token) < 32:
         raise ValueError("API token must be at least 32 characters; configure it as a secret")
@@ -160,7 +205,35 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
         supplied = environ.get("HTTP_AUTHORIZATION", "")
         expected = "Bearer " + token
         authorized = hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
-        if not authorized:
+        if method == "GET" and path == "/healthz":
+            # Public liveness probe: disclose no credentials, account data, or worker internals.
+            body, status = _json_bytes({
+                "status": "ok", "service": "solo-api", "mode": "PAPER_ONLY",
+                "orders_authorized": False,
+            }), "200 OK"
+        elif method == "GET" and path == "/readyz":
+            # Readiness is stricter than liveness: the independent shared worker and its
+            # validated market snapshots must both be fresh before this returns 200.
+            try:
+                feed = market_status() if market_status else {}
+                worker_status = feed.get("worker_status", "UNKNOWN") if isinstance(feed, dict) else "UNKNOWN"
+                ready = (
+                    isinstance(feed, dict)
+                    and feed.get("status") == "HEALTHY"
+                    and worker_status == "RUNNING"
+                    and feed.get("orders_authorized") is False
+                )
+                body, status = _json_bytes({
+                    "status": "ready" if ready else "not_ready",
+                    "worker_status": worker_status,
+                    "orders_authorized": False,
+                }), ("200 OK" if ready else "503 Service Unavailable")
+            except Exception:
+                body, status = _json_bytes({
+                    "status": "not_ready", "worker_status": "UNKNOWN",
+                    "orders_authorized": False,
+                }), "503 Service Unavailable"
+        elif not authorized:
             body, status = _json_bytes({"error": "unauthorized", "orders_authorized": False}), "401 Unauthorized"
         elif method == "POST" and path == "/api/v1/emergency-stop":
             try:
@@ -229,6 +302,59 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                     body, status = _json_bytes({"error": "invalid_or_unavailable_candle_request", "orders_authorized": False}), "400 Bad Request"
                 except Exception:
                     body, status = _json_bytes({"error": "market_candles_unavailable", "orders_authorized": False}), "503 Service Unavailable"
+
+            elif path == "/api/v1/markets/history":
+                try:
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    symbol_values = query.get("symbol", [])
+                    start_values = query.get("start", [])
+                    end_values = query.get("end", [])
+                    limit_values = query.get("limit", ["5000"])
+                    symbol = symbol_values[0].strip().upper() if len(symbol_values) == 1 else ""
+                    if (not symbol or len(symbol) > 30 or not symbol.isalnum()
+                            or len(start_values) != 1 or len(end_values) != 1
+                            or len(limit_values) != 1):
+                        raise ValueError("invalid historical candle query")
+                    start_text = start_values[0].strip()
+                    end_text = end_values[0].strip()
+                    start = datetime.fromisoformat(start_text.replace("Z", "+00:00"))
+                    end = datetime.fromisoformat(end_text.replace("Z", "+00:00"))
+                    if (start.tzinfo is None or start.utcoffset() is None
+                            or end.tzinfo is None or end.utcoffset() is None or end <= start):
+                        raise ValueError("historical range must be timezone-aware and increasing")
+                    raw_limit = limit_values[0]
+                    if not raw_limit.isdigit():
+                        raise ValueError("limit must be an integer")
+                    limit = int(raw_limit)
+                    if not 1 <= limit <= 10000:
+                        raise ValueError("limit must be between 1 and 10000")
+                    if market_history is None:
+                        body, status = _json_bytes({
+                            "error": "historical_archive_unavailable",
+                            "candles": [], "orders_authorized": False,
+                        }), "503 Service Unavailable"
+                    else:
+                        payload = market_history(symbol, start, end, limit)
+                        candles = payload.get("candles") if isinstance(payload, dict) else None
+                        if (not isinstance(payload, dict) or payload.get("symbol") != symbol
+                                or payload.get("venue") != "BINANCE_USDM_TESTNET"
+                                or payload.get("market_type") != "FUTURES"
+                                or payload.get("interval") != "1m"
+                                or payload.get("orders_authorized") is not False
+                                or not isinstance(candles, list) or len(candles) > limit
+                                or any(not isinstance(row, dict) or row.get("is_closed") is not True for row in candles)):
+                            raise RuntimeError("historical archive provider returned unsafe data")
+                        body, status = _json_bytes(payload), "200 OK"
+                except ValueError:
+                    body, status = _json_bytes({
+                        "error": "invalid_historical_candle_request",
+                        "candles": [], "orders_authorized": False,
+                    }), "400 Bad Request"
+                except Exception:
+                    body, status = _json_bytes({
+                        "error": "historical_archive_unavailable",
+                        "candles": [], "orders_authorized": False,
+                    }), "503 Service Unavailable"
             elif path == "/api/v1/binance-spot-testnet/account":
                 try:
                     if account_status is None:
@@ -258,7 +384,125 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                 except Exception:
                     body, status = _json_bytes({"status": "UNAVAILABLE", "items": [],
                         "reason": "market feed unavailable", "orders_authorized": False}), "503 Service Unavailable"
-            elif path in ("/api/v1/positions", "/api/v1/orders", "/api/v1/audit", "/api/v1/funding"):
+            elif method == "GET" and path == "/api/v1/markets/assessment":
+                try:
+                    report = market_intelligence() if market_intelligence else {
+                        "status": "NOT_CONFIGURED", "items": [], "orders_authorized": False,
+                    }
+                    items = report.get("items") if isinstance(report, dict) else None
+                    safe_items = (
+                        isinstance(items, list)
+                        and all(isinstance(item, dict) and item.get("orders_authorized") is False
+                                for item in items)
+                    )
+                    if (not isinstance(report, dict) or report.get("orders_authorized") is not False
+                            or not safe_items):
+                        raise ValueError("market intelligence provider returned an invalid or unsafe response")
+                    payload = {
+                        "status": report.get("status", "UNKNOWN"),
+                        "assessed_at": report.get("assessed_at"),
+                        "market_type": report.get("market_type"),
+                        "environment": report.get("environment"),
+                        "venue": report.get("venue"),
+                        "scan_id": report.get("scan_id"),
+                        "scan_job_status": report.get("scan_job_status", "UNKNOWN"),
+                        "scan_scheduled_for": report.get("scan_scheduled_for"),
+                        "scan_started_at": report.get("scan_started_at"),
+                        "scan_completed_at": report.get("scan_completed_at"),
+                        "scan_attempts": report.get("scan_attempts", 0),
+                        "items": items,
+                        "reason": report.get("reason"),
+                        "orders_authorized": False,
+                    }
+                    healthy = payload["status"] in {"HEALTHY", "DEGRADED"} and bool(items)
+                    body, status = _json_bytes(payload), ("200 OK" if healthy else "503 Service Unavailable")
+                except Exception:
+                    body, status = _json_bytes({
+                        "status": "UNAVAILABLE", "items": [],
+                        "reason": "market intelligence unavailable",
+                        "orders_authorized": False,
+                    }), "503 Service Unavailable"
+
+            elif path == "/api/v1/opportunities":
+                try:
+                    if opportunity_registry is None:
+                        raise RuntimeError("opportunity registry is not configured")
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    def one(name):
+                        values = query.get(name, [])
+                        if len(values) > 1:
+                            raise ValueError(f"{name} must be supplied at most once")
+                        return values[0].strip() if values else None
+                    symbol = one("symbol")
+                    market_type = one("market_type")
+                    venue = one("venue")
+                    cursor = one("cursor")
+                    raw_limit = one("limit") or "50"
+                    if not raw_limit.isdigit() or not 1 <= int(raw_limit) <= 100:
+                        raise ValueError("limit must be between 1 and 100")
+                    states = tuple(value for item in query.get("state", []) for value in item.split(",") if value)
+                    if (market_type is None) != (venue is None):
+                        raise ValueError("market_type and venue must be supplied together")
+                    page = opportunity_registry.list_opportunities(
+                        states=states or None, symbol=symbol or None,
+                        market_type=market_type, venue=venue,
+                        limit=int(raw_limit), cursor=cursor,
+                    )
+                    items = _api_value(page.items)
+                    if any(not isinstance(item, dict) or item.get("orders_authorized") is not False for item in items):
+                        raise ValueError("opportunity registry returned an unsafe record")
+                    body, status = _json_bytes({
+                        "items": items, "next_cursor": page.next_cursor,
+                        "orders_authorized": False, "mode": "PAPER_ONLY",
+                    }), "200 OK"
+                except ValueError:
+                    body, status = _json_bytes({"error": "invalid_opportunity_query", "orders_authorized": False}), "400 Bad Request"
+                except Exception:
+                    body, status = _json_bytes({"error": "opportunities_unavailable", "orders_authorized": False}), "503 Service Unavailable"
+            elif path.startswith("/api/v1/opportunities/"):
+                try:
+                    if opportunity_registry is None:
+                        raise RuntimeError("opportunity registry is not configured")
+                    suffix = path[len("/api/v1/opportunities/"):]
+                    parts = suffix.split("/")
+                    if not parts[0] or len(parts[0]) > 160 or not all(ch.isalnum() or ch in "-_" for ch in parts[0]):
+                        raise ValueError("invalid opportunity id")
+                    opportunity_id = parts[0]
+                    if len(parts) == 1:
+                        record = opportunity_registry.get_opportunity(opportunity_id)
+                        if record is None:
+                            body, status = _json_bytes({"error": "not_found", "orders_authorized": False}), "404 Not Found"
+                        else:
+                            payload = _api_value(record)
+                            if payload.get("orders_authorized") is not False:
+                                raise ValueError("opportunity record is unsafe")
+                            body, status = _json_bytes({
+                                "opportunity": payload,
+                                "orders_authorized": False, "mode": "PAPER_ONLY",
+                            }), "200 OK"
+                    elif len(parts) == 2 and parts[1] in {"events", "assessments", "evidence"}:
+                        if opportunity_registry.get_opportunity(opportunity_id) is None:
+                            body, status = _json_bytes({"error": "not_found", "orders_authorized": False}), "404 Not Found"
+                        else:
+                            method_name = {
+                                "events": "list_events",
+                                "assessments": "list_assessments",
+                                "evidence": "list_evidence",
+                            }[parts[1]]
+                            records = _api_value(getattr(opportunity_registry, method_name)(opportunity_id))
+                            if any(not isinstance(item, dict) or item.get("orders_authorized") is not False for item in records):
+                                raise ValueError("opportunity history returned an unsafe record")
+                            body, status = _json_bytes({
+                                "items": records, "orders_authorized": False, "mode": "PAPER_ONLY",
+                            }), "200 OK"
+                    else:
+                        body, status = _json_bytes({"error": "not_found", "orders_authorized": False}), "404 Not Found"
+                except ValueError:
+                    body, status = _json_bytes({"error": "invalid_opportunity_request", "orders_authorized": False}), "400 Bad Request"
+                except Exception:
+                    body, status = _json_bytes({"error": "opportunity_unavailable", "orders_authorized": False}), "503 Service Unavailable"
+
+            elif path in ("/api/v1/positions", "/api/v1/orders", "/api/v1/fills", "/api/v1/audit", "/api/v1/funding"):
                 try:
                     with _open_ledger(database_path) as ledger:
                         if path.endswith("/positions"):
@@ -266,6 +510,9 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                                        "orders_authorized": False, "state_storage": state_storage}
                         elif path.endswith("/orders"):
                             payload = {"items": [vars_order(o) for o in ledger.orders],
+                                       "orders_authorized": False, "state_storage": state_storage}
+                        elif path.endswith("/fills"):
+                            payload = {"items": [vars_fill(fill) for fill in ledger.fills],
                                        "orders_authorized": False, "state_storage": state_storage}
                         elif path.endswith("/funding"):
                             payload = {"items": [dict(e) for e in ledger.funding_events],
@@ -301,6 +548,13 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                                 ("X-Content-Type-Options", "nosniff")])
         return [body]
     return app
+
+
+def vars_fill(fill) -> dict[str, object]:
+    return {"fill_id": fill.fill_id, "proposal_id": fill.proposal_id, "symbol": fill.symbol,
+            "side": fill.side, "quantity": fill.quantity, "market_price": fill.market_price,
+            "fill_price": fill.price, "fee": fill.fee, "fee_rate": fill.fee_rate,
+            "slippage_bps": fill.slippage_bps, "filled_at": fill.filled_at}
 
 
 def vars_order(order) -> dict[str, object]:
@@ -458,14 +712,32 @@ class MarketFeedCache:
             return [dict(item) for item in self._items]
 
 
+
 def _load_api_token(environ=None) -> str:
     """Read the bearer secret without accidental surrounding whitespace."""
     values = os.environ if environ is None else environ
     return values.get("PAPER_API_TOKEN", "").strip()
 
 
+def _configured_market_symbols(environ=None) -> tuple[str, ...]:
+    """Resolve API symbols from the explicit market allowlist or shared PAPER_SYMBOLS."""
+    values = os.environ if environ is None else environ
+    if "PAPER_MARKET_SYMBOLS" in values:
+        raw = values.get("PAPER_MARKET_SYMBOLS", "")
+    elif "PAPER_SYMBOLS" in values:
+        raw = values.get("PAPER_SYMBOLS", "")
+    else:
+        raw = "BTCUSDT,ETHUSDT"
+    return tuple(dict.fromkeys(
+        item.strip().upper() for item in raw.split(",") if item.strip()
+    ))
+
+
 def main() -> None:
     """Run the authenticated read-only API and independent public market poller."""
+    if os.environ.get("PAPER_MARKET_SUPERVISOR_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
+        from backend.shared_market_supervisor import main as supervisor_main
+        return supervisor_main()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     from backend.asgi_runtime import websocket_enabled
 
@@ -484,8 +756,7 @@ def main() -> None:
     if host not in ("127.0.0.1", "localhost") and os.environ.get("PAPER_API_HTTPS_TERMINATED") != "1":
         raise SystemExit("Refusing non-loopback bind unless HTTPS termination is configured")
     max_age = float(os.environ.get("PAPER_MAX_MARKET_AGE_SECONDS", "90"))
-    symbols_raw = os.environ.get("PAPER_MARKET_SYMBOLS", "BTCUSDT,ETHUSDT")
-    symbols = tuple(dict.fromkeys(item.strip().upper() for item in symbols_raw.split(",") if item.strip()))
+    symbols = _configured_market_symbols()
     interval = os.environ.get("PAPER_MARKET_INTERVAL", "1m")
     poll_interval = float(os.environ.get("PAPER_MARKET_POLL_INTERVAL_SECONDS", "15"))
     candle_limit = int(os.environ.get("PAPER_MARKET_CANDLE_LIMIT", "100"))
@@ -526,7 +797,23 @@ def main() -> None:
             "recovery until persistent storage is confirmed. orders_authorized=False"
         )
 
-    cache = MarketFeedCache(max_age_seconds=max_age)
+    market_role = os.environ.get("PAPER_MARKET_ROLE", "combined").strip().lower()
+    if market_role not in {"combined", "api"}:
+        raise SystemExit("PAPER_MARKET_ROLE must be combined or api for the read-only API entry point")
+    if market_role == "api":
+        if not os.environ.get("PAPER_DATABASE_URL", "").strip():
+            raise SystemExit("PAPER_MARKET_ROLE=api requires PAPER_DATABASE_URL for shared durable market data")
+        if os.environ.get("PAPER_RESEARCH_WORKER_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on"):
+            raise SystemExit("PAPER_MARKET_ROLE=api cannot start an embedded analysis worker; run shared_market_worker separately")
+        from backend.shared_market_store import PostgresMarketFeedStore
+        cache = PostgresMarketFeedStore(
+            os.environ["PAPER_DATABASE_URL"],
+            worker_id=os.environ.get("PAPER_MARKET_WORKER_ID", "solo-market-worker"),
+            max_age_seconds=max_age,
+        )
+        logging.info("API market feed reads durable PostgreSQL snapshots from the independent worker")
+    else:
+        cache = MarketFeedCache(max_age_seconds=max_age)
     binance_testnet_account = BinanceSpotTestnetAccountClient()
     if market_mode == "spot":
         source = BinanceSpotMarketDataAdapter()
@@ -570,25 +857,44 @@ def main() -> None:
         raise SystemExit("PAPER_ANALYSIS_CANDLE_LIMIT must be between 50 and 500")
     # Binance supplies native weekly ("1w") and monthly ("1M") candles.
     # Yearly candles are derived only from 12 complete, closed monthly bars.
-    analysis_intervals = ("1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M")
+    analysis_intervals = ("1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M")
 
     def market_candles(symbol: str) -> dict:
-        if symbol not in symbols:
-            raise ValueError("symbol is not in the configured market allowlist")
-        interval_payloads, interval_status, rows_by_interval = _fetch_candle_intervals(
-            source, symbol, analysis_intervals, analysis_candle_limit
+        return build_market_candle_payload(
+            source=source,
+            symbol=symbol,
+            allowed_symbols=symbols,
+            intervals=analysis_intervals,
+            limit=analysis_candle_limit,
         )
 
-        yearly = aggregate_complete_yearly_candles(rows_by_interval.get("1M", ()))
-        interval_payloads["1y"] = yearly
-        if yearly:
-            interval_status["1y"] = "HEALTHY"
-        elif interval_status.get("1M", "").startswith("UNAVAILABLE:"):
-            interval_status["1y"] = "UNAVAILABLE:MONTHLY_INTERVAL"
-        else:
-            interval_status["1y"] = "INSUFFICIENT_HISTORY"
-        return {"symbol": symbol, "candles_by_interval": interval_payloads,
-                "interval_status": interval_status, "orders_authorized": False, "mode": "PAPER_ONLY"}
+    market_history = None
+    if testnet and market_mode == "futures" and os.environ.get("PAPER_DATABASE_URL", "").strip():
+        from backend.historical_candle_archive import PostgresCandleArchive
+        history_archive = PostgresCandleArchive(os.environ["PAPER_DATABASE_URL"])
+
+        def market_history(symbol: str, start: datetime, end: datetime, limit: int) -> dict:
+            if symbol not in symbols:
+                raise ValueError("symbol is not in the configured market allowlist")
+            rows = history_archive.read_closed_candles(
+                venue="BINANCE_USDM_TESTNET", market_type="FUTURES",
+                symbol=symbol, start=start, end=end, limit=limit,
+            )
+            return {
+                "symbol": symbol,
+                "venue": "BINANCE_USDM_TESTNET",
+                "market_type": "FUTURES",
+                "interval": "1m",
+                "candles": [{
+                    "open_time": row.open_time.isoformat(),
+                    "close_time": row.close_time.isoformat(),
+                    "open": row.open, "high": row.high, "low": row.low,
+                    "close": row.close, "volume": row.volume, "is_closed": True,
+                } for row in rows],
+                "orders_authorized": False,
+                "mode": "PAPER_ONLY",
+            }
+        logging.info("Authenticated read-only historical candle archive endpoint enabled for Futures Testnet")
 
     stop = threading.Event()
 
@@ -623,14 +929,26 @@ def main() -> None:
                 delay = 15.0
             stop.wait(delay)
 
-    poller = threading.Thread(target=poll_loop, name="readonly-market-poller", daemon=True)
-    poller.start()
+    poller = None
+    if market_role == "combined":
+        poller = threading.Thread(target=poll_loop, name="readonly-market-poller", daemon=True)
+        poller.start()
+    else:
+        logging.info("API-only role enabled; no local market poller or analysis worker will be started")
+    opportunity_registry = None
+    if os.environ.get("PAPER_DATABASE_URL", "").strip():
+        from backend.opportunity_store import PostgresOpportunityStore
+        opportunity_registry = PostgresOpportunityStore(os.environ["PAPER_DATABASE_URL"])
+
     try:
         http_app = create_app(database_path=database, token=token,
                               market_status=cache.status, market_items=cache.items,
                               market_candles=market_candles,
+                              market_history=market_history,
                               account_status=binance_testnet_account.account_summary,
-                              analysis_status=analysis_health.status)
+                              analysis_status=(cache.analysis_status if hasattr(cache, "analysis_status") else analysis_health.status),
+                              market_intelligence=(cache.market_intelligence if hasattr(cache, "market_intelligence") else None),
+                              opportunity_registry=opportunity_registry)
         if enable_websocket:
             if len(token) < 32:
                 raise SystemExit("PAPER_WEBSOCKET_ENABLED requires a PAPER_API_TOKEN of at least 32 characters")
@@ -649,11 +967,13 @@ def main() -> None:
             uvicorn.run(asgi_app, host=host, port=port, log_level="info", access_log=False)
         else:
             with make_server(host, port, http_app) as server:
-                print(f"Read-only paper API listening on {host}:{port}; public market poller active; no execution routes")
+                role_message = "public market poller active" if market_role == "combined" else "shared PostgreSQL market feed reader active"
+                print(f"Read-only paper API listening on {host}:{port}; {role_message}; no execution routes")
                 server.serve_forever()
     finally:
         stop.set()
-        poller.join(timeout=5)
+        if poller is not None:
+            poller.join(timeout=5)
         if paper_app is not None:
             paper_app.close()
 

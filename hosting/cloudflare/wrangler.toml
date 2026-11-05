@@ -1,0 +1,10 @@
+name = "solo-edge-gateway"
+main = "src/index.js"
+compatibility_date = "2026-11-05"
+workers_dev = true
+
+[vars]
+MAX_MARKET_AGE_SECONDS = "120"
+# Set PRIMARY_API_ORIGIN and SECONDARY_MARKET_ORIGIN as non-secret environment variables
+# in the Cloudflare dashboard. Set SECONDARY_MARKET_TOKEN with `wrangler secret put`.
+# Never put bearer tokens, exchange credentials, or database credentials in this file.

@@ -1,0 +1,61 @@
+name: Solo Android Market Stream Reliability
+
+on:
+  push:
+    branches:
+      - fix/android-market-websocket-snapshot-watchdog
+    paths:
+      - 'android/app/src/main/**'
+      - 'android/app/src/test/**'
+      - '.github/workflows/android-market-stream-reliability.yml'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solo-android-market-stream-reliability
+  cancel-in-progress: false
+
+jobs:
+  android-unit-tests-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Run Android unit tests
+        run: gradle :android:app:testDebugUnitTest --no-daemon
+
+      - name: Build debug APK
+        run: gradle :android:app:assembleDebug --no-daemon
+
+      - name: Verify APK
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          sha256sum "$APK"
+          ls -lh "$APK"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: solo-market-stream-watchdog-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
