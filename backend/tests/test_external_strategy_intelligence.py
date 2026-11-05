@@ -484,3 +484,48 @@ def test_external_candidate_constructor_rejects_authorized_state():
 
     with pytest.raises(ValueError, match="orders_authorized"):
         replace(assessment.candidate, orders_authorized=True)
+
+
+def test_sma_cross_detects_a_new_transition_not_an_existing_trend_state():
+    rule = ExternalRuleSpec("SMA_CROSS", {"fast_period": 2, "slow_period": 3}, "ONE_BAR")
+
+    def candles(closes):
+        start = NOW - timedelta(minutes=len(closes) - 1)
+        return [
+            Candle("BTCUSDT", start + timedelta(minutes=index), close,
+                   close, close, close, 1.0)
+            for index, close in enumerate(closes)
+        ]
+
+    assert evaluate_external_rule(rule, candles([10.0, 10.0, 10.0, 12.0])) == "LONG"
+    assert evaluate_external_rule(rule, candles([10.0, 10.0, 12.0, 12.0])) == "NEUTRAL"
+    assert evaluate_external_rule(rule, candles([12.0, 12.0, 12.0, 10.0])) == "SHORT"
+    assert evaluate_external_rule(rule, candles([12.0, 12.0, 10.0, 10.0])) == "NEUTRAL"
+
+
+def test_walk_forward_decay_rejects_authorized_or_non_paper_evidence():
+    from backend.walk_forward import evaluate_walk_forward
+
+    rows = []
+    start = NOW - timedelta(minutes=359)
+    price = 100.0
+    for index in range(360):
+        price *= 1.0005
+        rows.append(Candle(
+            "BTCUSDT", start + timedelta(minutes=index), price,
+            price * 1.002, price * 0.998, price, 1000.0,
+        ))
+    baseline = evaluate_walk_forward(
+        "BTCUSDT", rows,
+        config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40),
+        research_now=NOW,
+    )
+
+    with pytest.raises(ValueError, match="paper-only"):
+        assess_walk_forward_decay(replace(baseline, orders_authorized=True))
+
+    forged_strategy = replace(baseline.folds[0].strategy, orders_authorized=True)
+    forged_fold = replace(baseline.folds[0], strategy=forged_strategy)
+    forged = replace(baseline, folds=(forged_fold,) + baseline.folds[1:])
+    with pytest.raises(ValueError, match="authorization"):
+        assess_walk_forward_decay(forged)
