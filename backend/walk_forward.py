@@ -142,8 +142,8 @@ def evaluate_walk_forward(
     backtest_config: BacktestConfig | None = None,
     research_config: ResearchConfig | None = None,
     research_now: datetime,
-    dataset_provider: str = "binance-public",
-    dataset_venue: str = "unspecified",
+    dataset_provider: str,
+    dataset_venue: str,
     reference_datasets: Iterable[DatasetProvenance] = (),
 ) -> WalkForwardResult:
     """Evaluate fixed strategy settings over rolling chronological windows.
