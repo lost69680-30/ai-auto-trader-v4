@@ -35,7 +35,7 @@ class SoloNotificationRuntimeTest {
 
     @Test
     fun verifiedRiskAlertIsPersistedAndRetriedAfterNotificationPermissionReturns() {
-        shadowOf(context).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        context.notificationPermissionGranted = false
 
         SoloNotificationCenter.observeVerifiedRiskSnapshot(context, risk(emergencyStopActive = true))
         var records = SoloNotificationCenter.getRecords(context)
@@ -44,7 +44,7 @@ class SoloNotificationRuntimeTest {
         assertFalse(records.single().osDelivered)
         assertEquals(0, manager.activeNotifications.size)
 
-        shadowOf(context).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        context.notificationPermissionGranted = true
         records = SoloNotificationCenter.getRecords(context)
 
         assertTrue(records.single().osDelivered)
