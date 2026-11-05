@@ -43,7 +43,7 @@ class MarketAssessmentConfig:
     high_volatility_pct: float = 2.5
     trending_efficiency_ratio: float = 0.35
     ranging_efficiency_ratio: float = 0.20
-    max_candle_price_change_pct: float = 300.0
+    max_candle_price_change_pct: float = 5.0
 
     def __post_init__(self) -> None:
         values = (
