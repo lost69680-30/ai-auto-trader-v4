@@ -38,7 +38,7 @@ def _require_local_test_database() -> None:
 def disposable_postgres_schema():
     _require_local_test_database()
     repo_root = Path(__file__).resolve().parents[3]
-    migration_path = repo_root / "supabase" / "migrations" / "20261028010000_create_paper_ledger_schema.sql"
+    migration_path = repo_root / "supabase" / "migrations" / "20261029205318_create_paper_ledger_schema.sql"
     if not migration_path.is_file():
         pytest.fail(f"Required migration file is missing: {migration_path.name}")
     with psycopg.connect(TEST_DSN, autocommit=True, prepare_threshold=None) as connection:

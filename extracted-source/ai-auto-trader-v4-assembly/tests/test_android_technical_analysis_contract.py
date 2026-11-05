@@ -60,9 +60,15 @@ def test_solo_brand_is_applied_to_app_header_and_launcher():
     manifest = (root / "android/app/src/main/AndroidManifest.xml").read_text(encoding="utf-8")
     logo = (root / "android/app/src/main/res/drawable/ic_solo_logo.xml").read_text(encoding="utf-8")
     assert 'Text("SOLO"' in source
-    assert 'android:label="Solo"' in manifest
-    assert 'android:icon="@drawable/ic_solo_logo"' in manifest
-    assert 'android:strokeColor="#D8B878"' in logo
+    assert 'android:label="@string/app_name"' in manifest
+    build_config = (root / "android/app/build.gradle.kts").read_text(encoding="utf-8")
+    assert 'resValue("string", "app_name", "Solo")' in build_config
+    assert 'resValue("string", "app_name", "Solo Staging")' in build_config
+    assert 'applicationIdSuffix = ".staging"' in build_config
+    assert 'android:icon="@mipmap/ic_launcher"' in manifest
+    assert 'android:roundIcon="@mipmap/ic_launcher_round"' in manifest
+    assert 'android:strokeColor="#C6A66B"' in logo
+    assert 'android:fillColor="#C6A66B"' in logo
 
 
 def test_advanced_analysis_rejects_bad_candle_sequences_and_stale_history():
@@ -110,3 +116,22 @@ def test_market_risk_panel_exposes_explicit_heuristics_and_missing_data_uncertai
     assert "this does not mean risk is low or absent" in source
     assert "not a calibrated risk score" in source
     assert "does not estimate loss probability" in source
+
+
+def test_empty_performance_panels_do_not_draw_synthetic_chart_data():
+    source = SOURCE.read_text(encoding="utf-8")
+    # The synthetic EmptyChart renderer must be removed, not merely hidden.
+    assert "private fun EmptyChart(" not in source
+    assert "drawRect(if (i%3==0)" not in source
+    assert "drawPath(path" not in source
+    assert "No verified ledger data" in source
+    assert "This chart will appear only when real paper-ledger history is available." in source
+
+
+def test_android_notification_center_has_a_safe_delivery_probe():
+    center = (ROOT / "android/app/src/main/java/com/aiautotrader/v4/SoloNotificationCenter.kt").read_text(encoding="utf-8")
+    source = SOURCE.read_text(encoding="utf-8")
+    assert "internal fun sendTestNotification(context: Context): Boolean" in center
+    assert "SoloNotificationCenter.sendTestNotification(context)" in source
+    assert 'Text("Send test notification")' in source
+    assert "This test does not create a risk alert" in source

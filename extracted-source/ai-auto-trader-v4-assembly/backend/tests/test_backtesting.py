@@ -113,3 +113,20 @@ def test_backtest_start_timestamp_uses_prior_candles_only_as_warmup():
     result = run_backtest("BTCUSDT", rows, research_now=NOW, start_timestamp=start)
     assert all(trade.entry_time >= start for trade in result.trades)
     assert result.orders_authorized is False
+
+@pytest.mark.parametrize(
+    "config_kwargs",
+    [
+        {"initial_equity": True},
+        {"position_fraction": "0.1"},
+        {"fee_bps_per_side": False},
+        {"slippage_bps_per_side": float("nan")},
+        {"funding_bps_per_8h": float("inf")},
+        {"minimum_signal_score": "60"},
+        {"candle_interval_minutes": 1.5},
+        {"candle_interval_minutes": True},
+    ],
+)
+def test_backtest_config_rejects_non_numeric_boolean_and_non_finite_values(config_kwargs):
+    with pytest.raises(ValueError, match="numeric|finite|positive integer"):
+        BacktestConfig(**config_kwargs)

@@ -1,7 +1,5 @@
 package com.aiautotrader.v4
 
-import android.os.Handler
-import android.os.Looper
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -9,203 +7,338 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
-import java.time.Duration
+import java.io.Closeable
 import java.time.Instant
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+
+private const val MARKET_WEBSOCKET_PATH = "/ws/v1/markets"
+private const val MARKET_SNAPSHOT_MAX_AGE_SECONDS = 90.0
+private const val DEFAULT_KEEPALIVE_INTERVAL_MS = 25_000L
+private const val BASE_RECONNECT_DELAY_MS = 1_000L
+private const val MAX_RECONNECT_DELAY_MS = 60_000L
+private const val KEEPALIVE_MESSAGE = """{"type":"keepalive"}"""
 
 internal data class MarketStreamSnapshot(
     val symbol: String,
-    val marketType: String,
     val price: Double,
-    val observedAt: Instant,
-    val indexPrice: Double?,
-    val fundingRate: Double?,
-    val nextFundingAt: Instant?,
+    val observedAt: String,
+    val marketContext: MarketDataContext,
 )
 
-internal fun parseMarketStreamEvent(
-    raw: String,
+/**
+ * Build the WebSocket endpoint only from the configured HTTPS backend origin.
+ * User-provided URLs, credentials, query parameters, fragments and path prefixes
+ * are rejected so the bearer token cannot be sent to an arbitrary host/path.
+ */
+internal fun marketWebSocketUrl(apiBaseUrl: String): String? {
+    val parsed = apiBaseUrl.trim().toHttpUrlOrNull() ?: return null
+    if (!parsed.isHttps ||
+        parsed.username.isNotEmpty() ||
+        parsed.password.isNotEmpty() ||
+        parsed.encodedPath != "/" ||
+        parsed.encodedQuery != null ||
+        parsed.fragment != null
+    ) {
+        return null
+    }
+    val httpsOrigin = parsed.newBuilder()
+        .encodedPath("/")
+        .query(null)
+        .fragment(null)
+        .build()
+        .toString()
+        .removeSuffix("/")
+    return httpsOrigin.replaceFirst("https://", "wss://") + MARKET_WEBSOCKET_PATH
+}
+
+internal fun authenticatedMarketWebSocketRequest(apiBaseUrl: String, token: String): Request? {
+    if (token.length < 32) return null
+    val endpoint = marketWebSocketUrl(apiBaseUrl) ?: return null
+    if (!endpoint.startsWith("wss://")) return null
+    return Request.Builder()
+        .url(endpoint)
+        .header("Authorization", "Bearer $token")
+        .header("Accept", "application/json")
+        .build()
+}
+
+internal fun websocketReconnectDelayMs(
+    attempt: Int,
+    baseDelayMs: Long = BASE_RECONNECT_DELAY_MS,
+    maxDelayMs: Long = MAX_RECONNECT_DELAY_MS,
+): Long {
+    val safeBase = baseDelayMs.coerceAtLeast(1L)
+    val safeMax = maxDelayMs.coerceAtLeast(safeBase)
+    val exponent = attempt.coerceAtLeast(0).coerceAtMost(20)
+    val multiplier = 1L shl exponent
+    val delay = if (safeBase > safeMax / multiplier) safeMax else safeBase * multiplier
+    return delay.coerceAtMost(safeMax)
+}
+
+/**
+ * Parse the backend's versioned market.snapshot contract. Only explicitly
+ * healthy snapshots with orders_authorized=false and fresh price/context data
+ * are allowed to update the UI.
+ */
+internal fun parseMarketSnapshotEvent(
+    text: String,
     now: Instant = Instant.now(),
-    maxAgeSeconds: Long = 90,
-): MarketStreamSnapshot? { return try {
-    val json = JSONObject(raw)
-    if (json.optInt("schema_version", -1) != 1 ||
-        json.optString("type") != "market.snapshot" ||
-        json.optString("status") != "HEALTHY" ||
-        json.optBoolean("orders_authorized", true)
-    ) return null
+    maxAgeSeconds: Double = MARKET_SNAPSHOT_MAX_AGE_SECONDS,
+): MarketStreamSnapshot? {
+    if (!maxAgeSeconds.isFinite() || maxAgeSeconds <= 0.0) return null
+    val event = try {
+        JSONObject(text)
+    } catch (_: Exception) {
+        return null
+    }
 
-    val symbol = json.optString("symbol")
-    if (!Regex("[A-Z0-9]{3,24}").matches(symbol)) return null
+    if (event.optInt("schema_version", -1) != 1 ||
+        event.optString("type") != "market.snapshot" ||
+        event.optString("status") != "HEALTHY" ||
+        event.optBoolean("orders_authorized", true)
+    ) {
+        return null
+    }
 
-    val marketType = json.optString("market_type")
-    val priceField = if (marketType == "SPOT") "last_price" else if (marketType == "FUTURES") "mark_price" else return null
-    val price = json.optDouble(priceField, Double.NaN)
+    val symbol = event.optString("symbol")
+    if (!symbol.matches(Regex("^[A-Z0-9]{2,24}$"))) return null
+
+    val marketType = event.optString("market_type")
+    val priceType = when (marketType) {
+        "FUTURES" -> "FUTURES_MARK_PRICE"
+        "SPOT" -> "SPOT_LAST_PRICE"
+        else -> return null
+    }
+    val priceField = if (marketType == "FUTURES") "mark_price" else "last_price"
+    val price = event.optDouble(priceField, Double.NaN)
     if (!price.isFinite() || price <= 0.0) return null
 
-    val observed = Instant.parse(json.optString("observed_at"))
-    val age = Duration.between(observed, now).toMillis()
-    if (age < -1_000L || age > maxAgeSeconds * 1_000L) return null
+    val observedInstant = parseFreshMarketObservation(
+        event.optString("observed_at"),
+        now = now,
+        maxAgeSeconds = maxAgeSeconds,
+    ) ?: return null
 
-    if (marketType == "SPOT") {
-        if (json.has("index_price") || json.has("funding_rate") || json.has("next_funding_at")) return null
-        MarketStreamSnapshot(symbol, marketType, price, observed, null, null, null)
+    val indexPrice = if (event.isNull("index_price")) {
+        null
     } else {
-        val index = json.optDouble("index_price", Double.NaN)
-        val funding = json.optDouble("funding_rate", Double.NaN)
-        if (!index.isFinite() || index <= 0.0 || !funding.isFinite()) return null
-        val nextFunding = Instant.parse(json.optString("next_funding_at"))
-        if (!nextFunding.isAfter(now)) return null
-        MarketStreamSnapshot(symbol, marketType, price, observed, index, funding, nextFunding)
+        event.optDouble("index_price", Double.NaN)
     }
-} catch (_: Exception) {
-    null
-} }
+    val fundingRate = if (event.isNull("funding_rate")) {
+        null
+    } else {
+        event.optDouble("funding_rate", Double.NaN)
+    }
+    val nextFundingAt = if (event.isNull("next_funding_at")) {
+        null
+    } else {
+        event.optString("next_funding_at").takeIf { it.isNotBlank() && it != "null" }
+    }
+    val marketContext = validateMarketDataContext(
+        marketType = marketType,
+        priceType = priceType,
+        indexPrice = indexPrice,
+        fundingRate = fundingRate,
+        nextFundingAt = nextFundingAt,
+        now = now,
+    ) ?: return null
 
-internal fun marketStreamUrl(httpsBaseUrl: String): String? {
-    val parsed = httpsBaseUrl.trim().toHttpUrlOrNull() ?: return null
-    if (!parsed.isHttps || parsed.username.isNotEmpty() || parsed.password.isNotEmpty() ||
-        parsed.encodedPath != "/" || parsed.encodedQuery != null || parsed.fragment != null
-    ) return null
-    val origin = parsed.newBuilder().encodedPath("/").query(null).fragment(null).build()
-        .toString().removeSuffix("/")
-    return origin.replaceFirst("https://", "wss://") + "/ws/v1/markets"
+    return MarketStreamSnapshot(
+        symbol = symbol,
+        price = price,
+        observedAt = observedInstant.toString(),
+        marketContext = marketContext,
+    )
 }
 
-internal fun marketStreamReconnectDelayMillis(attempt: Int): Long {
-    val exponent = attempt.coerceIn(0, 5)
-    return (1_000L shl exponent).coerceAtMost(30_000L)
-}
-
-/** Authenticated one-way market feed. It never sends client messages or order commands. */
 internal class MarketWebSocketClient(
-    private val baseUrl: String,
-    private val token: String,
     private val onStatus: (String) -> Unit,
     private val onSnapshot: (MarketStreamSnapshot) -> Unit,
-    private val onUnauthorized: () -> Unit = {},
-) {
-    private val handler = Handler(Looper.getMainLooper())
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS)
-        .pingInterval(25, TimeUnit.SECONDS)
-        .build()
-    private var socket: WebSocket? = null
-    private var reconnectAttempt = 0
-    @Volatile private var stopped = false
-    private var reconnectTask: Runnable? = null
-    private var staleTask: Runnable? = null
-    private var keepaliveTask: Runnable? = null
-
-    private fun publishStatus(value: String) {
-        handler.post { if (!stopped || value == "DISCONNECTED" || value == "UNAUTHORIZED") onStatus(value) }
-    }
-
-    private fun armStaleWatchdog() {
-        staleTask?.let(handler::removeCallbacks)
-        val watchdog = Runnable {
-            staleTask = null
-            if (!stopped) publishStatus("STALE")
+    private val onUnauthorized: () -> Unit,
+    private val okHttpClient: OkHttpClient = sharedClient,
+    private val keepaliveIntervalMs: Long = DEFAULT_KEEPALIVE_INTERVAL_MS,
+    private val snapshotTimeoutMs: Long = MARKET_SNAPSHOT_MAX_AGE_SECONDS.toLong() * 1_000L,
+) : Closeable {
+    private val scheduler: ScheduledExecutorService =
+        Executors.newSingleThreadScheduledExecutor { task ->
+            Thread(task, "solo-market-websocket").apply { isDaemon = true }
         }
-        staleTask = watchdog
-        handler.postDelayed(watchdog, 90_000L)
-    }
+    private val lock = Any()
 
-    fun start() {
-        if (token.length < 32 || marketStreamUrl(baseUrl) == null) {
-            publishStatus("NOT CONFIGURED")
+    @Volatile
+    private var running = false
+    private var request: Request? = null
+    private var reconnectAttempts = 0
+    private var socket: WebSocket? = null
+    private var reconnectTask: ScheduledFuture<*>? = null
+    private var keepaliveTask: ScheduledFuture<*>? = null
+    private var snapshotTimeoutTask: ScheduledFuture<*>? = null
+
+    fun start(apiBaseUrl: String, token: String) {
+        val safeRequest = authenticatedMarketWebSocketRequest(apiBaseUrl, token)
+        if (safeRequest == null) {
+            onStatus("UNAVAILABLE")
             return
         }
-        stopped = false
-        connect()
+        synchronized(lock) {
+            running = true
+            request = safeRequest
+            reconnectAttempts = 0
+        }
+        onStatus("CONNECTING")
+        scheduleConnect(0L)
     }
 
-    fun close() {
-        stopped = true
-        reconnectTask?.let(handler::removeCallbacks)
-        reconnectTask = null
-        staleTask?.let(handler::removeCallbacks)
-        staleTask = null
-        keepaliveTask?.let(handler::removeCallbacks)
-        keepaliveTask = null
-        socket?.close(1000, "screen stopped")
-        socket = null
-        client.dispatcher.executorService.shutdown()
-        publishStatus("DISCONNECTED")
+    private fun scheduleConnect(delayMs: Long) {
+        synchronized(lock) {
+            if (!running || reconnectTask != null) return
+            reconnectTask = scheduler.schedule({
+                synchronized(lock) { reconnectTask = null }
+                connectNow()
+            }, delayMs, TimeUnit.MILLISECONDS)
+        }
     }
 
-    private fun connect() {
-        if (stopped) return
-        val url = marketStreamUrl(baseUrl) ?: return
-        publishStatus("CONNECTING")
-        val request = Request.Builder()
-            .url(url)
-            .header("Authorization", "Bearer $token")
-            .header("Accept", "application/json")
-            .build()
-        socket = client.newWebSocket(request, object : WebSocketListener() {
+    private fun connectNow() {
+        val requestData = synchronized(lock) {
+            if (!running) return
+            request ?: return
+        }
+        onStatus(if (reconnectAttempts == 0) "CONNECTING" else "RECONNECTING")
+
+        val createdSocket = okHttpClient.newWebSocket(requestData, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                reconnectAttempt = 0
-                armStaleWatchdog()
-                scheduleKeepalive(webSocket)
-                publishStatus("CONNECTED")
+                synchronized(lock) {
+                    if (!running) {
+                        webSocket.close(1000, "app not foreground")
+                        return
+                    }
+                    socket = webSocket
+                    reconnectAttempts = 0
+                    reconnectTask?.cancel(false)
+                    reconnectTask = null
+                    keepaliveTask?.cancel(false)
+                    snapshotTimeoutTask?.cancel(false)
+                    snapshotTimeoutTask = null
+                    keepaliveTask = scheduler.scheduleAtFixedRate({
+                        val isActive = synchronized(lock) { running && socket === webSocket }
+                        if (isActive && !webSocket.send(KEEPALIVE_MESSAGE)) {
+                            webSocket.cancel()
+                        }
+                    }, keepaliveIntervalMs, keepaliveIntervalMs, TimeUnit.MILLISECONDS)
+                }
+                scheduleSnapshotWatchdog(webSocket)
+                onStatus("CONNECTED")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                val snapshot = parseMarketStreamEvent(text) ?: return
-                armStaleWatchdog()
-                handler.post { if (!stopped) onSnapshot(snapshot) }
+                val snapshot = parseMarketSnapshotEvent(text) ?: return
+                scheduleSnapshotWatchdog(webSocket)
+                onSnapshot(snapshot)
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                webSocket.close(code, null)
+                onStatus("RECONNECTING")
+                val replyCode = if (code in 1000..4999 && code !in setOf(1004, 1005, 1006, 1015)) code else 1000
+                webSocket.close(replyCode, null)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                scheduleReconnect()
+                scheduleReconnect(webSocket)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 if (response?.code == 401 || response?.code == 403) {
-                    stopped = true
-                    reconnectTask?.let(handler::removeCallbacks)
-                    reconnectTask = null
-                    keepaliveTask?.let(handler::removeCallbacks)
-                    keepaliveTask = null
-                    publishStatus("UNAUTHORIZED")
-                    handler.post { onUnauthorized() }
+                    synchronized(lock) {
+                        if (socket === webSocket) socket = null
+                        running = false
+                        reconnectTask?.cancel(false)
+                        reconnectTask = null
+                        keepaliveTask?.cancel(false)
+                        keepaliveTask = null
+                        snapshotTimeoutTask?.cancel(false)
+                        snapshotTimeoutTask = null
+                    }
+                    onStatus("UNAUTHORIZED")
+                    onUnauthorized()
                 } else {
-                    publishStatus("RECONNECTING")
-                    scheduleReconnect()
+                    scheduleReconnect(webSocket)
                 }
             }
         })
-    }
 
-    private fun scheduleKeepalive(activeSocket: WebSocket) {
-        keepaliveTask?.let(handler::removeCallbacks)
-        val task = Runnable {
-            if (stopped || socket !== activeSocket) return@Runnable
-            // The backend deliberately ignores client messages; this is connection keepalive only.
-            if (!activeSocket.send("""{"type":"keepalive"}""")) {
-                activeSocket.cancel()
+        synchronized(lock) {
+            if (running) {
+                socket = createdSocket
             } else {
-                scheduleKeepalive(activeSocket)
+                createdSocket.cancel()
             }
         }
-        keepaliveTask = task
-        handler.postDelayed(task, 25_000L)
     }
 
-    private fun scheduleReconnect() {
-        if (stopped || reconnectTask != null) return
-        val delay = marketStreamReconnectDelayMillis(reconnectAttempt++)
-        val task = Runnable {
-            reconnectTask = null
-            connect()
+    private fun scheduleSnapshotWatchdog(activeSocket: WebSocket) {
+        synchronized(lock) {
+            if (!running || socket !== activeSocket) return
+            snapshotTimeoutTask?.cancel(false)
+            snapshotTimeoutTask = scheduler.schedule({
+                val shouldReconnect = synchronized(lock) {
+                    if (!running || socket !== activeSocket) {
+                        false
+                    } else {
+                        snapshotTimeoutTask = null
+                        true
+                    }
+                }
+                if (shouldReconnect) {
+                    onStatus("RECONNECTING")
+                    activeSocket.cancel()
+                }
+            }, snapshotTimeoutMs.coerceAtLeast(1L), TimeUnit.MILLISECONDS)
         }
-        reconnectTask = task
-        handler.postDelayed(task, delay)
+    }
+
+    private fun scheduleReconnect(failedSocket: WebSocket) {
+        val delayMs: Long
+        synchronized(lock) {
+            if (!running) return
+            if (socket === failedSocket) socket = null
+            keepaliveTask?.cancel(false)
+            keepaliveTask = null
+            snapshotTimeoutTask?.cancel(false)
+            snapshotTimeoutTask = null
+            if (reconnectTask != null) return
+            delayMs = websocketReconnectDelayMs(reconnectAttempts++)
+        }
+        onStatus("RECONNECTING")
+        scheduleConnect(delayMs)
+    }
+
+    override fun close() {
+        synchronized(lock) {
+            running = false
+            reconnectTask?.cancel(false)
+            reconnectTask = null
+            keepaliveTask?.cancel(false)
+            keepaliveTask = null
+            snapshotTimeoutTask?.cancel(false)
+            snapshotTimeoutTask = null
+            val activeSocket = socket
+            socket = null
+            activeSocket?.close(1000, "app not foreground")
+            request = null
+        }
+        onStatus("PAUSED")
+        scheduler.shutdownNow()
+    }
+
+    companion object {
+        private val sharedClient: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .pingInterval(25, TimeUnit.SECONDS)
+                .build()
+        }
     }
 }

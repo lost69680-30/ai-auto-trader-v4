@@ -10,6 +10,18 @@
 6. **Persistent paper execution** — `app/engines/paper_ledger.py` records idempotent paper intents, simulated fills, positions, marks, P&L, emergency state, and audit events in SQLite. `app/engines/protection.py` simulates stop-loss/take-profit, optional trailing stops, emergency-stop exits, and recovery.
 7. **Coordinator/runtime** — `app/engines/complete_analysis_pipeline.py` connects a research result to planning, signal handoff, trigger watch, and paper intent. `app/engines/paper_runtime.py` wraps healthy market polls, an injected analysis callback, simulated fills, and protective updates. It deliberately requires the caller to supply verified market configuration, costs, sizing, limits, and portfolio state.
 
+## Part 5 intelligence work on the feature branch
+
+The open draft PR branch `feat/continuous-opportunity-engine` contains additional research-layer work. This work has passed the backend and PostgreSQL CI suites on the branch, but it is **not merged or deployed**.
+
+- **Multi-timeframe market state** — `backend/market_assessment.py` validates closed candle histories and reports timeframe direction, trend score, momentum, volatility, efficiency, relative volume, structure, candle pattern, support/resistance, regime and conflicts. Scores are heuristic evidence, not calibrated probabilities.
+- **Indicator Intelligence** — `backend/indicator_intelligence.py` validates each timeframe's candle series before calculating EMA20/50, RSI14, MACD 12/26/9, Bollinger Bands, ATR14, ATR percentage, VWAP and prior-20-candle relative volume. Missing history is reported as unavailable; invalid/stale/gapped series are blocked. Outputs remain `NOT_CALIBRATED` and `orders_authorized=false`.
+- **Scheduled market intelligence** — `backend/market_intelligence_scan.py` uses the existing shared market-data source and worker path. Reports now include per-timeframe indicator assessments; no second exchange client or polling loop was added.
+- **Independent strategy assessment** — `backend/strategy_assessment_engine.py` maintains separate scalping, day, swing, position and long-term assessments. Each receives compact indicator evidence and conflict references. Indicator context is not a majority vote and does not silently overwrite the strategy's own decision. Long-term analysis remains analysis-only.
+- **Continuous Opportunity Engine** — `backend/opportunity_store.py`, `backend/opportunity_coordinator.py` and `backend/continuous_opportunity_search.py` provide the durable paper-only opportunity research foundation. The explicit price plan is separately recorded as evidence. Scheduled worker activation, fresh trigger-to-risk integration and read-only opportunity API completion remain outstanding.
+
+The feature branch's latest verified backend suite at this checkpoint reported **526 passed**; PostgreSQL integration, ASGI and read-only market-data/safety checks passed. This is CI evidence only. It does not establish live operation, Android phone verification, deployment readiness or profitability.
+
 ## Safety controls strengthened in the latest audit
 
 - Reject NaN, infinity, booleans in numeric fields, invalid risk limits, malformed timestamps, and invalid open-position counts.

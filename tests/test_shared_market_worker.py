@@ -492,6 +492,60 @@ def test_shutdown_closes_app_even_if_worker_lease_release_fails():
     assert app.closed is True
 
 
+def test_persist_equity_snapshot_uses_configured_baseline_and_keeps_paper_only_authority():
+    from types import SimpleNamespace
+
+    snapshot = SimpleNamespace(
+        account_equity=1000.0,
+        marks_fresh=True,
+        open_position_count=0,
+        orders_authorized=False,
+    )
+
+    class Ledger:
+        calls = None
+
+        def mark_to_market_risk_report(self, **kwargs):
+            self.calls = kwargs
+            return snapshot
+
+    ledger = Ledger()
+    result = shared_market_worker.persist_equity_snapshot(
+        ledger,
+        initial_equity=1000.0,
+        as_of=1_800_000_000.0,
+        max_mark_age_seconds=45.0,
+    )
+
+    assert result is snapshot
+    assert ledger.calls == {
+        "initial_equity": 1000.0,
+        "as_of": 1_800_000_000.0,
+        "max_mark_age_seconds": 45.0,
+    }
+    assert result.orders_authorized is False
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        type("AuthorizedSnapshot", (), {"orders_authorized": True})(),
+        type("MissingAuthorizationSnapshot", (), {})(),
+    ],
+)
+def test_persist_equity_snapshot_fails_closed_without_explicit_false_order_authority(snapshot):
+    class Ledger:
+        def mark_to_market_risk_report(self, **kwargs):
+            return snapshot
+
+    with pytest.raises(RuntimeError, match="equity snapshot unexpectedly authorized"):
+        shared_market_worker.persist_equity_snapshot(
+            Ledger(),
+            initial_equity=1000.0,
+            as_of=1_800_000_000.0,
+            max_mark_age_seconds=45.0,
+        )
+
 def test_disabled_intelligence_flag_disables_persisted_optional_schedules():
     from backend.shared_market_worker import disable_optional_intelligence_schedules
 
@@ -513,3 +567,30 @@ def test_disabled_intelligence_flag_disables_persisted_optional_schedules():
         "opportunity_reassessment_spot",
     }
     assert all(kwargs["enabled"] is False for _, kwargs in scheduler.calls)
+
+
+def test_scheduled_job_runner_exit_during_graceful_shutdown_is_expected():
+    import threading
+
+    stop = threading.Event()
+
+    class StoppedRunner:
+        def is_alive(self):
+            return False
+
+    assert shared_market_worker.scheduled_job_runner_stopped_unexpectedly(
+        StoppedRunner(), stop
+    ) is True
+
+    stop.set()
+    assert shared_market_worker.scheduled_job_runner_stopped_unexpectedly(
+        StoppedRunner(), stop
+    ) is False
+
+
+def test_missing_scheduled_job_runner_is_not_a_failure_during_startup():
+    import threading
+
+    assert shared_market_worker.scheduled_job_runner_stopped_unexpectedly(
+        None, threading.Event()
+    ) is False

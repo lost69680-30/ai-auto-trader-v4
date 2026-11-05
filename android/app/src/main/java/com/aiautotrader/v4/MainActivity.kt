@@ -1,6 +1,8 @@
 package com.aiautotrader.v4
 
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import java.net.HttpURLConnection
 import java.net.URL
 import org.json.JSONObject
@@ -9,11 +11,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.awaitCancellation
 import java.util.Locale
 import java.time.Duration
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
@@ -34,7 +38,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -44,15 +47,15 @@ internal const val BACKEND_MARKET_READ_TIMEOUT_MS = 75_000
 
 // UI-only theme preference. This changes presentation only; it cannot affect trading or risk controls.
 private var lightTheme by mutableStateOf(false)
-private val Background: Color get() = if (lightTheme) Color(0xFFF7F5F0) else Color(0xFF0B1018)
-private val Panel: Color get() = if (lightTheme) Color(0xFFFFFFFF) else Color(0xFF151D29)
-private val PanelAlt: Color get() = if (lightTheme) Color(0xFFEEEAE1) else Color(0xFF1B2635)
-private val Gold = Color(0xFFD8B878)
-private val Green: Color get() = if (lightTheme) Color(0xFF087F5B) else Color(0xFF43D9A3)
-private val Red: Color get() = if (lightTheme) Color(0xFFC6283D) else Color(0xFFFF6B78)
-private val Muted: Color get() = if (lightTheme) Color(0xFF5D6672) else Color(0xFF9BA9BA)
-private val White: Color get() = if (lightTheme) Color(0xFF202630) else Color(0xFFF4F7FB)
-private val Grid: Color get() = if (lightTheme) Color(0xFFD4CEC2) else Color(0xFF2A3544)
+private val Background: Color get() = if (lightTheme) Color(0xFFF4F0E8) else Color(0xFF101216)
+private val Panel: Color get() = if (lightTheme) Color(0xFFFFFFFF) else Color(0xFF1B1E24)
+private val PanelAlt: Color get() = if (lightTheme) Color(0xFFEAE4D8) else Color(0xFF403426)
+private val Gold: Color get() = if (lightTheme) Color(0xFF927547) else Color(0xFFC6A66B)
+private val Green: Color get() = if (lightTheme) Color(0xFF087F5B) else Color(0xFF39B980)
+private val Red: Color get() = if (lightTheme) Color(0xFFB63D4A) else Color(0xFFE36F72)
+private val Muted: Color get() = if (lightTheme) Color(0xFF5D6672) else Color(0xFFD7D9DC)
+private val White: Color get() = if (lightTheme) Color(0xFF202630) else Color(0xFFF4F0E8)
+private val Grid: Color get() = if (lightTheme) Color(0xFFD4CEC2) else Color(0xFF403426)
 
 
 internal data class MarketCandle(
@@ -64,10 +67,77 @@ internal data class MarketCandle(
     val volume: Double,
 )
 
+internal data class MarketDataContext(
+    val marketType: String,
+    val priceType: String,
+    val indexPrice: Double?,
+    val fundingRate: Double?,
+    val nextFundingAt: String?,
+)
+
+internal fun validateMarketDataContext(
+    marketType: String,
+    priceType: String,
+    indexPrice: Double?,
+    fundingRate: Double?,
+    nextFundingAt: String?,
+    now: Instant = Instant.now(),
+): MarketDataContext? {
+    val normalizedMarketType = marketType.trim().uppercase(Locale.ROOT)
+    val normalizedPriceType = priceType.trim().uppercase(Locale.ROOT)
+    return when (normalizedMarketType) {
+        "SPOT" -> {
+            if (normalizedPriceType == "SPOT_LAST_PRICE" &&
+                indexPrice == null && fundingRate == null && nextFundingAt.isNullOrBlank()) {
+                MarketDataContext("SPOT", normalizedPriceType, null, null, null)
+            } else {
+                null
+            }
+        }
+        "FUTURES" -> {
+            val normalizedFundingTime = nextFundingAt?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            val parsedFundingTime = try {
+                OffsetDateTime.parse(normalizedFundingTime).toInstant()
+            } catch (_: Exception) {
+                return null
+            }
+            if (normalizedPriceType != "FUTURES_MARK_PRICE" ||
+                indexPrice == null || !indexPrice.isFinite() || indexPrice <= 0.0 ||
+                fundingRate == null || !fundingRate.isFinite() ||
+                !parsedFundingTime.isAfter(now)) {
+                null
+            } else {
+                MarketDataContext("FUTURES", normalizedPriceType, indexPrice, fundingRate, normalizedFundingTime)
+            }
+        }
+        else -> null
+    }
+}
+
+internal fun formatFundingRate(rate: Double?): String {
+    if (rate == null || !rate.isFinite()) return "Unavailable"
+    return String.format(Locale.US, "%+.4f%%", rate * 100.0)
+}
+
+private val fundingTimestampFormatter =
+    DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm 'UTC'", Locale.US)
+
+internal fun formatFundingTimestamp(value: String?): String {
+    if (value.isNullOrBlank()) return "Unavailable"
+    return try {
+        OffsetDateTime.parse(value)
+            .withOffsetSameInstant(ZoneOffset.UTC)
+            .format(fundingTimestampFormatter)
+    } catch (_: Exception) {
+        "Unavailable"
+    }
+}
+
 private data class MarketInstrument(
     val symbol: String,
     val markPrice: Double,
     val markObservedAt: String,
+    val marketContext: MarketDataContext,
     val candles: List<MarketCandle>,
 )
 
@@ -182,6 +252,24 @@ private fun fetchTestnetAccountDiagnostic(token: String): TestnetAccountDiagnost
     }
 }
 
+internal fun isMarketOnlyFallbackStatus(
+    status: String,
+    mode: String,
+    ordersAuthorized: Boolean,
+): Boolean = status == "DEGRADED_MARKET_ONLY" && mode == "PAPER_ONLY" && !ordersAuthorized
+
+internal fun shouldDisplayMarketSnapshot(
+    backendConnected: Boolean,
+    marketFallback: Boolean,
+    safeResponse: Boolean,
+    feedStatus: String,
+    hasItems: Boolean,
+): Boolean {
+    val sourceAllowed = backendConnected || marketFallback
+    val feedAllowed = feedStatus == "HEALTHY" || (marketFallback && feedStatus == "DEGRADED")
+    return sourceAllowed && safeResponse && feedAllowed && hasItems
+}
+
 private data class MarketFetchResult(
     val httpCode: Int,
     val backendConnected: Boolean,
@@ -190,12 +278,58 @@ private data class MarketFetchResult(
     val items: List<MarketInstrument>,
     val reason: String,
     val safeResponse: Boolean,
+    val scanJobStatus: String = "UNKNOWN",
+    val scanStartedAt: String = "",
+    val scanCompletedAt: String = "",
+    val scanAttempts: Int = 0,
+    val marketFallback: Boolean = false,
+)
+
+private data class MarketIntelligenceItem(
+    val symbol: String,
+    val direction: String,
+    val marketRegime: String,
+    val marketPhase: String,
+    val longTermBias: String,
+    val mediumTermBias: String,
+    val shortTermBias: String,
+    val decision: String,
+    val opportunityRank: Int?,
+    val selectedStrategy: String,
+    val proposedDirection: String,
+    val fitScore: String,
+    val performanceStatus: String,
+    val eligibleForRiskReview: Boolean,
+    val noTradeReason: String,
+    val conflicts: List<String>,
+    val inProgressTimeframes: List<String>,
+    val dataQualityIssues: List<String>,
+)
+
+private data class MarketIntelligenceFetchResult(
+    val status: String,
+    val assessedAt: String,
+    val marketType: String,
+    val environment: String,
+    val venue: String,
+    val items: List<MarketIntelligenceItem>,
+    val reason: String,
+    val safeResponse: Boolean,
+    val scanJobStatus: String = "UNKNOWN",
+    val scanStartedAt: String = "",
+    val scanCompletedAt: String = "",
+    val scanAttempts: Int = 0,
 )
 
 // App-level observable state deliberately lives above individual navigation screens.
 // Removing a composable from the screen tree must not erase an authenticated session.
 private object BackendSession {
     val token = mutableStateOf("")
+    // Only a token accepted for a connection attempt activates foreground polling.
+    // The editable token field never drives network requests by itself.
+    val activeToken = mutableStateOf("")
+    val appInForeground = mutableStateOf(false)
+    val websocketStatus = mutableStateOf("DISCONNECTED")
     val status = mutableStateOf("NOT CONNECTED")
     val details = mutableStateOf("Connect to the authenticated HTTPS backend.")
     val openPositions = mutableStateOf("—")
@@ -206,8 +340,36 @@ private object BackendSession {
     val marketItems = mutableStateOf<List<MarketInstrument>>(emptyList())
     val marketLoading = mutableStateOf(false)
     val marketMessage = mutableStateOf("Market data has not been loaded yet.")
+    val marketIntelligence = mutableStateOf<List<MarketIntelligenceItem>>(emptyList())
+    val marketIntelligenceStatus = mutableStateOf("NOT CHECKED")
+    val marketIntelligenceMessage = mutableStateOf("Waiting for the first scheduled market scan.")
+    val marketIntelligenceAssessedAt = mutableStateOf("")
+    val marketIntelligenceEnvironment = mutableStateOf("UNKNOWN")
+    val marketIntelligenceMarketType = mutableStateOf("UNKNOWN")
+    val marketIntelligenceVenue = mutableStateOf("UNKNOWN")
+    val marketIntelligenceScanStatus = mutableStateOf("UNKNOWN")
+    val marketIntelligenceScanStartedAt = mutableStateOf("")
+    val marketIntelligenceScanCompletedAt = mutableStateOf("")
+    val marketIntelligenceScanAttempts = mutableStateOf(0)
     // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
     val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
+    val paperLedger = mutableStateOf<PaperLedgerSnapshot?>(null)
+    val paperLedgerStatus = mutableStateOf("NOT LOADED")
+    val paperLedgerError = mutableStateOf("")
+}
+
+private fun updateMarketFromWebSocket(snapshot: MarketStreamSnapshot) {
+    val current = BackendSession.marketItems.value
+    val existing = current.firstOrNull { normalizeSymbol(it.symbol) == normalizeSymbol(snapshot.symbol) }
+    val updated = MarketInstrument(
+        symbol = snapshot.symbol,
+        markPrice = snapshot.price,
+        markObservedAt = snapshot.observedAt,
+        marketContext = snapshot.marketContext,
+        candles = existing?.candles.orEmpty(),
+    )
+    BackendSession.marketItems.value =
+        current.filterNot { normalizeSymbol(it.symbol) == normalizeSymbol(snapshot.symbol) } + updated
 }
 
 private fun normalizeSymbol(value: String): String = value.uppercase(Locale.ROOT).filter { it.isLetterOrDigit() }
@@ -228,6 +390,14 @@ private fun parseMarketItems(array: JSONArray): List<MarketInstrument> {
         if (row.optString("status") != "HEALTHY" || row.optBoolean("orders_authorized", true)) continue
         val symbol = row.optString("symbol").trim()
         val price = row.optDouble("mark_price", Double.NaN)
+        val observedAt = parseFreshMarketObservation(row.optString("mark_observed_at")) ?: continue
+        val marketContext = validateMarketDataContext(
+            marketType = row.optString("market_type"),
+            priceType = row.optString("price_type"),
+            indexPrice = if (row.isNull("index_price")) null else row.optDouble("index_price", Double.NaN),
+            fundingRate = if (row.isNull("funding_rate")) null else row.optDouble("funding_rate", Double.NaN),
+            nextFundingAt = row.optString("next_funding_at").takeIf { it.isNotBlank() && it != "null" },
+        ) ?: continue
         if (symbol.isBlank() || !price.isFinite() || price <= 0.0) continue
         val candlesJson = row.optJSONArray("candles") ?: JSONArray()
         val candles = mutableListOf<MarketCandle>()
@@ -245,9 +415,17 @@ private fun parseMarketItems(array: JSONArray): List<MarketInstrument> {
                 candles += MarketCandle(c.optString("open_time"), open, high, low, close, volume)
             }
         }
-        if (candles.isNotEmpty()) {
-            result += MarketInstrument(symbol, price, row.optString("mark_observed_at"), candles.takeLast(100))
-        }
+        // Keep a valid live instrument selectable even when its snapshot has no
+        // inline candles. The authenticated per-symbol history request below the
+        // chart fetches candles independently; requiring inline candles here
+        // prevented that request from ever running for symbols with empty snapshots.
+        result += MarketInstrument(
+            symbol = symbol,
+            markPrice = price,
+            markObservedAt = observedAt.toString(),
+            marketContext = marketContext,
+            candles = candles.takeLast(100),
+        )
     }
     return result
 }
@@ -394,6 +572,18 @@ internal fun candleSeriesIssue(
             "1D" -> 86_400_000L
             "1W" -> 604_800_000L
             else -> return "unsupported timeframe"
+        }
+        if (timeframe == "1W") {
+            if (opens.any { opened ->
+                opened.dayOfWeek.value != 1 || opened.hour != 0 || opened.minute != 0 ||
+                    opened.second != 0 || opened.nano != 0
+            }) {
+                return "weekly candle timestamps are not aligned to Monday UTC"
+            }
+        } else if (opens.any { opened ->
+            Math.floorMod(opened.toInstant().toEpochMilli(), intervalMillis) != 0L
+        }) {
+            return "candle timestamps are not aligned to $timeframe boundaries"
         }
         for (index in 1 until opens.size) {
             val elapsed = Duration.between(
@@ -703,6 +893,12 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
                 "Backend status check failed (HTTP $statusCode).", false)
         } else {
             val statusJson = JSONObject(statusBody)
+            val marketOnlyFallback = isMarketOnlyFallbackStatus(
+                status = statusJson.optString("status"),
+                mode = statusJson.optString("mode"),
+                ordersAuthorized = statusJson.optBoolean("orders_authorized", true),
+            )
+            val backendStatusLabel = if (marketOnlyFallback) "DEGRADED · MARKET FALLBACK" else "CONNECTED · PAPER ONLY"
             val safeStatus = statusJson.optString("mode") == "PAPER_ONLY" &&
                 !statusJson.optBoolean("orders_authorized", true)
             if (!safeStatus) {
@@ -716,9 +912,14 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
                     // authenticated /status check and falsely ask the user to reconnect.
                     // Keep the feed unavailable and fail closed, while preserving backend auth status.
                     return MarketFetchResult(
-                        -1, true, "CONNECTED · PAPER ONLY", "OFFLINE", emptyList(),
-                        "Backend status is reachable, but the market-feed request failed (${e.javaClass.simpleName}). Retrying automatically; saved token retained.",
-                        false
+                        -1, !marketOnlyFallback, backendStatusLabel, "OFFLINE", emptyList(),
+                        if (marketOnlyFallback) {
+                            "The primary ledger/API is unavailable and the independent market fallback could not be reached. No market, ledger, risk or paper-processing data is available."
+                        } else {
+                            "Backend status is reachable, but the market-feed request failed (${e.javaClass.simpleName}). Retrying automatically; saved token retained."
+                        },
+                        false,
+                        marketFallback = marketOnlyFallback
                     )
                 }
                 val (marketsCode, marketsBody) = marketsResponse
@@ -729,19 +930,176 @@ private fun fetchMarketSnapshot(token: String): MarketFetchResult {
                 val items = if (marketsCode in 200..299 && safeMarkets) {
                     parseMarketItems(marketJson.optJSONArray("items") ?: JSONArray())
                 } else emptyList()
+                val marketDataFallback = marketJson.optString("data_mode") == "POLLED_FALLBACK"
+                val usingMarketFallback = marketOnlyFallback || marketDataFallback
+                val resolvedBackendStatusLabel = when {
+                    marketOnlyFallback -> "DEGRADED · MARKET FALLBACK"
+                    marketDataFallback -> "CONNECTED · PAPER ONLY · MARKET FALLBACK"
+                    else -> "CONNECTED · PAPER ONLY"
+                }
                 val healthy = marketsCode in 200..299 && feed == "HEALTHY" && items.isNotEmpty() && safeMarkets
                 val message = when {
+                    marketOnlyFallback -> "Primary ledger/API unavailable. Independent polled Futures Testnet snapshots are display-only; WebSocket streaming, candle history, positions, risk, opportunities and paper processing remain unavailable. No fallback data is used for paper decisions. $reason"
+                    marketDataFallback -> "Primary API and paper ledger remain connected, but the market feed is using independent polled Futures Testnet snapshots. This is not a live stream and is never used for paper decisions. $reason"
                     healthy -> "Authenticated backend connected. ${items.size} validated instrument(s) loaded; order authorization remains disabled."
                     !safeMarkets -> "Market endpoint returned an unsafe or incomplete response. Data was rejected."
                     reason.isNotBlank() && reason != "null" -> reason
                     else -> "No validated market candles were returned (HTTP $marketsCode)."
                 }
-                MarketFetchResult(marketsCode, true, "CONNECTED · PAPER ONLY", feed, items, message, safeMarkets)
+                MarketFetchResult(
+                    marketsCode, !marketOnlyFallback, resolvedBackendStatusLabel, feed, items, message, safeMarkets,
+                    marketFallback = usingMarketFallback
+                )
             }
         }
     } catch (_: Exception) {
         MarketFetchResult(-1, false, "OFFLINE / ERROR", "OFFLINE", emptyList(),
             "Market request failed. Check internet access and the backend deployment.", false)
+    }
+}
+
+private fun fetchMarketIntelligence(token: String): MarketIntelligenceFetchResult {
+    val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
+    if (!base.startsWith("https://") || token.length < 32) {
+        return MarketIntelligenceFetchResult(
+            "NOT CONFIGURED", "", "", "", "", emptyList(),
+            "A valid authenticated HTTPS backend session is required.", false
+        )
+    }
+    val connection = URL("$base/api/v1/markets/assessment").openConnection() as HttpURLConnection
+    try {
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 10000
+        connection.readTimeout = 15000
+        connection.setRequestProperty("Authorization", "Bearer $token")
+        connection.setRequestProperty("Accept", "application/json")
+        connection.useCaches = false
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        val raw = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        if (raw.isBlank()) {
+            return MarketIntelligenceFetchResult(
+                "UNAVAILABLE", "", "", "", "", emptyList(),
+                "Market intelligence endpoint returned an empty response (HTTP $code).", false
+            )
+        }
+        val root = JSONObject(raw)
+        if (root.optBoolean("orders_authorized", true)) {
+            return MarketIntelligenceFetchResult(
+                "UNSAFE RESPONSE", "", "", "", "", emptyList(),
+                "Market intelligence response did not explicitly disable order authorization.", false
+            )
+        }
+        val array = root.optJSONArray("items") ?: JSONArray()
+        if (array.length() > 0) {
+            val responseMarketType = root.optString("market_type", "")
+            val responseEnvironment = root.optString("environment", "")
+            val responseVenue = root.optString("venue", "")
+            val expectedVenue = when (responseMarketType) {
+                "FUTURES" -> "BINANCE_USDM_TESTNET"
+                "SPOT" -> "BINANCE_SPOT_TESTNET"
+                else -> ""
+            }
+            if (responseEnvironment != "TESTNET" || responseVenue != expectedVenue || expectedVenue.isBlank()) {
+                return MarketIntelligenceFetchResult(
+                    "SOURCE NOT VERIFIED", "", "", "", "", emptyList(),
+                    "Only explicitly identified Testnet market data is accepted.", false
+                )
+            }
+        }
+        val items = mutableListOf<MarketIntelligenceItem>()
+        for (index in 0 until array.length()) {
+            val row = array.optJSONObject(index)
+                ?: return MarketIntelligenceFetchResult(
+                    "UNSAFE RESPONSE", "", "", "", "", emptyList(),
+                    "Market intelligence response contained a malformed symbol row.", false
+                )
+            val assessment = row.optJSONObject("assessment")
+            val selection = row.optJSONObject("selection")
+            if (row.optBoolean("orders_authorized", true) ||
+                assessment == null || assessment.optBoolean("orders_authorized", true) ||
+                selection == null || selection.optBoolean("orders_authorized", true)) {
+                return MarketIntelligenceFetchResult(
+                    "UNSAFE RESPONSE", "", "", "", "", emptyList(),
+                    "A symbol assessment or strategy selection did not explicitly deny order authorization.", false
+                )
+            }
+            val conflicts = mutableListOf<String>()
+            val conflictArray = assessment.optJSONArray("conflicts") ?: JSONArray()
+            for (i in 0 until conflictArray.length()) {
+                conflictArray.optString(i).takeIf { it.isNotBlank() && it != "null" }?.let(conflicts::add)
+            }
+            val inProgress = mutableListOf<String>()
+            val inProgressArray = row.optJSONArray("in_progress_timeframes") ?: JSONArray()
+            for (i in 0 until inProgressArray.length()) {
+                inProgressArray.optString(i).takeIf { it.isNotBlank() && it != "null" }?.let(inProgress::add)
+            }
+            val dataIssues = mutableListOf<String>()
+            val timeframeArray = assessment.optJSONArray("timeframes") ?: JSONArray()
+            for (i in 0 until timeframeArray.length()) {
+                val timeframe = timeframeArray.optJSONObject(i) ?: continue
+                val name = timeframe.optString("timeframe", "unknown")
+                val timeframeStatus = timeframe.optString("status", "UNKNOWN")
+                if (timeframeStatus != "HEALTHY") dataIssues.add("$name: $timeframeStatus")
+            }
+            val errors = row.optJSONObject("timeframe_errors")
+            if (errors != null) {
+                val keys = errors.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    dataIssues.add("${key}: request ${errors.optString(key, "failed")}")
+                }
+            }
+            val selectedStrategy = selection.optString("selected_strategy", "")
+                .takeIf { it.isNotBlank() && it != "null" } ?: "None"
+            val score = selection.optDouble("fit_score", Double.NaN)
+            val fitScore = if (score.isFinite()) {
+                String.format(Locale.US, "%.1f / 100 · heuristic", score)
+            } else "Not available"
+            items.add(MarketIntelligenceItem(
+                symbol = row.optString("symbol", "UNKNOWN"),
+                direction = assessment.optString("direction", "UNKNOWN"),
+                marketRegime = assessment.optString("market_regime", "UNKNOWN"),
+                marketPhase = assessment.optString("market_phase", "UNKNOWN"),
+                longTermBias = assessment.optString("long_term_bias", "UNKNOWN"),
+                mediumTermBias = assessment.optString("medium_term_bias", "UNKNOWN"),
+                shortTermBias = assessment.optString("short_term_bias", "UNKNOWN"),
+                decision = selection.optString("decision", "UNKNOWN"),
+                opportunityRank = selection.optInt("opportunity_rank", -1).takeIf { it > 0 },
+                selectedStrategy = selectedStrategy,
+                proposedDirection = selection.optString("direction", "NONE"),
+                fitScore = fitScore,
+                performanceStatus = selection.optString("performance_status", "NOT_CALIBRATED"),
+                eligibleForRiskReview = selection.optBoolean("eligible_for_risk_review", false),
+                noTradeReason = selection.optString("no_trade_reason", "").takeIf { it != "null" }.orEmpty(),
+                conflicts = conflicts,
+                inProgressTimeframes = inProgress,
+                dataQualityIssues = dataIssues,
+            ))
+        }
+        val status = root.optString("status", if (code in 200..299) "UNKNOWN" else "UNAVAILABLE")
+        val reason = root.optString("reason", if (code in 200..299) "Scheduled market scan status received." else "Market scan is not currently healthy.")
+        return MarketIntelligenceFetchResult(
+            status = status,
+            assessedAt = root.optString("assessed_at", ""),
+            marketType = root.optString("market_type", ""),
+            environment = root.optString("environment", ""),
+            venue = root.optString("venue", ""),
+            items = items,
+            reason = reason,
+            safeResponse = true,
+            scanJobStatus = root.optString("scan_job_status", "UNKNOWN"),
+            scanStartedAt = root.optString("scan_started_at", ""),
+            scanCompletedAt = root.optString("scan_completed_at", ""),
+            scanAttempts = root.optInt("scan_attempts", 0),
+        )
+    } catch (e: Exception) {
+        return MarketIntelligenceFetchResult(
+            "UNAVAILABLE", "", "", "", "", emptyList(),
+            "Market intelligence request failed (${e.javaClass.simpleName}).", false
+        )
+    } finally {
+        connection.disconnect()
     }
 }
 
@@ -799,9 +1157,27 @@ private fun fetchCandleHistory(token: String, symbol: String): Map<String, List<
 }
 
 class MainActivity : ComponentActivity() {
+    override fun onStart() {
+        super.onStart()
+        BackendSession.appInForeground.value = true
+    }
+
+    override fun onStop() {
+        BackendSession.appInForeground.value = false
+        BackendSession.marketLoading.value = false
+        if (BackendSession.activeToken.value.length >= 32) {
+            BackendSession.feedStatus.value = "PAUSED"
+            BackendSession.marketMessage.value =
+                "App is in the background; authenticated market polling will resume with the app."
+        }
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        SoloRiskAlertWork.enqueue(applicationContext)
         BackendSession.token.value = BackendTokenStore(applicationContext).read().orEmpty()
+        lightTheme = getSharedPreferences("solo_preferences", MODE_PRIVATE).getBoolean("light_theme", false)
         setContent {
             MaterialTheme(colorScheme = if (lightTheme) lightColorScheme(primary = Gold, background = Background, surface = Panel,
                 onBackground = White, onSurface = White) else darkColorScheme(primary = Gold, background = Background, surface = Panel,
@@ -813,15 +1189,170 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
+private fun BackendMarketSessionEffect() {
+    val sessionToken = BackendSession.activeToken.value
+    val isForeground = BackendSession.appInForeground.value
+
+    LaunchedEffect(sessionToken, isForeground) {
+        if (sessionToken.length >= 32 && isForeground) {
+            while (true) {
+                BackendSession.marketLoading.value = true
+                val response = withContext(Dispatchers.IO) {
+                    fetchMarketSnapshot(sessionToken)
+                }
+                BackendSession.status.value = response.backendStatus
+                BackendSession.feedStatus.value = response.feedStatus
+                BackendSession.marketMessage.value = response.reason
+                BackendSession.details.value = if (response.backendConnected) {
+                    "${response.backendStatus} · Market feed: ${response.feedStatus} · ${response.reason}"
+                } else {
+                    response.reason
+                }
+
+                // Keep the last validated snapshot while the feed reconnects.
+                // It is never promoted to a live/healthy feed unless a fresh response passes validation.
+                if (shouldDisplayMarketSnapshot(
+                        backendConnected = response.backendConnected,
+                        marketFallback = response.marketFallback,
+                        safeResponse = response.safeResponse,
+                        feedStatus = response.feedStatus,
+                        hasItems = response.items.isNotEmpty(),
+                    )) {
+                    BackendSession.marketItems.value = response.items
+                }
+                BackendSession.marketLoading.value = false
+
+                // A wrong token or an unsafe backend response needs user attention;
+                // transient network/feed failures continue to retry while foregrounded.
+                if (response.backendStatus == "UNAUTHORIZED" ||
+                    response.backendStatus == "UNSAFE RESPONSE") {
+                    BackendSession.activeToken.value = ""
+                    return@LaunchedEffect
+                }
+                delay(30_000)
+            }
+        } else {
+            BackendSession.marketLoading.value = false
+        }
+    }
+}
+
+@Composable
+private fun BackendMarketIntelligenceEffect() {
+    val sessionToken = BackendSession.activeToken.value
+    val isForeground = BackendSession.appInForeground.value
+
+    LaunchedEffect(sessionToken, isForeground) {
+        if (sessionToken.length >= 32 && isForeground) {
+            while (true) {
+                val response = withContext(Dispatchers.IO) {
+                    fetchMarketIntelligence(sessionToken)
+                }
+                BackendSession.marketIntelligenceStatus.value = response.status
+                BackendSession.marketIntelligenceMessage.value = response.reason
+                if (response.assessedAt.isNotBlank()) {
+                    BackendSession.marketIntelligenceAssessedAt.value = response.assessedAt
+                }
+                if (response.environment.isNotBlank()) {
+                    BackendSession.marketIntelligenceEnvironment.value = response.environment
+                }
+                if (response.marketType.isNotBlank()) {
+                    BackendSession.marketIntelligenceMarketType.value = response.marketType
+                }
+                if (response.venue.isNotBlank()) {
+                    BackendSession.marketIntelligenceVenue.value = response.venue
+                }
+                BackendSession.marketIntelligenceScanStatus.value = response.scanJobStatus
+                BackendSession.marketIntelligenceScanStartedAt.value = response.scanStartedAt
+                BackendSession.marketIntelligenceScanCompletedAt.value = response.scanCompletedAt
+                BackendSession.marketIntelligenceScanAttempts.value = response.scanAttempts
+                if (!response.safeResponse && response.status != "UNAVAILABLE") {
+                    BackendSession.marketIntelligence.value = emptyList()
+                } else if (response.items.isNotEmpty()) {
+                    BackendSession.marketIntelligence.value = response.items
+                } else if (response.status == "HEALTHY") {
+                    BackendSession.marketIntelligence.value = emptyList()
+                }
+                delay(60_000)
+            }
+        } else {
+            BackendSession.marketIntelligenceStatus.value = "PAUSED"
+        }
+    }
+}
+
+@Composable
+private fun BackendMarketWebSocketEffect() {
+    val sessionToken = BackendSession.activeToken.value
+    val isForeground = BackendSession.appInForeground.value
+
+    LaunchedEffect(sessionToken, isForeground) {
+        if (sessionToken.length < 32) {
+            BackendSession.websocketStatus.value = "DISCONNECTED"
+            return@LaunchedEffect
+        }
+        if (!isForeground) {
+            BackendSession.websocketStatus.value = "PAUSED"
+            return@LaunchedEffect
+        }
+
+        val mainHandler = Handler(Looper.getMainLooper())
+        val stream = MarketWebSocketClient(
+            onStatus = { status ->
+                mainHandler.post {
+                    if (BackendSession.activeToken.value == sessionToken &&
+                        BackendSession.appInForeground.value == isForeground) {
+                        BackendSession.websocketStatus.value = status
+                    }
+                }
+            },
+            onSnapshot = { snapshot ->
+                mainHandler.post {
+                    if (BackendSession.activeToken.value == sessionToken &&
+                        BackendSession.appInForeground.value) {
+                        updateMarketFromWebSocket(snapshot)
+                    }
+                }
+            },
+            onUnauthorized = {
+                mainHandler.post {
+                    if (BackendSession.activeToken.value == sessionToken) {
+                        BackendSession.websocketStatus.value = "UNAUTHORIZED"
+                        BackendSession.activeToken.value = ""
+                        BackendSession.status.value = "UNAUTHORIZED"
+                        BackendSession.details.value =
+                            "The read-only market stream rejected the saved bearer token. Reconnect using the authenticated backend."
+                    }
+                }
+            },
+        )
+        stream.start(BuildConfig.PAPER_API_BASE_URL, sessionToken)
+        try {
+            awaitCancellation()
+        } finally {
+            stream.close()
+            if (BackendSession.activeToken.value == sessionToken &&
+                !BackendSession.appInForeground.value) {
+                BackendSession.websocketStatus.value = "PAUSED"
+            }
+        }
+    }
+}
+
+@Composable
 private fun TraderApp() {
+    BackendMarketSessionEffect()
+    BackendMarketIntelligenceEffect()
+    BackendMarketWebSocketEffect()
+    PaperLedgerRefreshEffect()
     var screen by remember { mutableStateOf("Dashboard") }
-    val screens = listOf("Dashboard", "AI Agents", "Markets", "Positions", "Risk Center")
+    val screens = listOf("Dashboard", "AI Agents", "Markets", "Opportunities", "Positions", "Risk Center", "Performance", "Notifications", "Security", "Settings")
     Column(Modifier.fillMaxSize().background(Background)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                     Image(
-                        painter = painterResource(id = R.drawable.ic_solo_logo),
+                        painter = painterResource(id = if (lightTheme) R.drawable.ic_solo_logo_light else R.drawable.ic_solo_logo),
                         contentDescription = "Solo logo",
                         modifier = Modifier.size(34.dp)
                     )
@@ -843,7 +1374,7 @@ private fun TraderApp() {
                 val selected = screen == item || (item == "Markets" && screen == "Charts & Analysis")
                 Box(Modifier.background(if (selected) Gold.copy(alpha = .16f) else Panel, RoundedCornerShape(12.dp))
                     .border(1.dp, if (selected) Gold.copy(alpha = .8f) else Grid, RoundedCornerShape(12.dp))
-                    .clickable { screen = if (item == "Markets") "Charts & Analysis" else item }.padding(horizontal = 13.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
+                    .clickable { screen = soloScreenDestination(item) }.padding(horizontal = 13.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
                     Text(item, color = if (selected) Gold else Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
@@ -851,9 +1382,105 @@ private fun TraderApp() {
         when (screen) {
             "Charts & Analysis", "Markets" -> AnalysisScreen()
             "AI Agents" -> AgentNetworkScreen()
+            "Opportunities" -> OpportunitiesScreen()
             "Positions" -> PositionsScreen()
             "Risk Center" -> RiskCenterScreen()
+            "Performance" -> PerformanceScreen()
+            "Notifications" -> NotificationsScreen()
+            "Security" -> SecurityScreen()
+            "Settings" -> SettingsScreen()
             else -> DashboardScreen { screen = "Charts & Analysis" }
+        }
+    }
+}
+
+@Composable
+private fun NotificationsScreen() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var records by remember { mutableStateOf(SoloNotificationCenter.getRecords(context)) }
+    var testDeliveryStatus by remember { mutableStateOf<String?>(null) }
+    val permissionGranted = android.os.Build.VERSION.SDK_INT < 33 ||
+        context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+        android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        CardPanel {
+            Text("SOLO ALERT CENTER", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+            Text("Verified system alerts", color = White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "Alerts are created only from successful, validated paper-risk snapshots. Acknowledging an alert does not resolve its underlying condition.",
+                color = Muted, fontSize = 12.sp, lineHeight = 18.sp
+            )
+            StatusLine("●", if (permissionGranted) "ANDROID NOTIFICATIONS ENABLED" else "IN-APP ALERTS ONLY · PERMISSION NEEDED",
+                if (permissionGranted) Green else Color(0xFFE7B65E))
+            if (!permissionGranted && android.os.Build.VERSION.SDK_INT >= 33) {
+                Button(
+                    onClick = {
+                        (context as? ComponentActivity)?.requestPermissions(
+                            arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 7001
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background)
+                ) { Text("Enable Android notifications") }
+            }
+            Button(
+                onClick = { records = SoloNotificationCenter.getRecords(context) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = PanelAlt, contentColor = White)
+            ) { Text("Refresh alerts") }
+            Button(
+                onClick = {
+                    testDeliveryStatus = if (SoloNotificationCenter.sendTestNotification(context)) {
+                        "Android accepted the test notification request. Check the notification shade."
+                    } else {
+                        "Android did not accept the notification. Check app and channel notification settings."
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background)
+            ) { Text("Send test notification") }
+            testDeliveryStatus?.let { Text(it, color = Muted, fontSize = 11.sp, lineHeight = 16.sp) }
+            Text("This test does not create a risk alert, change risk settings, or submit an order.", color = Muted, fontSize = 10.sp)
+        }
+        if (records.isEmpty()) {
+            CardPanel {
+                Text("No verified alerts yet", color = White, fontWeight = FontWeight.SemiBold)
+                Text("Emergency Stop and stale position-mark alerts appear here only after the authenticated paper ledger confirms those states.", color = Muted, fontSize = 12.sp)
+            }
+        } else {
+            records.forEach { record ->
+                CardPanel {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(record.severity, color = if (record.severity == "CRITICAL") Red else Color(0xFFE7B65E), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(if (record.resolved) "RESOLVED" else if (record.acknowledged) "ACKNOWLEDGED" else "UNACKNOWLEDGED",
+                            color = if (record.resolved) Green else Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Text(record.title, color = White, fontWeight = FontWeight.SemiBold)
+                    Text(record.message, color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+                    Text(
+                        java.time.Instant.ofEpochMilli(record.occurredAtEpochMs).toString() +
+                            if (record.osDelivered) " · ANDROID DELIVERED" else " · IN-APP ONLY",
+                        color = Muted, fontSize = 9.sp
+                    )
+                    if (!record.acknowledged) {
+                        Button(
+                            onClick = {
+                                SoloNotificationCenter.acknowledge(context, record.eventId)
+                                records = SoloNotificationCenter.getRecords(context)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = PanelAlt, contentColor = Gold)
+                        ) { Text("Acknowledge") }
+                    }
+                }
+            }
+        }
+        CardPanel {
+            Text("Delivery and safety", color = Gold, fontWeight = FontWeight.Bold)
+            Text("Notifications never authorize or submit orders. Emergency Stop blocks new paper orders; this alert does not close existing positions. If Android notification permission is denied, alerts remain in this in-app history.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
         }
     }
 }
@@ -861,20 +1488,29 @@ private fun TraderApp() {
 @Composable
 private fun AgentNetworkScreen() {
     val agents = listOf(
-        Triple("Research Agent", "Scans setups, support/resistance and market context", "READY · LOCAL UI"),
-        Triple("Analysis Agent", "Reviews trend, momentum, volatility and indicators", "READY · LOCAL UI"),
-        Triple("GAT Coordinator", "Designed to model relationships across instruments and agents", "NOT CONNECTED"),
-        Triple("PPO / RL Policy", "Policy evaluation and learning from simulated outcomes", "NOT CONNECTED"),
-        Triple("Risk Agent", "Checks sizing, exposure and trade constraints", "BACKEND REQUIRED"),
-        Triple("Paper Simulator", "Simulated fills and position lifecycle", "BACKEND REQUIRED")
+        Triple("Market Observer", "Market feed, candle integrity and freshness", "SPECIFIED · NOT RUNNING"),
+        Triple("Technical Analyst", "Trend, momentum, indicators and price structure", "SPECIFIED · NOT RUNNING"),
+        Triple("Regime Analyst", "Market regime and phase classification", "SPECIFIED · NOT RUNNING"),
+        Triple("Liquidity Analyst", "Liquidity conditions; candle estimates distinguished from order-book evidence", "SPECIFIED · NOT RUNNING"),
+        Triple("Volatility Analyst", "Volatility state and range expansion", "SPECIFIED · NOT RUNNING"),
+        Triple("Pattern Analyst", "Validated candle and swing-pattern research", "SPECIFIED · NOT RUNNING"),
+        Triple("Multi-Timeframe Analyst", "Cross-interval agreement and conflict detection", "SPECIFIED · NOT RUNNING"),
+        Triple("Strategy Researcher", "Backtesting, walk-forward and out-of-sample research", "SPECIFIED · NOT RUNNING"),
+        Triple("Opportunity Evaluator", "Candidate ranking, evidence and expiry monitoring", "SPECIFIED · NOT RUNNING"),
+        Triple("Performance Auditor", "Ledger-derived metrics and strategy attribution", "SPECIFIED · NOT RUNNING"),
+        Triple("Data Integrity Guardian", "Freshness, gaps, schema and source validation", "SPECIFIED · NOT RUNNING"),
+        Triple("Risk Guardian", "Independent paper-intent authorization gate", "BACKEND AUTHORITY"),
+        Triple("Portfolio Analyst", "Exposure, allocation and correlation analysis", "SPECIFIED · NOT RUNNING"),
+        Triple("Anomaly Detector", "Market and runtime anomaly screening", "SPECIFIED · NOT RUNNING"),
+        Triple("Intelligence Supervisor", "Orchestration, audit and fail-closed coordination", "SPECIFIED · NOT RUNNING")
     )
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CardPanel {
-            StatusLine("●", "ORCHESTRATOR · NOT CONNECTED", Color(0xFFFFC857))
+            StatusLine("●", "ORCHESTRATOR · NOT CONNECTED", Color(0xFFE7B65E))
             Text("Multi-agent coordination", fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text("This screen shows the intended agent topology. It does not claim agents are running or communicating until the backend is connected.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MetricCard("Agents", "6", "Defined roles", Modifier.weight(1f))
+                MetricCard("Agents", "15", "Specified roles · not running", Modifier.weight(1f))
                 MetricCard("Message bus", "OFFLINE", "No live messages", Modifier.weight(1f))
             }
         }
@@ -897,12 +1533,12 @@ private fun AgentNetworkScreen() {
             Spacer(Modifier.height(4.dp))
             Text("Illustrative architecture only. Arrows describe the planned data flow; no agents or message bus are connected in this build.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
         }
-        SectionTitle("AGENT STATUS")
+        SectionTitle("SPECIALIST ROLE STATUS")
         agents.forEach { (name, description, status) ->
             CardPanel {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    Tag(status, if (status.startsWith("READY")) Green else Color(0xFFFFC857))
+                    Tag(status, if (status.startsWith("READY")) Green else Color(0xFFE7B65E))
                 }
                 Text(description, color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
             }
@@ -920,12 +1556,12 @@ private fun AgentNetworkScreen() {
 
 @Composable
 private fun AgentFlowNode(title: String, subtitle: String, modifier: Modifier = Modifier, warning: Boolean = false) {
-    Column(modifier.background(if (warning) Color(0xFFFFC857).copy(alpha = if (lightTheme) .12f else .08f) else PanelAlt, RoundedCornerShape(12.dp))
-        .border(1.dp, if (warning) Color(0xFFFFC857).copy(alpha = .8f) else Grid, RoundedCornerShape(12.dp))
+    Column(modifier.background(if (warning) Color(0xFFE7B65E).copy(alpha = if (lightTheme) .12f else .08f) else PanelAlt, RoundedCornerShape(12.dp))
+        .border(1.dp, if (warning) Color(0xFFE7B65E).copy(alpha = .8f) else Grid, RoundedCornerShape(12.dp))
         .padding(horizontal = 12.dp, vertical = 11.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(title, color = if (warning) Color(0xFFFFC857) else White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text(title, color = if (warning) Color(0xFFE7B65E) else White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         Text(subtitle, color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
-        Text(if (warning) "NOT CONNECTED · REQUIRED GATE" else "PLANNED · OFFLINE", color = if (warning) Color(0xFFFFC857) else Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .5.sp)
+        Text(if (warning) "NOT CONNECTED · REQUIRED GATE" else "PLANNED · OFFLINE", color = if (warning) Color(0xFFE7B65E) else Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .5.sp)
     }
 }
 
@@ -938,26 +1574,123 @@ private fun NetworkArrow(label: String) {
 }
 
 @Composable
+private fun PaperLedgerRefreshEffect() {
+    val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    val token = BackendSession.activeToken.value
+    val isForeground = BackendSession.appInForeground.value
+    LaunchedEffect(token, isForeground) {
+        if (token.isBlank()) {
+            BackendSession.paperLedgerStatus.value = "NOT CONNECTED"
+            BackendSession.paperLedgerError.value = "Connect the authenticated backend to load paper-ledger data."
+            return@LaunchedEffect
+        }
+        if (!shouldAttemptPaperLedgerRefresh(token, isForeground)) {
+            BackendSession.paperLedgerStatus.value = "PAUSED"
+            return@LaunchedEffect
+        }
+        while (true) {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    fetchPaperLedgerSnapshot(BuildConfig.PAPER_API_BASE_URL, token)
+                }
+            }
+            result.onSuccess { snapshot ->
+                BackendSession.paperLedger.value = snapshot
+                // Emit only from a complete, validated authenticated risk snapshot.
+                SoloNotificationCenter.observeVerifiedRiskSnapshot(appContext, snapshot.risk)
+                BackendSession.paperLedgerStatus.value = "CURRENT"
+                BackendSession.paperLedgerError.value = ""
+            }.onFailure { error ->
+                BackendSession.paperLedgerStatus.value = "REFRESH FAILED"
+                BackendSession.paperLedgerError.value =
+                    error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(160)
+                        ?: "Ledger data could not be refreshed."
+            }
+            delay(30_000)
+        }
+    }
+}
+
+@Composable
 private fun PositionsScreen() {
+    val snapshot = BackendSession.paperLedger.value
+    val open = snapshot?.positions.orEmpty().filter { it.status == "OPEN" }
+    val pendingOrders = snapshot?.orders.orEmpty().filter {
+        it.status.uppercase(Locale.ROOT) in setOf("PENDING", "OPEN", "NEW", "PARTIALLY_FILLED")
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CardPanel {
-            StatusLine("●", "PAPER LEDGER NOT CONNECTED", Color(0xFFFFC857))
+            StatusLine("●", "PAPER LEDGER · ${BackendSession.paperLedgerStatus.value}",
+                if (BackendSession.paperLedgerStatus.value == "CURRENT") Green else Color(0xFFE7B65E))
             Text("Positions & orders", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text("No positions or orders are displayed because verified ledger data is not available. Sample trades are intentionally not fabricated.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+            Text(
+                if (snapshot != null) "Read-only ledger snapshot fetched at ${snapshot.fetchedAt}. Live exchange orders remain disabled."
+                else BackendSession.paperLedgerError.value.ifBlank { "No verified paper-ledger response is available." },
+                color = Muted, fontSize = 12.sp, lineHeight = 18.sp
+            )
+            if (BackendSession.paperLedgerStatus.value == "REFRESH FAILED" && snapshot != null) {
+                Text("Showing the last verified snapshot; it may be stale. Do not rely on it for a new decision.",
+                    color = Color(0xFFE7B65E), fontSize = 11.sp)
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricCard("Open positions", "—", "Awaiting ledger", Modifier.weight(1f))
-            MetricCard("Pending orders", "—", "Paper service offline", Modifier.weight(1f))
+            MetricCard("Open positions", snapshot?.let { open.size.toString() } ?: "—",
+                "Verified ledger", Modifier.weight(1f))
+            MetricCard("Pending orders", snapshot?.let { pendingOrders.size.toString() } ?: "—",
+                "Paper orders only", Modifier.weight(1f))
         }
-        SectionTitle("POSITION MONITOR")
-        CardPanel {
-            Text("No paper positions to display", fontWeight = FontWeight.SemiBold)
-            Text("When the backend is connected, this area will show symbol, side, entry, current mark, unrealized P&L, stop-loss, take-profit and protection state.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+        SectionTitle("OPEN POSITIONS")
+        if (open.isEmpty()) {
+            CardPanel { Text(if (snapshot == null) "Position data unavailable" else "No open paper positions",
+                fontWeight = FontWeight.SemiBold, color = Muted) }
+        } else open.forEach { position ->
+            CardPanel {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(displaySymbol(position.symbol), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Tag(position.side, if (position.side == "LONG") Green else Color(0xFFE7B65E))
+                }
+                IndicatorRow("Quantity", position.quantity.toString())
+                IndicatorRow("Entry / mark", "${formatMarketPrice(position.entryPrice)} / ${formatMarketPrice(position.markPrice)}")
+                IndicatorRow("Unrealized P&L", String.format(Locale.US, "%.4f", position.unrealizedPnl))
+                IndicatorRow("Stop-loss / take-profit", "${formatMarketPrice(position.stopLoss)} / ${formatMarketPrice(position.takeProfit)}")
+                IndicatorRow("Mark timestamp", position.markObservedAt.ifBlank { "Unavailable" })
+            }
+        }
+        SectionTitle("PAPER ORDERS")
+        if (snapshot == null || snapshot.orders.isEmpty()) {
+            CardPanel { Text(if (snapshot == null) "Order data unavailable" else "No paper orders recorded",
+                color = Muted, fontSize = 12.sp) }
+        } else snapshot.orders.takeLast(30).reversed().forEach { order ->
+            CardPanel {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(displaySymbol(order.symbol), fontWeight = FontWeight.SemiBold)
+                    Tag(order.status, Color(0xFFE7B65E))
+                }
+                IndicatorRow("Side / quantity", "${order.side} · ${order.quantity}")
+                IndicatorRow("Entry", formatMarketPrice(order.entryPrice))
+                IndicatorRow("Stop / target", "${formatMarketPrice(order.stopLoss)} / ${formatMarketPrice(order.takeProfit)}")
+                IndicatorRow("Recorded", order.recordedAt)
+            }
+        }
+        SectionTitle("PAPER FILLS")
+        if (snapshot == null || snapshot.fills.isEmpty()) {
+            CardPanel { Text(if (snapshot == null) "Fill history unavailable" else "No paper fills recorded", color = Muted, fontSize = 12.sp) }
+        } else snapshot.fills.take(30).forEach { fill ->
+            CardPanel {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(displaySymbol(fill.symbol), fontWeight = FontWeight.SemiBold)
+                    Tag(fill.side, Color(0xFFE7B65E))
+                }
+                IndicatorRow("Quantity", fill.quantity.toString())
+                IndicatorRow("Market / fill price", formatMarketPrice(fill.marketPrice) + " / " + formatMarketPrice(fill.fillPrice))
+                IndicatorRow("Fee / slippage", fill.fee.toString() + " / " + fill.slippageBps + " bps")
+                IndicatorRow("Filled at", fill.filledAt)
+            }
         }
         SectionTitle("ORDER SAFETY")
         CardPanel {
             SafetyRow("Live exchange orders", "DISABLED", Green)
-            SafetyRow("Paper fill reconciliation", "NOT CONNECTED", Color(0xFFFFC857))
+            SafetyRow("Data source", snapshot?.risk?.stateStorage ?: "NOT VERIFIED", Color(0xFFE7B65E))
             SafetyRow("Unknown position state", "BLOCK NEW ORDERS", Red)
         }
     }
@@ -965,29 +1698,64 @@ private fun PositionsScreen() {
 
 @Composable
 private fun RiskCenterScreen() {
+
+    val snapshot = BackendSession.paperLedger.value
+    val risk = snapshot?.risk
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CardPanel {
-            StatusLine("●", "FAIL-CLOSED MODE", Green)
+            StatusLine("●", risk?.let { emergencyStopDisplayLabel(it.emergencyStopActive) } ?: "EMERGENCY STOP UNKNOWN",
+                when (risk?.emergencyStopActive) { true -> Red; false -> Green; null -> Color(0xFFE7B65E) })
             Text("Risk control center", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text("The UI cannot approve trades. If risk validation, market data or position reconciliation is unavailable, the intended behavior is to reject new paper intents.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+            Text(
+                if (snapshot != null) "Risk state from the authenticated paper ledger. Last successful read: ${snapshot.fetchedAt}."
+                else BackendSession.paperLedgerError.value.ifBlank { "Risk state is unavailable until the authenticated ledger responds." },
+                color = Muted, fontSize = 12.sp, lineHeight = 18.sp
+            )
+            if (BackendSession.paperLedgerStatus.value == "REFRESH FAILED" && snapshot != null) {
+                Text("Last known risk state only — current state is unverified. Treat it as unavailable.",
+                    color = Color(0xFFE7B65E), fontSize = 11.sp)
+            }
+        }
+        SectionTitle("VERIFIED RISK SNAPSHOT")
+        CardPanel {
+            IndicatorRow("Open positions", risk?.openPositionCount?.toString() ?: "Unavailable")
+            IndicatorRow("Account equity", risk?.accountEquity?.let { String.format(Locale.US, "%.4f", it) } ?: "No snapshot")
+            IndicatorRow("Drawdown amount", risk?.drawdownAmount?.let { String.format(Locale.US, "%.4f", it) } ?: "No snapshot")
+            IndicatorRow("Drawdown %", risk?.drawdownPct?.let { String.format(Locale.US, "%.3f%%", it) } ?: "No snapshot")
+            IndicatorRow("Unrealized P&L", risk?.unrealizedPnl?.let { String.format(Locale.US, "%.4f", it) } ?: "No snapshot")
+            IndicatorRow("Position marks", when (risk?.marksFresh) { true -> "FRESH"; false -> "STALE"; null -> "UNKNOWN" })
+            IndicatorRow("Snapshot time", risk?.snapshotAt ?: "Unavailable")
+            IndicatorRow("Storage", risk?.stateStorage ?: "Unavailable")
         }
         SectionTitle("INDEPENDENT SAFEGUARDS")
         CardPanel {
-            SafetyRow("Risk gate", "BACKEND REQUIRED", Color(0xFFFFC857))
-            SafetyRow("Max risk / exposure limits", "NOT LOADED", Color(0xFFFFC857))
-            SafetyRow("Stale-data rejection", "REQUIRED", Green)
+            SafetyRow("Risk gate", "BACKEND ONLY · NOT UI AUTHORIZED", Color(0xFFE7B65E))
+            SafetyRow("Risk limits", "NOT EXPOSED BY CURRENT API", Color(0xFFE7B65E))
+            SafetyRow("Stale-data rejection", "REQUIRED · FAIL CLOSED", Green)
             SafetyRow("Unknown account state", "BLOCK NEW ORDERS", Red)
             SafetyRow("Agent direct exchange access", "PROHIBITED", Green)
             SafetyRow("Live execution", "DISABLED", Green)
         }
+        SectionTitle("AUDIT / RISK EVENTS")
+        val events = snapshot?.audit.orEmpty()
+        if (events.isEmpty()) {
+            CardPanel { Text(if (snapshot == null) "Audit history unavailable" else "No audit events returned",
+                color = Muted, fontSize = 12.sp) }
+        } else events.take(30).forEach { event ->
+            CardPanel {
+                Text(event.eventType, fontWeight = FontWeight.SemiBold, color = Gold, fontSize = 12.sp)
+                Text("${event.occurredAt} · ${event.proposalId.ifBlank { "No proposal ID" }}",
+                    color = Muted, fontSize = 10.sp)
+                if (event.summary.isNotBlank()) Text(event.summary, color = Muted, fontSize = 11.sp)
+            }
+        }
         SectionTitle("EMERGENCY STOP")
         CardPanel {
-            Text("Emergency stop requires an authenticated backend connection", fontWeight = FontWeight.SemiBold)
-            Text("Use the authenticated backend connection card on the dashboard to activate the persistent paper stop. This is not a live-exchange kill switch; live orders remain disabled.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
-            Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(disabledContainerColor = PanelAlt, disabledContentColor = Muted)) { Text("STOP CONTROL UNAVAILABLE") }
+            Text("The backend's current emergency-stop state is displayed above. Activation remains available from the authenticated dashboard connection card.",
+                color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+            Text("This is a paper-ledger control, not a live-exchange kill switch. Live exchange orders remain disabled.",
+                color = Muted, fontSize = 11.sp)
         }
-        SectionTitle("RISK EVENT LOG")
-        CardPanel { Text("No risk events received", color = Muted, fontSize = 12.sp) }
     }
 }
 
@@ -1084,6 +1852,8 @@ private fun ReadOnlyBackendConnectionCard() {
                             )
                         }
                     }
+                    BackendSession.activeToken.value =
+                        if (result.first == "UNAUTHORIZED" || result.first == "UNSAFE RESPONSE") "" else normalizedToken
                     status = result.first
                     details = result.second
                     if (result.first.startsWith("CONNECTED")) {
@@ -1108,7 +1878,7 @@ private fun ReadOnlyBackendConnectionCard() {
             }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Background)) {
             Text(if (loading) "CHECKING…" else "CONNECT & LOAD STATUS")
         }
-        Text(status, color = if (status.startsWith("CONNECTED")) Green else Color(0xFFFFC857), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        Text(status, color = if (status.startsWith("CONNECTED")) Green else Color(0xFFE7B65E), fontWeight = FontWeight.Bold, fontSize = 12.sp)
         Text(details, color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
         if (status.startsWith("CONNECTED")) {
             Divider(color = Grid)
@@ -1163,6 +1933,7 @@ private fun ReadOnlyBackendConnectionCard() {
             onClick = {
                 tokenStore.clear()
                 token = ""
+                BackendSession.activeToken.value = ""
                 status = "NOT CONNECTED"
                 details = "Saved backend token cleared from this device."
                 openPositions = "—"
@@ -1180,25 +1951,232 @@ private fun ReadOnlyBackendConnectionCard() {
     }
 }
 
+
+@Composable
+private fun OpportunitiesScreen() {
+    val items = BackendSession.marketIntelligence.value
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        CardPanel {
+            Text("CONTINUOUS OPPORTUNITY ENGINE", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("Research candidates", color = White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            IndicatorRow("Scan status", BackendSession.marketIntelligenceStatus.value)
+            IndicatorRow("Last assessment", BackendSession.marketIntelligenceAssessedAt.value.ifBlank { "Unavailable" })
+            IndicatorRow("Scan job", BackendSession.marketIntelligenceScanStatus.value)
+        }
+        if (items.isEmpty()) {
+            CardPanel {
+                Text("No validated opportunity assessments", color = White, fontWeight = FontWeight.SemiBold)
+                Text(BackendSession.marketIntelligenceMessage.value, color = Muted, fontSize = 12.sp)
+            }
+        } else items.sortedBy { it.opportunityRank ?: Int.MAX_VALUE }.forEach { item ->
+            CardPanel {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(displaySymbol(item.symbol), color = White, fontWeight = FontWeight.Bold)
+                    Tag(item.decision, if (item.decision == "SELECTED") Green else Gold)
+                }
+                IndicatorRow("Rank", item.opportunityRank?.let { "#$it" } ?: "Not ranked")
+                IndicatorRow("Regime / phase", item.marketRegime + " / " + item.marketPhase)
+                IndicatorRow("Timeframe bias", item.longTermBias + " / " + item.mediumTermBias + " / " + item.shortTermBias)
+                IndicatorRow("Strategy", item.selectedStrategy)
+                IndicatorRow("Fit score", item.fitScore)
+                IndicatorRow("Performance evidence", item.performanceStatus)
+                IndicatorRow("Risk review", if (item.eligibleForRiskReview) "Eligible for independent review · not approved" else "Not eligible")
+                if (item.noTradeReason.isNotBlank()) Text(item.noTradeReason, color = Muted, fontSize = 11.sp)
+                if (item.dataQualityIssues.isNotEmpty()) Text("Data quality: " + item.dataQualityIssues.joinToString("; "), color = Color(0xFFE7B65E), fontSize = 10.sp)
+            }
+        }
+        CardPanel { Text("Research only. The opportunity engine cannot authorize orders. Every paper intent must pass the independent Risk Guardian.", color = Muted, fontSize = 11.sp) }
+    }
+}
+
+@Composable
+private fun PerformanceScreen() {
+    val snapshot = BackendSession.paperLedger.value
+    val risk = snapshot?.risk
+    val fills = snapshot?.fills.orEmpty()
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        CardPanel {
+            Text("PERFORMANCE & ANALYTICS", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("Verified paper results", color = White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            IndicatorRow("Ledger", BackendSession.paperLedgerStatus.value)
+            Text(if (snapshot != null) "Last successful snapshot: " + snapshot.fetchedAt else BackendSession.paperLedgerError.value.ifBlank { "No verified ledger history." }, color = Muted, fontSize = 11.sp)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            MetricCard("Paper equity", risk?.accountEquity?.let { String.format(Locale.US, "%.4f", it) } ?: "—", "Verified snapshot", Modifier.weight(1f))
+            MetricCard("Realized P&L", snapshot?.let { String.format(Locale.US, "%.4f", it.performanceRealizedPnl) } ?: "—", "Ledger reported", Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            MetricCard("Open positions", snapshot?.let { it.positions.count { p -> p.status == "OPEN" }.toString() } ?: "—", "Paper ledger", Modifier.weight(1f))
+            MetricCard("Recorded fills", snapshot?.let { fills.size.toString() } ?: "—", "Persisted fills", Modifier.weight(1f))
+        }
+        CardPanel {
+            IndicatorRow("Unrealized P&L", risk?.unrealizedPnl?.let { String.format(Locale.US, "%.4f", it) } ?: "Unavailable")
+            IndicatorRow("Drawdown", risk?.drawdownPct?.let { String.format(Locale.US, "%.3f%%", it) } ?: "Unavailable")
+            IndicatorRow("Win rate", "Unavailable · closed-trade series not exposed")
+            IndicatorRow("Expectancy", "Unavailable · closed-trade series not exposed")
+            IndicatorRow("Profit factor", "Unavailable · closed-trade series not exposed")
+            Text("No synthetic chart points or performance claims are generated. Metrics requiring complete historical equity and closed-trade records remain unavailable until the backend exposes them.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+        }
+    }
+}
+
+@Composable
+private fun SecurityScreen() {
+    val risk = BackendSession.paperLedger.value?.risk
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        CardPanel {
+            Text("SECURITY & SESSION", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("Protected backend session", color = White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            IndicatorRow("Backend session", BackendSession.status.value)
+            IndicatorRow("Paper ledger", BackendSession.paperLedgerStatus.value)
+            IndicatorRow("Testnet account", BackendSession.testnetAccountStatus.value)
+        }
+        ReadOnlyBackendConnectionCard()
+        CardPanel {
+            SafetyRow("App mode", "PAPER ONLY", Green)
+            SafetyRow("Order authorization", "FALSE · DISABLED", Green)
+            SafetyRow("Live exchange orders", "PROHIBITED", Green)
+            SafetyRow("Risk authorization", "INDEPENDENT BACKEND ONLY", Green)
+            SafetyRow("Emergency Stop", risk?.let { emergencyStopDisplayLabel(it.emergencyStopActive) } ?: "UNKNOWN", if (risk?.emergencyStopActive == true) Red else Color(0xFFE7B65E))
+            Text("Emergency Stop blocks new paper intents. It does not close existing positions and is not a live-exchange kill switch.", color = Muted, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
+private fun SettingsScreen() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        CardPanel {
+            Text("SOLO PREFERENCES", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("Settings", color = White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Appearance", color = White, fontWeight = FontWeight.SemiBold)
+                    Text(if (lightTheme) "Light theme" else "Dark theme", color = Muted, fontSize = 11.sp)
+                }
+                Switch(checked = lightTheme, onCheckedChange = { enabled ->
+                    lightTheme = enabled
+                    context.getSharedPreferences("solo_preferences", android.content.Context.MODE_PRIVATE)
+                        .edit().putBoolean("light_theme", enabled).apply()
+                })
+            }
+            Text("Presentation preferences cannot change Risk Guardian authority, order permissions, or backend safety limits.", color = Muted, fontSize = 11.sp)
+        }
+        CardPanel {
+            Text("SOLO · THE HIDDEN SOVEREIGN", color = Gold, fontWeight = FontWeight.Bold)
+            Text("Trade with Confidence. · Intelligence in Every Decision.", color = Muted, fontSize = 12.sp)
+        }
+        CardPanel {
+            Text("SYSTEM OBSERVATORY", color = Gold, fontWeight = FontWeight.Bold)
+            IndicatorRow("Backend", BackendSession.status.value)
+            IndicatorRow("Market feed", BackendSession.feedStatus.value)
+            IndicatorRow("WebSocket", BackendSession.websocketStatus.value)
+            IndicatorRow("Opportunity scan", BackendSession.marketIntelligenceStatus.value)
+            IndicatorRow("Scan job", BackendSession.marketIntelligenceScanStatus.value)
+            IndicatorRow("Paper ledger", BackendSession.paperLedgerStatus.value)
+            IndicatorRow("API transport", if (BuildConfig.PAPER_API_BASE_URL.startsWith("https://")) "HTTPS" else "NOT VERIFIED")
+        }
+        CardPanel {
+            SafetyRow("Paper-only mode", "LOCKED", Green)
+            SafetyRow("Order authorization", "DISABLED", Green)
+            SafetyRow("Risk limits", "BACKEND CONTROLLED", Green)
+            SafetyRow("Credentials", "BACKEND / SECURE SESSION ONLY", Green)
+        }
+    }
+}
+
+internal fun soloScreenDestination(label: String): String =
+    if (label == "Markets") "Charts & Analysis" else label
+
+
 @Composable
 private fun DashboardScreen(openAnalysis: () -> Unit) {
+
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         ReadOnlyBackendConnectionCard()
         CardPanel {
             val connected = BackendSession.status.value.startsWith("CONNECTED")
-            StatusLine("●", if (connected) "BACKEND CONNECTED · PAPER ONLY" else "BACKEND STATUS · ${BackendSession.status.value}", if (connected) Green else Color(0xFFFFC857))
+            val marketFallback = BackendSession.status.value.contains("MARKET FALLBACK")
+            val ledgerOfflineFallback = BackendSession.status.value == "DEGRADED · MARKET FALLBACK"
+            StatusLine(
+                "●",
+                when {
+                    connected && marketFallback -> "BACKEND CONNECTED · MARKET DATA FALLBACK"
+                    connected -> "BACKEND CONNECTED · PAPER ONLY"
+                    ledgerOfflineFallback -> "MARKET FALLBACK · PAPER LEDGER OFFLINE"
+                    else -> "BACKEND STATUS · ${BackendSession.status.value}"
+                },
+                if (connected) Green else Color(0xFFE7B65E)
+            )
             Spacer(Modifier.height(8.dp))
             Text("Paper mode only", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text(if (connected) "Authenticated backend session retained across navigation. Market feed: ${BackendSession.feedStatus.value}. ${BackendSession.marketMessage.value}" else "Live balances, positions and market data remain unavailable until the authenticated API is connected.", color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
+            Text(
+                when {
+                    connected && marketFallback -> "Primary API and paper ledger remain connected. The market feed is temporarily using independent, polled Futures Testnet snapshots; this is not a live stream and is never used for paper decisions. ${BackendSession.marketMessage.value}"
+                    connected -> "Authenticated backend session retained across navigation. Market feed: ${BackendSession.feedStatus.value}. ${BackendSession.marketMessage.value}"
+                    ledgerOfflineFallback -> "Only independent, polled Futures Testnet market snapshots may be displayed. This is not a live stream. Paper ledger, positions, risk, opportunities, candle history and paper processing are unavailable; no fallback data is used for paper decisions."
+                    else -> "Live balances, positions and market data remain unavailable until the authenticated API is connected."
+                },
+                color = Muted, fontSize = 13.sp, lineHeight = 19.sp
+            )
         }
         SectionTitle("ACCOUNT OVERVIEW")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricCard("Paper equity", "—", "Waiting for backend", Modifier.weight(1f))
-            MetricCard("Daily P&L", "—", "No account data", Modifier.weight(1f))
+            MetricCard("Paper equity", BackendSession.paperLedger.value?.risk?.accountEquity?.let { String.format(Locale.US, "%.4f", it) } ?: "—", "Verified ledger snapshot only", Modifier.weight(1f))
+            MetricCard("Closed-position P&L", BackendSession.paperLedger.value?.let { String.format(Locale.US, "%.4f", it.performanceRealizedPnl) } ?: "—", "Historical closed positions only", Modifier.weight(1f))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricCard("Open positions", BackendSession.openPositions.value, "Positions API", Modifier.weight(1f))
+            MetricCard("Open positions", BackendSession.paperLedger.value?.risk?.openPositionCount?.toString() ?: "—", "Verified paper ledger", Modifier.weight(1f))
             MetricCard("Market feed", BackendSession.feedStatus.value, BackendSession.marketMessage.value, Modifier.weight(1f))
+        }
+        SectionTitle("SOLO MARKET WATCHER")
+        CardPanel {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("AUTONOMOUS MARKET SCAN", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Tag(BackendSession.marketIntelligenceStatus.value,
+                    if (BackendSession.marketIntelligenceStatus.value == "HEALTHY") Green else Color(0xFFE7B65E))
+            }
+            Text(
+                if (BackendSession.marketIntelligenceAssessedAt.value.isBlank()) {
+                    BackendSession.marketIntelligenceMessage.value
+                } else {
+                    "Last assessment: ${BackendSession.marketIntelligenceAssessedAt.value}"
+                },
+                color = Muted, fontSize = 11.sp, lineHeight = 16.sp
+            )
+            IndicatorRow(
+                "Scheduled scan",
+                "${BackendSession.marketIntelligenceScanStatus.value} · attempts ${BackendSession.marketIntelligenceScanAttempts.value}"
+            )
+            val watcherItems = BackendSession.marketIntelligence.value
+            if (watcherItems.isEmpty()) {
+                Text("Waiting for the first validated scheduled scan. No opportunity is assumed.", color = Muted, fontSize = 12.sp)
+            } else {
+                watcherItems.take(3).forEach { item ->
+                    Divider(color = Grid)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(displaySymbol(item.symbol), color = White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Tag(item.decision, if (item.decision == "SELECTED") Green else Gold)
+                    }
+                    IndicatorRow("Market regime", item.marketRegime)
+                    IndicatorRow("Market phase", item.marketPhase)
+                    IndicatorRow("Opportunity rank", item.opportunityRank?.let { "#$it" } ?: "Not ranked")
+                    IndicatorRow("Adaptive strategy", item.selectedStrategy)
+                    Text(
+                        when (item.decision) {
+                            "SELECTED" -> "Candidate only · independent Risk Manager review required"
+                            "ANALYSIS_ONLY" -> "Long-term context only · not eligible for trading"
+                            else -> "No suitable opportunity · Solo waits"
+                        },
+                        color = Muted, fontSize = 10.sp, lineHeight = 14.sp
+                    )
+                }
+            }
+            Text(
+                "Source: ${BackendSession.marketIntelligenceEnvironment.value} · ${BackendSession.marketIntelligenceMarketType.value} · ${BackendSession.marketIntelligenceVenue.value}. Testnet research data only; no order is authorized.",
+                color = Muted, fontSize = 10.sp, lineHeight = 14.sp
+            )
         }
         CardPanel {
             Text("CHARTS & ANALYSIS", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
@@ -1209,7 +2187,7 @@ private fun DashboardScreen(openAnalysis: () -> Unit) {
         CardPanel {
             SafetyRow("Exchange order execution", "DISABLED", Green)
             SafetyRow("Risk gate", "BLOCKED · no order authorization", Red)
-            SafetyRow("Emergency stop", BackendSession.emergencyStop.value, if (BackendSession.emergencyStop.value == "ACTIVE") Red else Color(0xFFFFC857))
+            SafetyRow("Emergency stop", BackendSession.emergencyStop.value, if (BackendSession.emergencyStop.value == "ACTIVE") Red else Color(0xFFE7B65E))
         }
         Text("Build milestone 2 · Charts and analysis UI. No exchange credentials are stored in this app. AI analysis is advisory; independent risk validation has final authority.", color = Muted, fontSize = 11.sp, lineHeight = 17.sp)
     }
@@ -1222,42 +2200,29 @@ private fun AnalysisScreen() {
     var selectedTab by remember { mutableStateOf("Market") }
     val timeframes = supportedTimeframes
     val sessionToken = BackendSession.token.value
-    LaunchedEffect(sessionToken) {
-        if (sessionToken.length < 32) {
-            BackendSession.marketItems.value = emptyList()
-            BackendSession.marketMessage.value = "Connect with the backend bearer token on Dashboard to load validated market data."
-            BackendSession.feedStatus.value = "NOT AUTHENTICATED"
-            BackendSession.marketLoading.value = false
-        } else {
-            while (true) {
-                BackendSession.marketLoading.value = true
-                val response = withContext(Dispatchers.IO) { fetchMarketSnapshot(sessionToken) }
-                BackendSession.status.value = response.backendStatus
-                BackendSession.feedStatus.value = response.feedStatus
-                BackendSession.marketMessage.value = response.reason
-                BackendSession.details.value = if (response.backendConnected) {
-                    "${response.backendStatus} · Market feed: ${response.feedStatus} · ${response.reason}"
-                } else {
-                    response.reason
-                }
-                // Retain the last validated snapshot while the feed reconnects.
-                // Its feed status above still reports outages; the snapshot grants no order authority.
-                if (response.backendConnected && response.safeResponse &&
-                    response.feedStatus == "HEALTHY" && response.items.isNotEmpty()) {
-                    BackendSession.marketItems.value = response.items
-                }
-                BackendSession.marketLoading.value = false
-                delay(30_000)
-            }
-        }
-    }
+    val isForeground = BackendSession.appInForeground.value
     val loadedMarkets = BackendSession.marketItems.value
     val selectedMarket = loadedMarkets.firstOrNull { normalizeSymbol(it.symbol) == normalizeSymbol(symbol) }
+    var freshnessClock by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(selectedMarket?.markObservedAt, BackendSession.websocketStatus.value) {
+        while (selectedMarket != null) {
+            freshnessClock = Instant.now()
+            delay(1_000)
+        }
+    }
+    val marketDisplayFreshness = classifyMarketDisplayFreshness(
+        selectedMarket?.markObservedAt,
+        BackendSession.websocketStatus.value,
+        freshnessClock,
+    )
+    val selectedIntelligence = BackendSession.marketIntelligence.value.firstOrNull {
+        normalizeSymbol(it.symbol) == normalizeSymbol(selectedMarket?.symbol ?: symbol)
+    }
     val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol ?: symbol)
     val candleHistoryByTimeframe = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
     var candleHistoryLoading by remember { mutableStateOf(false) }
-    LaunchedEffect(sessionToken, selectedMarket?.symbol, candleSymbolKey) {
-        if (sessionToken.length >= 32 && selectedMarket != null && candleSymbolKey.isNotBlank()) {
+    LaunchedEffect(sessionToken, selectedMarket?.symbol, candleSymbolKey, isForeground) {
+        if (isForeground && sessionToken.length >= 32 && selectedMarket != null && candleSymbolKey.isNotBlank()) {
             while (true) {
                 candleHistoryLoading = true
                 val history = withContext(Dispatchers.IO) {
@@ -1299,24 +2264,52 @@ private fun AnalysisScreen() {
                     Text("MARKET CHART", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp)
                     Text(symbol, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     if (selectedMarket != null) {
-                        Text("Mark price: ${formatMarketPrice(selectedMarket.markPrice)}", color = Green, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        val isFutures = selectedMarket.marketContext.marketType == "FUTURES"
+                        Text(
+                            "${if (isFutures) "Futures mark price" else "Spot last price"}: ${formatMarketPrice(selectedMarket.markPrice)}",
+                            color = if (marketDisplayFreshness == MarketDisplayFreshness.LIVE) Green else Color(0xFFE7B65E),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        val freshnessLabel = when (marketDisplayFreshness) {
+                            MarketDisplayFreshness.LIVE -> "LIVE · STREAM CONNECTED"
+                            MarketDisplayFreshness.RECENT_DISCONNECTED -> "RECENT SNAPSHOT · STREAM RECONNECTING"
+                            MarketDisplayFreshness.STALE -> "STALE PRICE · DO NOT RELY ON THIS VALUE"
+                            MarketDisplayFreshness.UNAVAILABLE -> "NO VERIFIED PRICE"
+                        }
+                        Text(freshnessLabel, color = if (marketDisplayFreshness == MarketDisplayFreshness.LIVE) Green else Color(0xFFE7B65E),
+                            fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .4.sp)
                     }
                 }
                 Tag(
                     if (selectedMarket != null && BackendSession.feedStatus.value == "HEALTHY") "VALIDATED FEED"
                     else if (selectedMarket != null) "LAST GOOD SNAPSHOT"
                     else if (BackendSession.marketLoading.value) "LOADING" else "NO LIVE DATA",
-                    if (selectedMarket != null && BackendSession.feedStatus.value == "HEALTHY") Green else Color(0xFFFFC857)
+                    if (selectedMarket != null && BackendSession.feedStatus.value == "HEALTHY") Green else Color(0xFFE7B65E)
                 )
             }
             val visibleSymbols = if (loadedMarkets.isNotEmpty()) loadedMarkets.map { displaySymbol(it.symbol) }.distinct() else listOf("BTC/USDT", "ETH/USDT", "EUR/USD", "GBP/USD")
+            if (selectedMarket?.marketContext?.marketType == "FUTURES") {
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text("FUTURES CONTEXT", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    IndicatorRow("Index price", selectedMarket.marketContext.indexPrice?.let(::formatMarketPrice) ?: "Unavailable")
+                    IndicatorRow("Latest funding rate", formatFundingRate(selectedMarket.marketContext.fundingRate))
+                    IndicatorRow("Next funding", formatFundingTimestamp(selectedMarket.marketContext.nextFundingAt))
+                    Text(
+                        "Latest exchange-published rate: positive means longs pay shorts; negative means shorts pay longs. It is not account-specific payment history or a forecast of the next settlement.",
+                        color = Muted,
+                        fontSize = 10.sp,
+                        lineHeight = 14.sp,
+                    )
+                }
+            }
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 visibleSymbols.forEach { s -> ChoiceChip(s, normalizeSymbol(symbol) == normalizeSymbol(s)) { symbol = s } }
             }
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 timeframes.forEach { t -> ChoiceChip(t, timeframe == t) { timeframe = t } }
             }
-            Text("Feed: ${BackendSession.feedStatus.value} · ${BackendSession.marketMessage.value}", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+            Text("REST feed: ${BackendSession.feedStatus.value} · WebSocket: ${BackendSession.websocketStatus.value} · ${BackendSession.marketMessage.value}", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
             Text("Selected interval: $timeframe · loaded directly from validated, closed backend candles. No missing candles are fabricated.", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             CandlestickChart(Modifier.fillMaxWidth().height(190.dp), displayedCandles)
             if (selectedMarket == null) {
@@ -1377,6 +2370,59 @@ private fun AnalysisScreen() {
                     else -> "Bearish alignment in ${bears} timeframe(s); other intervals may be neutral or unavailable"
                 }
                 Text(summary, color = Gold, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+            SectionTitle("SOLO MARKET WATCHER & ADAPTIVE STRATEGY")
+            CardPanel {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("BACKEND ASSESSMENT", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Tag(BackendSession.marketIntelligenceStatus.value,
+                        if (BackendSession.marketIntelligenceStatus.value == "HEALTHY") Green else Color(0xFFE7B65E))
+                }
+                if (selectedIntelligence == null) {
+                    Text(
+                        BackendSession.marketIntelligenceMessage.value,
+                        color = Muted, fontSize = 12.sp, lineHeight = 17.sp
+                    )
+                    Text("No backend strategy assessment is available for $symbol. Local chart indicators are not a substitute for the scheduled Market Watcher.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(displaySymbol(selectedIntelligence.symbol), color = White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Tag(selectedIntelligence.decision, if (selectedIntelligence.decision == "SELECTED") Green else Gold)
+                    }
+                    IndicatorRow("Market regime", selectedIntelligence.marketRegime)
+                    IndicatorRow("Market phase", selectedIntelligence.marketPhase)
+                    IndicatorRow("Overall direction", selectedIntelligence.direction)
+                    IndicatorRow("Long / medium / short", "${selectedIntelligence.longTermBias} / ${selectedIntelligence.mediumTermBias} / ${selectedIntelligence.shortTermBias}")
+                    IndicatorRow("Opportunity rank", selectedIntelligence.opportunityRank?.let { "#$it" } ?: "Not ranked")
+                    IndicatorRow("Selected strategy", selectedIntelligence.selectedStrategy)
+                    IndicatorRow("Candidate direction", selectedIntelligence.proposedDirection)
+                    IndicatorRow("Strategy fit score", selectedIntelligence.fitScore)
+                    IndicatorRow("Performance evidence", selectedIntelligence.performanceStatus)
+                    IndicatorRow(
+                        "Next gate",
+                        if (selectedIntelligence.eligibleForRiskReview) "Independent Risk Manager review · NOT approved"
+                        else "No executable candidate passed all checks"
+                    )
+                    when (selectedIntelligence.decision) {
+                        "SELECTED" -> Text("Solo selected a strategy candidate. It must still pass the independent Risk Manager; this is not an order approval.", color = Gold, fontSize = 11.sp, lineHeight = 16.sp)
+                        "ANALYSIS_ONLY" -> Text("Long-term analysis only. This result cannot become a trade proposal.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                        else -> Text("No valid opportunity. Solo waits instead of forcing a trade. ${selectedIntelligence.noTradeReason}", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                    }
+                    if (selectedIntelligence.conflicts.isNotEmpty()) {
+                        Text("Timeframe conflicts: ${selectedIntelligence.conflicts.joinToString("; ")}", color = Color(0xFFE7B65E), fontSize = 10.sp, lineHeight = 14.sp)
+                    }
+                    if (selectedIntelligence.inProgressTimeframes.isNotEmpty()) {
+                        Text("In-progress candles excluded: ${selectedIntelligence.inProgressTimeframes.joinToString(", ")}", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                    }
+                    if (selectedIntelligence.dataQualityIssues.isNotEmpty()) {
+                        Text("Data-quality limitations: ${selectedIntelligence.dataQualityIssues.take(5).joinToString("; ")}", color = Color(0xFFE7B65E), fontSize = 10.sp, lineHeight = 14.sp)
+                    }
+                    Text(
+                        "Scan: ${BackendSession.marketIntelligenceAssessedAt.value} · ${BackendSession.marketIntelligenceEnvironment.value} · ${BackendSession.marketIntelligenceMarketType.value} · ${BackendSession.marketIntelligenceVenue.value}",
+                        color = Muted, fontSize = 9.sp, lineHeight = 13.sp
+                    )
+                }
+                Text("Fit scores are heuristic, not win probabilities. The Market Watcher has no order authority; all proposals remain subject to portfolio-wide risk checks.", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             }
             SectionTitle("EVIDENCE & UNCERTAINTY")
             CardPanel {
@@ -1448,7 +2494,7 @@ private fun AnalysisScreen() {
                     )
                 } else {
                     riskFlags.forEach { flag ->
-                        Text("• $flag", color = Color(0xFFFFC857), fontSize = 11.sp, lineHeight = 16.sp)
+                        Text("• $flag", color = Color(0xFFE7B65E), fontSize = 11.sp, lineHeight = 16.sp)
                     }
                 }
                 Text(
@@ -1476,7 +2522,19 @@ private fun AnalyticsChartCard(title: String, note: String, kind: ChartKind) {
     CardPanel {
         Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         Text(note, color = Muted, fontSize = 11.sp)
-        EmptyChart(Modifier.fillMaxWidth().height(92.dp), kind)
+        Text(
+            "NO VERIFIED LEDGER DATA",
+            color = Muted,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.sp
+        )
+        Text(
+            "No verified ledger data is connected. This chart will appear only when real paper-ledger history is available.",
+            color = Muted,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
     }
 }
 
@@ -1517,28 +2575,6 @@ private fun formatMarketPrice(value: Double): String = when {
     value >= 1000.0 -> String.format(Locale.US, "%.2f", value)
     value >= 1.0 -> String.format(Locale.US, "%.4f", value)
     else -> String.format(Locale.US, "%.8f", value)
-}
-
-@Composable
-private fun EmptyChart(modifier: Modifier, kind: ChartKind) {
-    Canvas(modifier.background(PanelAlt, RoundedCornerShape(10.dp)).padding(8.dp)) {
-        for (i in 0..3) drawLine(Grid, Offset(0f,size.height*i/3), Offset(size.width,size.height*i/3), 1f)
-        if (kind == ChartKind.ALLOCATION) {
-            drawCircle(Grid, radius = minOf(size.height*.35f, size.width*.12f), center = Offset(size.width/2,size.height/2), style = androidx.compose.ui.graphics.drawscope.Stroke(width=14f))
-        } else if (kind == ChartKind.BARS) {
-            val bw = size.width / 12f
-            for (i in 0..7) {
-                val bh = size.height * ((i*5%8)+1) / 10f
-                drawRect(if (i%3==0) Red.copy(alpha=.6f) else Green.copy(alpha=.6f), Offset(bw*(i+2), size.height-bh), Size(bw*.55f,bh))
-            }
-        } else {
-            val path = Path().apply {
-                moveTo(0f,size.height*.72f); lineTo(size.width*.16f,size.height*.62f); lineTo(size.width*.31f,size.height*.68f)
-                lineTo(size.width*.48f,size.height*.37f); lineTo(size.width*.64f,size.height*.48f); lineTo(size.width*.81f,size.height*.24f); lineTo(size.width,size.height*.30f)
-            }
-            drawPath(path, Muted.copy(alpha=.7f), style=androidx.compose.ui.graphics.drawscope.Stroke(width=2.5f))
-        }
-    }
 }
 
 @Composable
