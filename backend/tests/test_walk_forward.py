@@ -154,3 +154,31 @@ def test_walk_forward_rejects_candles_after_requested_research_clock():
             config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40),
             research_now=NOW,
         )
+
+
+def test_buy_hold_baseline_uses_same_equity_exposure_fraction_as_strategy():
+    from backend.backtesting import BacktestConfig
+
+    rows = make_candles(360, drift=0.05)
+    backtest_config = BacktestConfig(
+        position_fraction=0.25,
+        fee_bps_per_side=4.0,
+        slippage_bps_per_side=2.0,
+    )
+    result = evaluate_walk_forward(
+        "BTCUSDT", rows,
+        config=WalkForwardConfig(
+            train_bars=120, validation_bars=40, holdout_bars=40, step_bars=40,
+        ),
+        backtest_config=backtest_config,
+        research_now=NOW,
+    )
+    fold = result.folds[0]
+    test_rows = rows[fold.start_index:fold.end_index]
+    gross_return = test_rows[-1].close / test_rows[0].open - 1.0
+    round_trip_cost = 2.0 * (
+        backtest_config.fee_bps_per_side + backtest_config.slippage_bps_per_side
+    ) / 10_000.0
+    expected = (gross_return - round_trip_cost) * backtest_config.position_fraction * 100.0
+
+    assert fold.buy_hold_return_pct == pytest.approx(expected, abs=0.000001)
