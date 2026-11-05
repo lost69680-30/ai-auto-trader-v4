@@ -6,7 +6,7 @@ This is the current deployment-specific status. It supersedes older runtime desc
 
 - Default branch: `main`, current observed head `448960021cf669d397b736f5b10d7a33632ddaad`.
 - Parts 1–8 integration was merged into `main` through PR #80. PR #80 is closed as merged.
-- The integration branch head at the time of this check was `1d3eda70b16325a3d05aff1ede8427e75bdaebae`. It is four commits behind `main` but has zero file differences; the trees compare identical.
+- At the time of mainline reconciliation, integration head `1d3eda70b16325a3d05aff1ede8427e75bdaebae` had the same application source tree as `main`. Subsequent changes on `main` added the keep-warm workflow and updated deployment-status documentation. The integration branch is now eight commits behind `main`; the current diff is limited to that workflow and documentation files, with no application-source divergence.
 - The current `main` head includes a five-minute GitHub Actions Render keep-warm/readiness probe. It is explicitly best-effort, not an uptime guarantee.
 - PR #124 fixed the worker's graceful-shutdown false failure and is merged. Regression tests were first observed failing (2 failed, 589 passed, 50 skipped); after the fix, all four checks passed: Python, PostgreSQL, ASGI, and read-only market-data safety. Root and packaged worker/test files were verified identical.
 - PR #117's hosting/API contract work passed its hosting-resilience, Python, PostgreSQL, ASGI, read-only safety, and Android staging APK/unit-test checks before merge.
@@ -48,6 +48,7 @@ Still not accepted on a physical device:
 - Background restart/recovery and duplicate suppression under real device lifecycle conditions.
 
 The local notification test and Android CI build do not prove these physical-device behaviors.
+- The background risk poll uses Android WorkManager with a 15-minute periodic interval. Android Doze, battery restrictions and scheduler constraints can delay it further; it is not an instant push-notification guarantee.
 
 ## Safety and release boundary
 
