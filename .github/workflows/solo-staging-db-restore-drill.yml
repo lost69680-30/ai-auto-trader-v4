@@ -49,8 +49,8 @@ jobs:
       - name: Download selected backup artifact
         uses: actions/download-artifact@v4
         with:
-          name: solo-staging-paper-ledger-backup-${{ inputs.backup_run_id || '42103851197' }}
-          run-id: ${{ inputs.backup_run_id || '42103851197' }}
+          name: solo-staging-paper-ledger-backup-${{ inputs.backup_run_id || '42105459185' }}
+          run-id: ${{ inputs.backup_run_id || '42105459185' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: backup
 
