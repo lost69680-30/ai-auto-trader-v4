@@ -528,7 +528,7 @@ def test_walk_forward_decay_rejects_authorized_or_non_paper_evidence():
     forged_strategy = replace(baseline.folds[0].strategy, orders_authorized=True)
     forged_fold = replace(baseline.folds[0], strategy=forged_strategy)
     forged = replace(baseline, folds=(forged_fold,) + baseline.folds[1:])
-    with pytest.raises(ValueError, match="authorization"):
+    with pytest.raises(ValueError, match="unauthorized"):
         assess_walk_forward_decay(forged)
 
     forged_regime = replace(baseline.folds[0].market_regime, orders_authorized=True)
@@ -536,5 +536,5 @@ def test_walk_forward_decay_rejects_authorized_or_non_paper_evidence():
     forged_regime_result = replace(
         baseline, folds=(forged_regime_fold,) + baseline.folds[1:],
     )
-    with pytest.raises(ValueError, match="authorization"):
+    with pytest.raises(ValueError, match="unauthorized"):
         assess_walk_forward_decay(forged_regime_result)
