@@ -367,5 +367,5 @@ def test_market_data_error_context_reports_network_reason_category_safely():
     except MarketDataError as error:
         detail = market_data_error_context(error)
 
-    assert "upstream_reason_type=TimeoutError" in detail
+    assert "upstream_reason=TimeoutError" in detail
     assert "timed out" not in detail
