@@ -14,7 +14,7 @@ from backend.adaptive_strategy import select_strategy
 from backend.strategy_assessment_engine import MultiStrategyAssessmentEngine, StrategyCandidate
 from backend.market_assessment import TIMEFRAME_ORDER, assess_market
 from backend.indicator_intelligence import assess_indicators
-from backend.market_data_adapter import MarketCandle
+from backend.market_data_adapter import MarketCandle, market_data_error_context
 from backend.timeframe_aggregation import aggregate_complete_yearly_candles
 
 
@@ -166,8 +166,8 @@ def market_intelligence_scan(
                     errors_by_symbol[symbol][interval] = type(exc).__name__
                     fetched[(symbol, interval)] = ()
                     logger.warning(
-                        "market intelligence timeframe unavailable symbol=%s interval=%s error=%s",
-                        symbol, interval, type(exc).__name__,
+                        "market intelligence timeframe unavailable symbol=%s interval=%s error=%s detail=%s",
+                        symbol, interval, type(exc).__name__, market_data_error_context(exc),
                     )
 
         reports: list[dict[str, Any]] = []

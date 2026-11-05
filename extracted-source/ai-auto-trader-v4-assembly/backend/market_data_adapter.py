@@ -28,6 +28,25 @@ class MarketDataError(RuntimeError):
     """Public market data could not be retrieved or was structurally invalid."""
 
 
+def market_data_error_context(error: BaseException) -> str:
+    """Return bounded upstream diagnostics without exposing URLs, headers, or credentials."""
+    parts = [str(error)[:120]]
+    cause = error.__cause__
+    if isinstance(cause, HTTPError):
+        parts.append(f"upstream_http_status={cause.code}")
+    elif isinstance(cause, URLError):
+        reason = cause.reason
+        if isinstance(reason, OSError):
+            parts.append(f"upstream_reason={type(reason).__name__} errno={reason.errno} message={reason.strerror}")
+        else:
+            parts.append(f"upstream_reason_type={type(reason).__name__}")
+    elif isinstance(cause, OSError):
+        parts.append(f"upstream_reason={type(cause).__name__} errno={cause.errno} message={cause.strerror}")
+    elif cause is not None:
+        parts.append(f"upstream_cause_type={type(cause).__name__}")
+    return " ".join(parts)[:240]
+
+
 @dataclass(frozen=True, slots=True)
 class MarketCandle:
     symbol: str

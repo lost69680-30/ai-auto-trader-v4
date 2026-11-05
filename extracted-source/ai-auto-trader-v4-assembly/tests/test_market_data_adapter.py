@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
+from urllib.error import HTTPError, URLError
 
 import pytest
 
-from backend.market_data_adapter import BinanceUsdMFuturesAdapter, MarketDataError
+from backend.market_data_adapter import BinanceUsdMFuturesAdapter, MarketDataError, market_data_error_context
 
 
 NOW = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)
@@ -345,3 +346,26 @@ def test_kline_backfill_rejects_invalid_time_bounds():
         adapter.fetch_klines("BTCUSDT", end_time_ms=True, now=NOW)
     with pytest.raises(ValueError, match="end_time_ms"):
         adapter.fetch_klines("BTCUSDT", start_time_ms=20, end_time_ms=10, now=NOW)
+
+
+def test_market_data_error_context_reports_upstream_http_status_without_url_or_headers():
+    upstream = HTTPError("https://example.invalid/klines?secret=hidden", 429, "Too Many Requests", {}, None)
+    try:
+        raise MarketDataError("unable to retrieve public market data from /fapi/v1/klines") from upstream
+    except MarketDataError as error:
+        detail = market_data_error_context(error)
+
+    assert "upstream_http_status=429" in detail
+    assert "secret=hidden" not in detail
+    assert "example.invalid" not in detail
+
+
+def test_market_data_error_context_reports_network_reason_category_safely():
+    upstream = URLError(TimeoutError("timed out"))
+    try:
+        raise MarketDataError("unable to retrieve public market data from /fapi/v1/klines") from upstream
+    except MarketDataError as error:
+        detail = market_data_error_context(error)
+
+    assert "upstream_reason=TimeoutError" in detail
+    assert "timed out" not in detail
