@@ -16,7 +16,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [33])
 class SoloNotificationRuntimeTest {
     private lateinit var baseContext: Context
     private lateinit var context: PermissionOverrideContext
