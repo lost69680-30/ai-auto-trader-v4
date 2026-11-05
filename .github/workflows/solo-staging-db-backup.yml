@@ -68,7 +68,7 @@ jobs:
           echo "PASS: backup role has SELECT policy coverage for all RLS tables, no write privileges, and no BYPASSRLS."
           # The dedicated backup role is intentionally not BYPASSRLS.
           # Explicitly apply its SELECT-only RLS policies to include authorized rows.
-          pg_dump --format=custom --enable-row-security --inserts --no-owner --no-acl --schema=paper_ledger \
+          pg_dump --format=custom --enable-row-security --no-owner --no-acl --schema=paper_ledger \
             --file=solo-paper-ledger.dump "$DATABASE_URL"
           test -s solo-paper-ledger.dump
           pg_restore --list solo-paper-ledger.dump >/dev/null
