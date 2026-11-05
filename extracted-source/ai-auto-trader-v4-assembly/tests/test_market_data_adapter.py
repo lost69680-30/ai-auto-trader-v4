@@ -369,3 +369,36 @@ def test_market_data_error_context_reports_network_reason_category_safely():
 
     assert "upstream_reason=TimeoutError" in detail
     assert "timed out" not in detail
+
+
+def test_kline_parser_tolerates_small_future_open_time_clock_skew_as_unclosed():
+    now = datetime(2026, 10, 10, 12, 0, 59, 500000, tzinfo=timezone.utc)
+    open_time = datetime(2026, 10, 10, 12, 1, 0, tzinfo=timezone.utc)
+    close_time = datetime(2026, 10, 10, 12, 1, 59, 999000, tzinfo=timezone.utc)
+    millis = lambda value: int(value.timestamp() * 1000)
+    row = [millis(open_time), "100", "102", "99", "101", "10",
+           millis(close_time), "1000", 10, "5", "500", "0"]
+    transport, _ = make_transport({"/fapi/v1/klines": [row]})
+
+    candles = BinanceUsdMFuturesAdapter(transport=transport).fetch_klines(
+        "BTCUSDT", interval="1m", now=now
+    )
+
+    assert len(candles) == 1
+    assert candles[0].open_time == open_time
+    assert candles[0].is_closed is False
+
+
+def test_kline_parser_rejects_future_open_time_beyond_clock_skew_tolerance():
+    now = datetime(2026, 10, 10, 12, 0, 57, tzinfo=timezone.utc)
+    open_time = datetime(2026, 10, 10, 12, 1, 0, tzinfo=timezone.utc)
+    close_time = datetime(2026, 10, 10, 12, 1, 59, 999000, tzinfo=timezone.utc)
+    millis = lambda value: int(value.timestamp() * 1000)
+    row = [millis(open_time), "100", "102", "99", "101", "10",
+           millis(close_time), "1000", 10, "5", "500", "0"]
+    transport, _ = make_transport({"/fapi/v1/klines": [row]})
+
+    with pytest.raises(MarketDataError, match="future by 3.000s"):
+        BinanceUsdMFuturesAdapter(transport=transport).fetch_klines(
+            "BTCUSDT", interval="1m", now=now
+        )
