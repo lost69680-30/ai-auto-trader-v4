@@ -24,6 +24,7 @@ SUPPORTED_INTERVALS = frozenset({
 })
 
 
+
 class MarketDataError(RuntimeError):
     """Public market data could not be retrieved or was structurally invalid."""
 

@@ -144,7 +144,7 @@ def market_intelligence_scan(
 
         def fetch_one(symbol: str, interval: str) -> tuple[str, str, tuple[MarketCandle, ...]]:
             rows = tuple(source.fetch_klines(
-                symbol, interval=interval, limit=candle_limit, now=now,
+                symbol, interval=interval, limit=candle_limit,
             ))
             if any(not isinstance(row, MarketCandle) for row in rows):
                 raise ValueError("market source returned a malformed candle row")
@@ -169,6 +169,13 @@ def market_intelligence_scan(
                         "market intelligence timeframe unavailable symbol=%s interval=%s error=%s detail=%s",
                         symbol, interval, type(exc).__name__, market_data_error_context(exc),
                     )
+
+        # Kline requests finish after the scan starts. Use the latest closed
+        # candle boundary as the analysis clock, not the stale scan-start clock
+        # that was supplied before the concurrent requests began.
+        latest_closed_times = [rows[-1].close_time for rows in fetched.values() if rows]
+        if latest_closed_times:
+            now = max(now, max(latest_closed_times))
 
         reports: list[dict[str, Any]] = []
         for policy in policies:

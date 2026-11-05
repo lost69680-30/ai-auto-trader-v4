@@ -164,6 +164,7 @@ class RevalidationEngine:
 class FreshSource:
     def __init__(self, now):
         self.now = now
+        self.kline_clock_arguments = []
         self.contract = Contract(
             "BTCUSDT", "TRADING", "PERPETUAL", "USDT",
             tick_size=0.01, quantity_step=0.001, min_quantity=0.001,
@@ -182,6 +183,7 @@ class FreshSource:
         )
 
     def fetch_klines(self, symbol, *, interval, limit, now=None):
+        self.kline_clock_arguments.append(now)
         if interval != "1h":
             return ()
         rows = []
@@ -240,11 +242,14 @@ def test_triggered_futures_opportunity_revalidates_then_uses_paper_handoff_and_r
     record = _triggered_opportunity(store, now)
     paper = FakePaperService()
 
+    source = FreshSource(now)
     result = process_triggered_opportunity(
-        coordinator, record, source=FreshSource(now), paper_service=paper,
+        coordinator, record, source=source, paper_service=paper,
         now=now, strategy_engine=RevalidationEngine(),
     )
 
+    assert source.kline_clock_arguments
+    assert all(value is None for value in source.kline_clock_arguments)
     saved = store.get_opportunity(record.opportunity_id)
     assert result["status"] == "INTENT_RECORDED"
     assert saved.state == "INTENT_RECORDED"

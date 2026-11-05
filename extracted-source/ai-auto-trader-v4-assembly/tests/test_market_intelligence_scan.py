@@ -83,10 +83,11 @@ class FakeSource:
         ))
 
     def fetch_klines(self, symbol, *, interval, limit, now=None):
-        self.calls.append((symbol, interval, limit))
+        self.calls.append((symbol, interval, limit, now))
+        candle_clock = now or datetime.now(timezone.utc)
         if interval == "1M":
-            return monthly_series(symbol, now)
-        return fixed_series(symbol, interval, now, add_open=(interval == self.open_interval))
+            return monthly_series(symbol, candle_clock)
+        return fixed_series(symbol, interval, candle_clock, add_open=(interval == self.open_interval))
 
 
 class FakeStore:
@@ -112,6 +113,7 @@ def test_scheduled_scan_publishes_assessment_and_adaptive_strategy_without_order
     handler({"scope": "market_intelligence"}, "market-scan-1")
 
     assert {call[1] for call in source.calls} == set(SCAN_INTERVALS)
+    assert all(call[3] is None for call in source.calls)
     assert store.payload["scan_id"] == "market-scan-1"
     assert store.payload["market_type"] == "FUTURES"
     assert store.payload["environment"] == "TESTNET"

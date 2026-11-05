@@ -310,7 +310,7 @@ def process_triggered_opportunity(
         candles: dict[str, tuple[MarketCandle, ...]] = {}
         refs = [f"market-snapshot:{symbol}:{snapshot_at.astimezone(timezone.utc).isoformat()}"]
         for interval in SCAN_INTERVALS:
-            rows = tuple(source.fetch_klines(symbol, interval=interval, limit=200, now=stamp))
+            rows = tuple(source.fetch_klines(symbol, interval=interval, limit=200))
             if any(not isinstance(item, MarketCandle) for item in rows):
                 raise ValueError(f"{interval} candle data is malformed")
             closed = tuple(item for item in rows if item.is_closed)
@@ -320,6 +320,13 @@ def process_triggered_opportunity(
                     f"closed-candle:{symbol}:{interval}:{closed[-1].close_time.astimezone(timezone.utc).isoformat()}"
                 )
         candles["1Y"] = _yearly_candles(symbol, candles.get("1M", ()))
+        latest_closed_times = [
+            row.close_time for rows in candles.values() for row in rows
+        ]
+        if latest_closed_times:
+            stamp = max(stamp, max(latest_closed_times))
+        if record.expires_at <= stamp:
+            raise ValueError("triggered opportunity expired during fresh candle revalidation")
         timeframe_age = OPPORTUNITY_TIMEFRAME_MAX_AGE_SECONDS.get(record.timeframe)
         timeframe_rows = candles.get(record.timeframe, ())
         if timeframe_age is None or not timeframe_rows:
