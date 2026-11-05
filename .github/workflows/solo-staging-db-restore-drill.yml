@@ -7,20 +7,20 @@ on:
         description: "GitHub Actions run ID of a successful Solo staging PostgreSQL backup"
         required: true
         type: string
-        default: "41207086389"
-  push:
-    branches:
-      - fix/solo-restore-validation
 
 permissions:
   actions: read
   contents: read
 
+concurrency:
+  group: solo-staging-db-restore-drill
+  cancel-in-progress: false
+
 jobs:
   restore-into-disposable-postgres:
     name: Restore backup into temporary PostgreSQL 17
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:17
@@ -44,8 +44,8 @@ jobs:
       - name: Download selected backup artifact
         uses: actions/download-artifact@v4
         with:
-          name: solo-staging-paper-ledger-backup-${{ inputs.backup_run_id || '41207086389' }}
-          run-id: ${{ inputs.backup_run_id || '41207086389' }}
+          name: solo-staging-paper-ledger-backup-${{ inputs.backup_run_id }}
+          run-id: ${{ inputs.backup_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: backup
 
@@ -65,11 +65,13 @@ jobs:
             --dbname="$TEST_DATABASE_URL" solo-paper-ledger.dump
 
           expected_tables=(
-            paper_orders paper_fills paper_positions paper_funding_events
-            paper_audit_events paper_system_controls paper_order_cancellations
-            paper_position_extrema paper_equity_snapshots market_feed_snapshots
-            market_worker_heartbeats scheduled_job_definitions scheduled_jobs
-            market_candles
+            market_candles market_feed_snapshots market_intelligence_reports
+            market_worker_heartbeats opportunities opportunity_assessments
+            opportunity_claims opportunity_events opportunity_evidence
+            opportunity_watch_conditions paper_audit_events paper_equity_snapshots
+            paper_fills paper_funding_events paper_order_cancellations paper_orders
+            paper_position_extrema paper_positions paper_system_controls
+            scheduled_job_definitions scheduled_jobs strategy_research_experiments
           )
           expected_csv="$(IFS=,; echo "${expected_tables[*]}")"
           table_count="$(psql "$TEST_DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
@@ -89,11 +91,13 @@ jobs:
              WHERE n.nspname='paper_ledger' AND con.contype='p'")"
           candle_count="$(psql "$TEST_DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
             "SELECT count(*) FROM paper_ledger.market_candles")"
-          if [ "$table_count" -ne 14 ] || [ "$missing_count" -ne 0 ] || \
-             [ "$rls_count" -ne 14 ] || [ "$primary_key_count" -ne 14 ] || \
-             [ "$candle_count" -lt 1 ]; then
-            echo "::error::Restore validation failed: tables=$table_count missing=$missing_count rls=$rls_count primary_keys=$primary_key_count candles=$candle_count"
+          report_count="$(psql "$TEST_DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
+            "SELECT count(*) FROM paper_ledger.market_intelligence_reports")"
+          if [ "$table_count" -ne 22 ] || [ "$missing_count" -ne 0 ] || \
+             [ "$rls_count" -ne 22 ] || [ "$primary_key_count" -ne 22 ] || \
+             [ "$candle_count" -lt 1 ] || [ "$report_count" -lt 1 ]; then
+            echo "::error::Restore validation failed: tables=$table_count missing=$missing_count rls=$rls_count primary_keys=$primary_key_count candles=$candle_count reports=$report_count"
             exit 1
           fi
-          echo "PASS: checksum valid; all 14 expected tables restored; all 14 have RLS and primary keys; $candle_count candles restored into disposable PostgreSQL 17."
-          echo "This drill did not connect to or modify staging or production databases."
+          echo "PASS: checksum valid; all 22 expected tables restored; all 22 have RLS and primary keys; $candle_count candles and $report_count intelligence reports restored into disposable PostgreSQL 17."
+          echo "This drill did not connect to or modify staging or production."
