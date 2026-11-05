@@ -25,7 +25,7 @@ internal fun parseStrategyDecisionSummaries(selection: JSONObject): List<String>
             ?: throw IllegalArgumentException("Strategy assessment payload is missing")
         val reasons = payload.optJSONArray("reasons") ?: JSONArray()
         val reasonText = (0 until reasons.length())
-            .mapNotNull { reasons.optString(it).trim().takeIf(String::isNotBlank) }
+            .mapNotNull { index -> reasons.optString(index).trim().takeIf { it.isNotBlank() } }
             .distinct()
         "$strategy · $decision" + if (reasonText.isEmpty()) "" else " — " + reasonText.joinToString("; ")
     }
