@@ -567,3 +567,30 @@ def test_disabled_intelligence_flag_disables_persisted_optional_schedules():
         "opportunity_reassessment_spot",
     }
     assert all(kwargs["enabled"] is False for _, kwargs in scheduler.calls)
+
+
+def test_scheduled_job_runner_exit_during_graceful_shutdown_is_expected():
+    import threading
+
+    stop = threading.Event()
+
+    class StoppedRunner:
+        def is_alive(self):
+            return False
+
+    assert shared_market_worker.scheduled_job_runner_stopped_unexpectedly(
+        StoppedRunner(), stop
+    ) is True
+
+    stop.set()
+    assert shared_market_worker.scheduled_job_runner_stopped_unexpectedly(
+        StoppedRunner(), stop
+    ) is False
+
+
+def test_missing_scheduled_job_runner_is_not_a_failure_during_startup():
+    import threading
+
+    assert shared_market_worker.scheduled_job_runner_stopped_unexpectedly(
+        None, threading.Event()
+    ) is False
