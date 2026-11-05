@@ -71,7 +71,7 @@ def _apply_migration():
     root = _repo_root()
     migrations = (
         root / "supabase/migrations/20261029205318_create_paper_ledger_schema.sql",
-        root / "supabase/migrations/20261102184500_create_strategy_research_memory.sql",
+        root / "supabase/migrations/20261105173521_create_strategy_research_memory.sql",
     )
     with psycopg.connect(DSN, autocommit=True) as conn:
         for migration in migrations:
