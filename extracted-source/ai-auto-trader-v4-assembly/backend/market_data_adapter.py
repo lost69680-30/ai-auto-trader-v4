@@ -23,6 +23,10 @@ SUPPORTED_INTERVALS = frozenset({
     "12h", "1d", "3d", "1w", "1M",
 })
 
+# Allow only a small local-clock lag at an exchange candle boundary. Such a
+# candle remains open and is never eligible for closed-candle analysis.
+MAX_FUTURE_KLINE_OPEN_SKEW_SECONDS = 2.0
+
 
 class MarketDataError(RuntimeError):
     """Public market data could not be retrieved or was structurally invalid."""
@@ -496,8 +500,11 @@ class BinanceUsdMFuturesAdapter:
                 raise MarketDataError("invalid OHLCV data in kline row")
             if last_open is not None and open_time <= last_open:
                 raise MarketDataError("kline timestamps must be strictly increasing")
-            if open_time > now_utc:
-                raise MarketDataError("kline open time is in the future")
+            future_open_skew_seconds = (open_time - now_utc).total_seconds()
+            if future_open_skew_seconds > MAX_FUTURE_KLINE_OPEN_SKEW_SECONDS:
+                raise MarketDataError(
+                    f"kline open time is in the future by {future_open_skew_seconds:.3f}s"
+                )
             last_open = open_time
             parsed.append(MarketCandle(
                 symbol=symbol, open_time=open_time, close_time=close_time,
