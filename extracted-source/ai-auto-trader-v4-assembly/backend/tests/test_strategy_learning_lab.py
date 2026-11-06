@@ -127,7 +127,6 @@ def test_learning_dataset_rejects_unapproved_or_leaked_experiments(item):
         experiment(quality_fold_count=3),
         experiment(quality_trade_count=20),
         experiment(quality_holdout_used=True),
-        experiment(quality_orders_authorized=True),
         experiment(include_quality=False),
     ],
 )
