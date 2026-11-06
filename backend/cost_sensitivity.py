@@ -105,6 +105,8 @@ def _fold_cost_stress(fold, multiplier: float) -> tuple[tuple[float, float, floa
         raise ValueError("base drawdown must be between 0 and 100 percent")
     if not all(math.isfinite(value) for value in (gross_total, costs_total, net_total, maximum_drawdown)):
         raise ValueError("validation fold aggregate metrics are non-finite")
+    # Match the simulator's bankruptcy floor: equity cannot fall below zero.
+    net_total = equity - initial_equity
     net_return_pct = net_total / initial_equity * 100.0
     return (
         gross_total,
