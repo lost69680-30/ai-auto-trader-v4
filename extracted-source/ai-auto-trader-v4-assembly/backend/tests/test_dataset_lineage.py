@@ -30,6 +30,21 @@ def test_same_candle_content_is_rejected_even_when_metadata_is_relabeled():
         assert_independent_dataset(relabeled, first)
 
 
+def test_overlapping_windows_are_rejected_when_source_provider_is_relabeled():
+    first = provenance(
+        provider="binance-public", venue="futures-testnet",
+        start=START, end=START + timedelta(hours=2), digest="a" * 64,
+    )
+    relabeled_source = provenance(
+        provider="another-public-source", venue="futures-testnet",
+        start=START + timedelta(hours=1), end=START + timedelta(hours=3),
+        digest="b" * 64,
+    )
+
+    with pytest.raises(ValueError, match="windows overlap"):
+        assert_independent_dataset(relabeled_source, first)
+
+
 def test_overlapping_windows_are_rejected_for_same_market_scope():
     first = provenance(start=START, end=START + timedelta(hours=2))
     second = provenance(start=START + timedelta(hours=1), end=START + timedelta(hours=3),
