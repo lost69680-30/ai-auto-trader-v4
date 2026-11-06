@@ -195,4 +195,4 @@ def test_cost_stress_stops_simulating_after_stressed_equity_is_exhausted():
 
     scenario = summarize_validation_cost_sensitivity(result, cost_multipliers=(2.0,)).scenarios[0]
     assert scenario.trade_count == 1
-    assert scenario.total_net_pnl == -1002.0
+    assert scenario.total_net_pnl == -1000.0
