@@ -475,11 +475,12 @@ def main() -> None:
 
             research_candle_limit = _bounded_env_int(
                 "PAPER_STRATEGY_RESEARCH_CANDLES", 3000,
-                minimum=3000, maximum=100000,
+                minimum=3000, maximum=10000,
             )
             research_memory = PostgresStrategyResearchMemory(dsn)
             intelligence_handlers["strategy_research_evaluation"] = build_strategy_research_handler(
                 archive, research_memory,
+                source=app.worker.source,
                 symbols=app.config.symbols_list,
                 candles_per_symbol=research_candle_limit,
                 venue="BINANCE_USDM_TESTNET",
