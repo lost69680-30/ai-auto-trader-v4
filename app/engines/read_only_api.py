@@ -157,6 +157,87 @@ def _fetch_candle_intervals(source, symbol: str, intervals: tuple[str, ...], lim
     return interval_payloads, interval_status, rows_by_interval
 
 
+def build_direct_market_history_payload(
+    *, source, symbol: str, allowed_symbols: Iterable[str],
+    start: datetime, end: datetime, limit: int, now: datetime | None = None,
+) -> dict[str, object]:
+    """Fetch bounded one-minute history directly from Binance public REST without persistence."""
+    if symbol not in allowed_symbols:
+        raise ValueError("symbol is not in the configured market allowlist")
+    if not isinstance(start, datetime) or start.tzinfo is None or start.utcoffset() is None:
+        raise ValueError("history start must be timezone-aware")
+    if not isinstance(end, datetime) or end.tzinfo is None or end.utcoffset() is None:
+        raise ValueError("history end must be timezone-aware")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 10000:
+        raise ValueError("history limit must be between 1 and 10000")
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        raise ValueError("history clock must be timezone-aware")
+    current = current.astimezone(timezone.utc)
+    start_utc = start.astimezone(timezone.utc)
+    end_utc = min(end.astimezone(timezone.utc), current)
+    if end_utc <= start_utc:
+        raise ValueError("history end must be later than start and not in the future")
+
+    cursor_ms = ((int(start_utc.timestamp() * 1000) + 59999) // 60000) * 60000
+    end_ms = int(end_utc.timestamp() * 1000) - 1
+    rows = []
+    while cursor_ms <= end_ms and len(rows) < limit:
+        page_limit = min(1500, limit - len(rows))
+        page = tuple(source.fetch_klines(
+            symbol, interval="1m", limit=page_limit, now=current,
+            start_time_ms=cursor_ms, end_time_ms=end_ms,
+        ))
+        if not page:
+            break
+        if len(page) > page_limit:
+            raise RuntimeError("historical market source exceeded its requested page size")
+        for row in page:
+            if getattr(row, "symbol", None) != symbol:
+                raise RuntimeError("historical market source returned a mismatched symbol")
+            opened = getattr(row, "open_time", None)
+            closed = getattr(row, "close_time", None)
+            if not isinstance(opened, datetime) or opened.tzinfo is None or opened.utcoffset() is None:
+                raise RuntimeError("historical market source returned an invalid candle timestamp")
+            if not isinstance(closed, datetime) or closed.tzinfo is None or closed.utcoffset() is None:
+                raise RuntimeError("historical market source returned an invalid candle close timestamp")
+            opened = opened.astimezone(timezone.utc)
+            if opened.timestamp() * 1000 < cursor_ms or opened.timestamp() * 1000 > end_ms:
+                raise RuntimeError("historical market source returned a candle outside the requested range")
+            if getattr(row, "is_closed", False) is not True or closed.astimezone(timezone.utc) >= current:
+                continue
+            if rows:
+                previous_ms = int(rows[-1].open_time.timestamp() * 1000)
+                current_ms = int(opened.timestamp() * 1000)
+                if current_ms - previous_ms != 60000:
+                    raise RuntimeError("historical market source returned a missing or duplicate one-minute candle")
+            rows.append(row)
+        last_open_ms = int(page[-1].open_time.timestamp() * 1000)
+        next_cursor_ms = last_open_ms + 60000
+        if next_cursor_ms <= cursor_ms:
+            raise RuntimeError("historical market pagination did not advance")
+        cursor_ms = next_cursor_ms
+        if len(page) < page_limit:
+            break
+
+    return {
+        "symbol": symbol,
+        "venue": "BINANCE_USDM_TESTNET",
+        "market_type": "FUTURES",
+        "interval": "1m",
+        "candles": [{
+            "open_time": row.open_time.isoformat(),
+            "close_time": row.close_time.isoformat(),
+            "open": row.open, "high": row.high, "low": row.low,
+            "close": row.close, "volume": row.volume, "is_closed": True,
+        } for row in rows],
+        "history_source": "BINANCE_PUBLIC_REST_ON_DEMAND",
+        "persistent_candle_storage": False,
+        "orders_authorized": False,
+        "mode": "PAPER_ONLY",
+    }
+
+
 def build_market_candle_payload(
     *, source, symbol: str, allowed_symbols: Iterable[str],
     intervals: tuple[str, ...], limit: int,
@@ -869,32 +950,16 @@ def main() -> None:
         )
 
     market_history = None
-    if testnet and market_mode == "futures" and os.environ.get("PAPER_DATABASE_URL", "").strip():
-        from backend.historical_candle_archive import PostgresCandleArchive
-        history_archive = PostgresCandleArchive(os.environ["PAPER_DATABASE_URL"])
-
+    if testnet and market_mode == "futures":
         def market_history(symbol: str, start: datetime, end: datetime, limit: int) -> dict:
-            if symbol not in symbols:
-                raise ValueError("symbol is not in the configured market allowlist")
-            rows = history_archive.read_closed_candles(
-                venue="BINANCE_USDM_TESTNET", market_type="FUTURES",
-                symbol=symbol, start=start, end=end, limit=limit,
+            return build_direct_market_history_payload(
+                source=source, symbol=symbol, allowed_symbols=symbols,
+                start=start, end=end, limit=limit,
             )
-            return {
-                "symbol": symbol,
-                "venue": "BINANCE_USDM_TESTNET",
-                "market_type": "FUTURES",
-                "interval": "1m",
-                "candles": [{
-                    "open_time": row.open_time.isoformat(),
-                    "close_time": row.close_time.isoformat(),
-                    "open": row.open, "high": row.high, "low": row.low,
-                    "close": row.close, "volume": row.volume, "is_closed": True,
-                } for row in rows],
-                "orders_authorized": False,
-                "mode": "PAPER_ONLY",
-            }
-        logging.info("Authenticated read-only historical candle archive endpoint enabled for Futures Testnet")
+        logging.info(
+            "Authenticated read-only historical candles use bounded on-demand Binance REST retrieval; "
+            "raw candles are not persisted"
+        )
 
     stop = threading.Event()
 
