@@ -1021,6 +1021,7 @@ def test_worker_health_ping_requires_https_and_valid_paper_only_response():
     ) is True
     assert seen["method"] == "GET"
     assert seen["url"] == "https://solo-worker.example/healthz"
+    assert seen["timeout"] == 60.0
 
     with pytest.raises(ValueError, match="HTTPS"):
         ping_worker_health_endpoint("http://solo-worker.example/healthz", opener=opener)
