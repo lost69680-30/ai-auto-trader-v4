@@ -257,3 +257,71 @@ def test_research_handler_rejects_evaluator_provenance_for_wrong_symbol(monkeypa
             "venue": "BINANCE_USDM_TESTNET",
         }, "wrong-symbol-provenance")
     assert memory.items == []
+
+
+def test_stateless_history_loader_fetches_closed_candles_in_bounded_pages():
+    from backend.strategy_research_runtime import fetch_stateless_closed_candles
+
+    rows = candle_rows(count=3000)
+    market_rows = tuple(SimpleNamespace(
+        symbol="BTCUSDT",
+        open_time=row.open_time,
+        close_time=row.close_time,
+        open=row.open, high=row.high, low=row.low, close=row.close, volume=row.volume,
+        is_closed=True,
+    ) for row in rows)
+
+    class Source:
+        def __init__(self):
+            self.requests = []
+
+        def fetch_klines(self, symbol, *, interval, limit, end_time_ms, now):
+            self.requests.append((symbol, interval, limit, end_time_ms))
+            eligible = [
+                row for row in market_rows
+                if row.symbol == symbol
+                and int(row.open_time.timestamp() * 1000) <= end_time_ms
+                and row.close_time < now
+            ]
+            return tuple(eligible[-limit:])
+
+    source = Source()
+    candles = fetch_stateless_closed_candles(
+        source, symbol="BTCUSDT", count=3000, now=NOW,
+    )
+
+    assert len(candles) == 3000
+    assert len(source.requests) == 2
+    assert all(request[1] == "1m" and request[2] <= 1500 for request in source.requests)
+    assert all(candles[index].timestamp < candles[index + 1].timestamp for index in range(2999))
+    assert all(
+        (candles[index + 1].timestamp - candles[index].timestamp).total_seconds() == 60
+        for index in range(2999)
+    )
+
+
+def test_stateless_history_loader_rejects_missing_minute_candles():
+    from backend.strategy_research_runtime import fetch_stateless_closed_candles
+
+    rows = candle_rows(count=30)
+    market_rows = tuple(SimpleNamespace(
+        symbol="BTCUSDT",
+        open_time=row.open_time,
+        close_time=row.close_time,
+        open=row.open, high=row.high, low=row.low, close=row.close, volume=row.volume,
+        is_closed=True,
+    ) for index, row in enumerate(rows) if index != 10)
+
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, end_time_ms, now):
+            eligible = [
+                row for row in market_rows
+                if int(row.open_time.timestamp() * 1000) <= end_time_ms
+                and row.close_time < now
+            ]
+            return tuple(eligible[-limit:])
+
+    with pytest.raises(ValueError, match="continuous"):
+        fetch_stateless_closed_candles(
+            Source(), symbol="BTCUSDT", count=30, now=NOW,
+        )
