@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
+import math
 from typing import Callable, Iterable
 
 from backend.backtesting import BacktestConfig
@@ -36,16 +37,30 @@ def _iso(value: datetime) -> str:
 
 def _window_summary(window, *, used_for_selection: bool) -> dict:
     strategy = window.strategy
+    initial_equity = float(strategy.initial_equity)
+    if not math.isfinite(initial_equity) or initial_equity <= 0:
+        raise ValueError("research window initial equity must be finite and positive")
+    regime = window.market_regime
     return {
         "name": window.name,
         "start_index": window.start_index,
         "end_index": window.end_index,
         "net_pnl": float(strategy.net_pnl),
+        "strategy_net_return_pct": float(strategy.net_pnl) / initial_equity * 100.0,
         "trade_count": int(strategy.trade_count),
         "win_rate_pct": float(strategy.win_rate_pct),
         "max_drawdown_pct": float(strategy.max_drawdown_pct),
         "total_costs": float(strategy.total_costs),
         "buy_hold_return_pct": float(window.buy_hold_return_pct),
+        "market_regime": {
+            "trend_state": regime.trend_state,
+            "volatility_state": regime.volatility_state,
+            "trend_return_pct": float(regime.trend_return_pct),
+            "realized_volatility_pct": float(regime.realized_volatility_pct),
+            "observations": int(regime.observations),
+            "methodology": regime.methodology,
+            "orders_authorized": False,
+        },
         "used_for_selection": used_for_selection,
         "orders_authorized": False,
     }
@@ -217,6 +232,9 @@ def build_strategy_research_handler(
                 outcomes = {
                     "folds": list(folds),
                     "holdout": holdout,
+                    "validation_folds": list(folds),
+                    "untouched_holdout": holdout,
+                    "holdout_used_for_selection": False,
                     "warnings": list(result.warnings),
                     "orders_authorized": False,
                 }
