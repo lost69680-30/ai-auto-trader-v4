@@ -68,10 +68,11 @@ def worker_heartbeat_requires_restart(
     if uptime_seconds < startup_grace_seconds or not isinstance(status, dict):
         return False
     worker_status = status.get("worker_status")
+    # A STALE feed snapshot does not prove that the worker process is dead.
+    # Restart only when the heartbeat/lease itself is stale or the worker stopped.
     return (
-        status.get("status") == "STALE"
-        or worker_status in {"STOPPED", "ERROR"}
-        or worker_status == "MISSING"
+        worker_status in {"STALE", "STOPPED", "ERROR", "MISSING"}
+        or status.get("lease_expired") is True
     )
 
 
