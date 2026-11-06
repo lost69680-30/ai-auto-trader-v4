@@ -19,79 +19,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  keep-warm:
+  monitor-and-recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 7
+    timeout-minutes: 12
     steps:
-      - name: Record trigger context
-        run: |
-          echo "event=${GITHUB_EVENT_NAME}"
-          echo "schedule=${{ github.event.schedule }}"
-          echo "utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "run_id=${GITHUB_RUN_ID}"
-
-      - name: Wake staging API and verify paper-only readiness
+      - uses: actions/checkout@v4
+      - name: Wake worker, verify independent heartbeat, and recover confirmed failure
         env:
-          SOLO_STAGING_API_ORIGIN: https://solo-ai-auto-trader-staging-api.onrender.com
-        shell: bash
-        run: |
-          set -euo pipefail
-          temp_dir="$(mktemp -d)"
-          trap 'rm -rf "$temp_dir"' EXIT
-
-          health_code="000"
-          for attempt in $(seq 1 8); do
-            health_code="$(curl -sS --connect-timeout 5 --max-time 10 \
-              -o "$temp_dir/health.json" -w '%{http_code}' \
-              "$SOLO_STAGING_API_ORIGIN/healthz" || true)"
-            if [[ "$health_code" == "200" ]]; then
-              break
-            fi
-            echo "Waiting for Render API wake-up: attempt $attempt/8 (HTTP $health_code)"
-            sleep 5
-          done
-
-          if [[ "$health_code" != "200" ]]; then
-            echo "Staging liveness probe failed: HTTP $health_code"
-            [[ -f "$temp_dir/health.json" ]] && cat "$temp_dir/health.json"
-            exit 1
-          fi
-
-          python3 - "$temp_dir/health.json" <<'PY'
-          import json, sys
-          with open(sys.argv[1], encoding="utf-8") as stream:
-              payload = json.load(stream)
-          if payload.get("status") != "ok" or payload.get("mode") != "PAPER_ONLY":
-              raise SystemExit("Liveness response is not the expected paper-only API")
-          if payload.get("orders_authorized") is not False:
-              raise SystemExit("Liveness response did not explicitly deny order authorization")
-          print("Staging API liveness is healthy and paper-only.")
-          PY
-
-          ready_code="000"
-          for attempt in $(seq 1 24); do
-            ready_code="$(curl -sS --connect-timeout 5 --max-time 10 \
-              -o "$temp_dir/ready.json" -w '%{http_code}' \
-              "$SOLO_STAGING_API_ORIGIN/readyz" || true)"
-            if [[ "$ready_code" == "200" ]]; then
-              python3 - "$temp_dir/ready.json" <<'PY'
-          import json, sys
-          with open(sys.argv[1], encoding="utf-8") as stream:
-              payload = json.load(stream)
-          if payload.get("status") != "ready":
-              raise SystemExit("Readiness endpoint returned HTTP 200 without ready status")
-          if payload.get("worker_status") != "RUNNING":
-              raise SystemExit("Readiness endpoint did not confirm a running worker")
-          if payload.get("orders_authorized") is not False:
-              raise SystemExit("Readiness endpoint did not explicitly deny order authorization")
-          print("Staging worker is ready; orders_authorized=false.")
-          PY
-              exit 0
-            fi
-            echo "Waiting for worker readiness: attempt $attempt/24 (HTTP $ready_code)"
-            sleep 10
-          done
-
-          echo "Staging API did not become ready within the bounded cold-start window: HTTP $ready_code"
-          [[ -f "$temp_dir/ready.json" ]] && cat "$temp_dir/ready.json"
-          exit 1
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          API_READY_URL: https://solo-ai-auto-trader-staging-api.onrender.com/readyz
+          WORKER_LIVENESS_URL: https://solo-futures-websocket-staging.onrender.com/healthz
+          RENDER_WORKER_SERVICE_ID: srv-dbhr5ign74is738detbg
+        run: python scripts/solo_independent_watchdog.py
