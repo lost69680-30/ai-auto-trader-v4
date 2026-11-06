@@ -1521,44 +1521,68 @@ private fun TraderApp() {
 @Composable
 private fun ResearchScreen() {
     val items = BackendSession.strategyResearchItems.value
+    val evaluatedCount = items.count { it.status.equals("EVALUATED", ignoreCase = true) }
+    val failedCount = items.count {
+        it.status.equals("FAILED", ignoreCase = true) ||
+            it.status.equals("ERROR", ignoreCase = true) ||
+            it.status.equals("REJECTED", ignoreCase = true)
+    }
+    val incompleteCount = items.size - evaluatedCount - failedCount
+
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp)
     ) {
         CardPanel {
             Text("SOLO STRATEGY RESEARCH", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
-            Text("Walk-forward evaluation history", color = White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                IndicatorRow("Research status", BackendSession.strategyResearchStatus.value)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Walk-forward history", color = White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Tag("PAPER ONLY", Green)
             }
-            Text(BackendSession.strategyResearchMessage.value, color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("RESEARCH STATUS", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .8.sp)
+                    Text(BackendSession.strategyResearchStatus.value, color = White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Text("${items.size} records", color = Muted, fontSize = 11.sp)
+            }
+            Text(BackendSession.strategyResearchMessage.value, color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ResearchCount("Evaluated", evaluatedCount, Gold, Modifier.weight(1f))
+                ResearchCount("Failed", failedCount, Red, Modifier.weight(1f))
+                ResearchCount("Incomplete", incompleteCount, Muted, Modifier.weight(1f))
+            }
             Text(
-                "Evaluations use archived Futures Testnet candles, fixed settings, estimated fees/slippage, disjoint validation windows and an untouched holdout. Results are historical diagnostics, not forecasts or recommendations.",
-                color = Muted, fontSize = 11.sp, lineHeight = 17.sp
+                "Historical diagnostics only — not forecasts, recommendations, or proof of profitability. Holdout data is not used for selection.",
+                color = Muted, fontSize = 10.sp, lineHeight = 14.sp
             )
         }
         if (items.isEmpty()) {
             CardPanel {
                 Text("No research evaluations recorded", color = White, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "This remains empty until the backend research schedule is explicitly enabled and has enough continuous archived candles. No experiments are fabricated.",
-                    color = Muted, fontSize = 12.sp, lineHeight = 18.sp
+                    "The summary will populate when the backend records evaluations. No experiments or outcomes are fabricated.",
+                    color = Muted, fontSize = 11.sp, lineHeight = 15.sp
                 )
             }
         } else {
             items.forEach { item ->
                 CardPanel {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text(displaySymbol(item.symbol), color = White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                        Tag(item.status, if (item.status == "EVALUATED") Green else Gold)
+                        Text(displaySymbol(item.symbol), color = White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Tag(item.status, if (item.status.equals("EVALUATED", ignoreCase = true)) Gold else Muted)
                     }
                     IndicatorRow("Validation folds", item.foldCount.toString())
-                    IndicatorRow("Holdout trades", item.holdoutTradeCount.toString())
-                    IndicatorRow(
-                        "Holdout net P&L",
-                        item.holdoutNetPnl?.let { String.format(Locale.US, "%.4f", it) } ?: "Unavailable"
-                    )
+                    if (item.holdoutTradeCount > 0) {
+                        IndicatorRow("Holdout trades", item.holdoutTradeCount.toString())
+                        IndicatorRow(
+                            "Holdout net P&L",
+                            item.holdoutNetPnl?.let { String.format(Locale.US, "%.4f", it) } ?: "Unavailable"
+                        )
+                    } else {
+                        IndicatorRow("Holdout trades", "None recorded")
+                        IndicatorRow("Holdout performance", "Not demonstrated")
+                    }
                     IndicatorRow("Dataset start", item.datasetStart)
                     IndicatorRow("Dataset end", item.datasetEnd)
                     Text("Experiment: ${item.experimentId}", color = Muted, fontSize = 9.sp)
@@ -1566,6 +1590,17 @@ private fun ResearchScreen() {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ResearchCount(label: String, count: Int, color: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier.background(PanelAlt, RoundedCornerShape(10.dp)).padding(horizontal = 9.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        Text(count.toString(), color = color, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = Muted, fontSize = 9.sp, maxLines = 1)
     }
 }
 
