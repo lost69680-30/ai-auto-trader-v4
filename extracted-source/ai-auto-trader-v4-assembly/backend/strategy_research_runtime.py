@@ -213,17 +213,21 @@ def build_strategy_research_handler(
                     failure_reasons=(),
                     orders_authorized=False,
                 )
-                memory.append(
-                    experiment,
-                    idempotency_key=f"solo-research:{fingerprint}",
-                )
-                evaluated.append(symbol)
-            except Exception as exc:
+            except (ValueError, TypeError) as exc:
                 skipped.append({"symbol": symbol, "reason": f"{type(exc).__name__}: {str(exc)}"[:180]})
                 logger.warning(
                     "strategy research skipped symbol=%s reason=%s orders_authorized=False",
                     symbol, type(exc).__name__,
                 )
+                continue
+
+            # Persistence failures must fail the scheduled job so the durable
+            # scheduler retries it; never turn a database outage into a partial success.
+            memory.append(
+                experiment,
+                idempotency_key=f"solo-research:{fingerprint}",
+            )
+            evaluated.append(symbol)
 
         if not evaluated:
             raise RuntimeError("strategy research completed; no symbols were evaluated")
