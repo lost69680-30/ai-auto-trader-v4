@@ -14,6 +14,7 @@ import math
 from typing import Callable, Iterable
 
 from backend.backtesting import BacktestConfig
+from backend.cost_sensitivity import summarize_validation_cost_sensitivity
 from backend.dataset_lineage import DatasetProvenance, candle_dataset_sha256
 from backend.external_strategy_intelligence import ExternalRuleSpec, assess_walk_forward_quality
 from backend.market_data_lineage import MarketDataIdentity, build_market_data_manifest
@@ -27,7 +28,7 @@ from backend.walk_forward import WalkForwardConfig, evaluate_walk_forward
 
 
 logger = logging.getLogger(__name__)
-_RESEARCH_VERSION = "solo-four-family-candidate-benchmark-v1"
+_RESEARCH_VERSION = "solo-four-family-candidate-benchmark-v2-cost-sensitivity"
 _RESEARCH_CANDIDATES = (
     ("trend_sma_cross", ExternalRuleSpec("SMA_CROSS", {"fast_period": 10, "slow_period": 30}, "ONE_BAR")),
     ("momentum_20", ExternalRuleSpec("MOMENTUM", {"lookback": 20, "threshold_pct": 0.15}, "ONE_BAR")),
@@ -303,6 +304,31 @@ def build_strategy_research_handler(
                         raise ValueError("walk-forward provenance does not match the canonical market-data manifest")
 
                     quality = assess_walk_forward_quality(result)
+                    cost_sensitivity = summarize_validation_cost_sensitivity(result)
+                    cost_sensitivity_summary = {
+                        "methodology": "recompute chronological validation trades at 1.0x, 1.5x and 2.0x recorded estimated costs; no untouched holdout data is read",
+                        "scenarios": [
+                            {
+                                "cost_multiplier": scenario.cost_multiplier,
+                                "fold_count": scenario.fold_count,
+                                "trade_count": scenario.trade_count,
+                                "winning_trades": scenario.winning_trades,
+                                "win_rate_pct": scenario.win_rate_pct,
+                                "total_gross_pnl": scenario.total_gross_pnl,
+                                "total_estimated_costs": scenario.total_estimated_costs,
+                                "total_net_pnl": scenario.total_net_pnl,
+                                "mean_net_return_pct": scenario.mean_net_return_pct,
+                                "mean_excess_return_pct": scenario.mean_excess_return_pct,
+                                "positive_fold_pct": scenario.positive_fold_pct,
+                                "maximum_fold_drawdown_pct": scenario.maximum_fold_drawdown_pct,
+                                "orders_authorized": False,
+                                "holdout_used": False,
+                            }
+                            for scenario in cost_sensitivity.scenarios
+                        ],
+                        "orders_authorized": False,
+                        "holdout_used": False,
+                    }
                     quality_summary = {
                         "status": quality.status,
                         "fold_count": quality.fold_count,
@@ -342,6 +368,7 @@ def build_strategy_research_handler(
                             "funding_bps_per_8h": bt_config.funding_bps_per_8h,
                             "minimum_signal_score": bt_config.minimum_signal_score,
                         },
+                        "cost_sensitivity_multipliers": [1.0, 1.5, 2.0],
                     }
                     fingerprint = _canonical_digest(fingerprint_material)
                     folds = tuple(_window_summary(fold, used_for_selection=False) for fold in result.folds)
@@ -363,6 +390,7 @@ def build_strategy_research_handler(
                         "untouched_holdout": holdout,
                         "holdout_used_for_selection": False,
                         "validation_quality": quality_summary,
+                        "cost_sensitivity": cost_sensitivity_summary,
                         "warnings": list(result.warnings),
                         "orders_authorized": False,
                     }
