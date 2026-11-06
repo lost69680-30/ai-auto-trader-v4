@@ -30,7 +30,44 @@ def manifest(*, start=None, end=None, source_id="learning-source", digest="a" * 
     )
 
 
-def experiment(*, status="EVALUATED", holdout_used=False, nested_holdout_used=False):
+def experiment(
+    *, status="EVALUATED", holdout_used=False, nested_holdout_used=False,
+    quality_status="EVALUATED", quality_fold_count=4, quality_trade_count=40,
+    quality_holdout_used=False, quality_orders_authorized=False,
+    include_quality=True,
+):
+    folds = [
+        {"strategy_net_return_pct": 2.0, "buy_hold_return_pct": 1.0,
+         "trade_count": 10, "max_drawdown_pct": 5.0,
+         "market_regime": {"trend_state": "UP", "volatility_state": "LOW", "trend_return_pct": 2.0, "realized_volatility_pct": 0.1, "observations": 39, "methodology": "test methodology", "orders_authorized": False}},
+        {"strategy_net_return_pct": 3.0, "buy_hold_return_pct": 1.0,
+         "trade_count": 10, "max_drawdown_pct": 5.0,
+         "market_regime": {"trend_state": "DOWN", "volatility_state": "HIGH", "trend_return_pct": -2.0, "realized_volatility_pct": 1.2, "observations": 39, "methodology": "test methodology", "orders_authorized": False}},
+        {"strategy_net_return_pct": 2.5, "buy_hold_return_pct": 1.0,
+         "trade_count": 10, "max_drawdown_pct": 5.0,
+         "market_regime": {"trend_state": "UP", "volatility_state": "MEDIUM", "trend_return_pct": 1.5, "realized_volatility_pct": 0.5, "observations": 39, "methodology": "test methodology", "orders_authorized": False}},
+        {"strategy_net_return_pct": 1.5, "buy_hold_return_pct": 1.0,
+         "trade_count": 10, "max_drawdown_pct": 5.0,
+         "market_regime": {"trend_state": "RANGE", "volatility_state": "LOW", "trend_return_pct": 0.2, "realized_volatility_pct": 0.1, "observations": 39, "methodology": "test methodology", "orders_authorized": False}},
+    ]
+    outcomes = {
+        "validation_folds": folds,
+        "untouched_holdout": {"strategy_net_return_pct": 1.0, "used_for_selection": nested_holdout_used},
+        "holdout_used_for_selection": holdout_used,
+        "orders_authorized": False,
+    }
+    if include_quality:
+        outcomes["validation_quality"] = {
+            "status": quality_status,
+            "fold_count": quality_fold_count,
+            "total_validation_trades": quality_trade_count,
+            "mean_excess_return_pct": 1.25,
+            "positive_fold_pct": 100.0,
+            "maximum_fold_drawdown_pct": 5.0,
+            "failure_reasons": [],
+            "holdout_used": quality_holdout_used,
+            "orders_authorized": quality_orders_authorized,
+        }
     return StrategyResearchExperiment(
         experiment_id="exp-001",
         candidate_id="candidate-001",
@@ -41,21 +78,10 @@ def experiment(*, status="EVALUATED", holdout_used=False, nested_holdout_used=Fa
         dataset_end=NOW - timedelta(days=1),
         configuration_version="wf-v1",
         assumptions={"fee_bps_per_side": 4, "orders_authorized": False, "market_data_manifest": manifest().to_dict()},
-        outcomes={
-            "validation_folds": [
-                {"strategy_net_return_pct": 2.0, "buy_hold_return_pct": 1.0,
-                 "market_regime": {"trend_state": "UP", "volatility_state": "LOW", "trend_return_pct": 2.0, "realized_volatility_pct": 0.1, "observations": 39, "methodology": "test methodology", "orders_authorized": False}},
-                {"strategy_net_return_pct": 3.0, "buy_hold_return_pct": 1.0,
-                 "market_regime": {"trend_state": "DOWN", "volatility_state": "HIGH", "trend_return_pct": -2.0, "realized_volatility_pct": 1.2, "observations": 39, "methodology": "test methodology", "orders_authorized": False}},
-            ],
-            "untouched_holdout": {"strategy_net_return_pct": 1.0, "used_for_selection": nested_holdout_used},
-            "holdout_used_for_selection": holdout_used,
-            "orders_authorized": False,
-        },
+        outcomes=outcomes,
         status=status,
         orders_authorized=False,
     )
-
 
 def proposal(dataset, *, weights=None, agent_kind="GAT", dataset_fingerprint=None):
     return ResearchLearningProposal(
@@ -74,7 +100,7 @@ def test_learning_dataset_uses_only_validated_folds_and_excludes_holdout():
     snapshot = build_research_dataset([experiment()])
 
     assert snapshot.source_experiment_ids == ("exp-001",)
-    assert len(snapshot.validation_rows) == 2
+    assert len(snapshot.validation_rows) == 4
     assert "untouched_holdout" not in str(snapshot.validation_rows)
     assert snapshot.validation_rows[0]["market_regime"]["trend_state"] == "UP"
     assert snapshot.orders_authorized is False
@@ -90,6 +116,23 @@ def test_learning_dataset_uses_only_validated_folds_and_excludes_holdout():
 )
 def test_learning_dataset_rejects_unapproved_or_leaked_experiments(item):
     with pytest.raises(ValueError):
+        build_research_dataset([item])
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        experiment(quality_status="REJECTED"),
+        experiment(quality_status="INSUFFICIENT_DATA"),
+        experiment(quality_fold_count=3),
+        experiment(quality_trade_count=20),
+        experiment(quality_holdout_used=True),
+        experiment(quality_orders_authorized=True),
+        experiment(include_quality=False),
+    ],
+)
+def test_learning_dataset_rejects_unqualified_or_inconsistent_quality_reports(item):
+    with pytest.raises(ValueError, match="quality"):
         build_research_dataset([item])
 
 
