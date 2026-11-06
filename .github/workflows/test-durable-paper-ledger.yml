@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: durable-paper-ledger-tests
+  group: durable-paper-ledger-tests-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
