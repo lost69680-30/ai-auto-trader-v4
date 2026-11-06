@@ -5,7 +5,7 @@ import org.junit.Test
 
 class ResearchValidationQualityTest {
     @Test
-    fun acceptedValidationCountsAsPassed() {
+    fun onlyExplicitPassedValidationCountsAsPassed() {
         assertEquals(ResearchValidationBucket.PASSED, researchValidationBucket("PASSED"))
         assertEquals(ResearchValidationBucket.INCOMPLETE, researchValidationBucket("EVALUATED"))
     }
