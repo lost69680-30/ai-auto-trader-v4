@@ -108,3 +108,38 @@ def test_equity_snapshot_runner_rejects_invalid_baseline_before_writing():
             clock=lambda: 123.0,
         )
     assert ledger.called is False
+
+
+def test_candle_archive_factory_does_not_construct_writer_when_disabled(monkeypatch):
+    from backend import shared_market_worker
+
+    constructed = []
+
+    def fake_archive(dsn):
+        constructed.append(dsn)
+        return object()
+
+    monkeypatch.setattr(shared_market_worker, "PostgresCandleArchive", fake_archive)
+
+    assert shared_market_worker.create_candle_archive(
+        "postgresql://staging", enabled=False
+    ) is None
+    assert constructed == []
+
+
+def test_candle_archive_factory_constructs_writer_only_when_explicitly_enabled(monkeypatch):
+    from backend import shared_market_worker
+
+    archive = object()
+    constructed = []
+
+    def fake_archive(dsn):
+        constructed.append(dsn)
+        return archive
+
+    monkeypatch.setattr(shared_market_worker, "PostgresCandleArchive", fake_archive)
+
+    assert shared_market_worker.create_candle_archive(
+        "postgresql://staging", enabled=True
+    ) is archive
+    assert constructed == ["postgresql://staging"]
