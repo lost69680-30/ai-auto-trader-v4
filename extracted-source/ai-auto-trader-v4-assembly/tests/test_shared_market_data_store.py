@@ -44,11 +44,12 @@ def reset_tables():
         root / "supabase/migrations/20261030195452_create_shared_market_data.sql",
         root / "supabase/migrations/20261030195505_create_durable_scheduled_jobs.sql",
         root / "supabase/migrations/20261031155011_create_market_intelligence_reports.sql",
+        root / "supabase/migrations/20261031170000_create_opportunity_registry.sql",
     )
     with psycopg.connect(DSN, autocommit=True) as conn:
         for migration in migrations:
             conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
-        conn.execute("TRUNCATE paper_ledger.market_intelligence_reports, paper_ledger.market_feed_snapshots, paper_ledger.market_worker_heartbeats, paper_ledger.scheduled_jobs, paper_ledger.scheduled_job_definitions")
+        conn.execute("TRUNCATE paper_ledger.opportunity_claims, paper_ledger.opportunity_watch_conditions, paper_ledger.opportunity_evidence, paper_ledger.opportunity_assessments, paper_ledger.opportunity_events, paper_ledger.opportunities, paper_ledger.market_intelligence_reports, paper_ledger.market_feed_snapshots, paper_ledger.market_worker_heartbeats, paper_ledger.scheduled_jobs, paper_ledger.scheduled_job_definitions")
 
 
 def healthy_poll(now):
@@ -284,4 +285,50 @@ def test_market_intelligence_publication_rejects_unsafe_and_future_payloads():
     future = {**base, "assessed_at": (now + timedelta(minutes=5)).isoformat()}
     with pytest.raises(ValueError, match="future-dated"):
         store.publish_intelligence(future, now=now)
+    store.release(now=now)
+
+
+def test_postgres_store_reclaims_expired_worker_lease_after_process_loss():
+    reset_tables()
+    now = datetime.now(timezone.utc)
+    first = PostgresMarketFeedStore(
+        DSN, worker_id="test-expired-worker", owner_id="owner-before-crash",
+        lease_seconds=30,
+    )
+    replacement = PostgresMarketFeedStore(
+        DSN, worker_id="test-expired-worker", owner_id="owner-after-crash",
+        lease_seconds=30,
+    )
+
+    assert first.acquire_lease(now=now) is True
+    assert replacement.acquire_lease(now=now + timedelta(seconds=29)) is False
+    assert replacement.acquire_lease(now=now + timedelta(seconds=31)) is True
+
+    with pytest.raises(RuntimeError, match="lease lost"):
+        first.heartbeat("RUNNING", now=now + timedelta(seconds=32))
+
+    replacement.heartbeat("RUNNING", now=now + timedelta(seconds=32))
+    replacement.release(now=now + timedelta(seconds=33))
+
+
+def test_postgres_store_reports_expired_running_lease_as_stale():
+    reset_tables()
+    now = datetime.now(timezone.utc)
+    store = PostgresMarketFeedStore(
+        DSN, worker_id="test-market-worker", owner_id="owner-expired",
+    )
+    assert store.acquire_lease(now=now) is True
+    expired_at = now - timedelta(seconds=120)
+    store.heartbeat(
+        "RUNNING",
+        now=expired_at,
+        details={"orders_authorized": False},
+    )
+
+    status = store.status()
+
+    assert status["status"] == "STALE"
+    assert status["worker_status"] == "STALE"
+    assert status["last_reported_worker_status"] == "RUNNING"
+    assert status["orders_authorized"] is False
     store.release(now=now)
