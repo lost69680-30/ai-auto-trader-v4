@@ -14,6 +14,7 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 from urllib.parse import parse_qs
@@ -54,6 +55,20 @@ def _safe_startup_error(exc: Exception) -> str:
         message = message.replace(dsn, "[database URI redacted]")
     message = " ".join(message.split())[:240]
     return f"{type(exc).__name__}: {message}"
+
+def _api_value(value):
+    if isinstance(value, datetime):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("API timestamps must be timezone-aware")
+        return value.astimezone(timezone.utc).isoformat()
+    if is_dataclass(value):
+        return _api_value(asdict(value))
+    if isinstance(value, dict):
+        return {str(key): _api_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_api_value(item) for item in value]
+    return value
+
 
 def _json_bytes(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), allow_nan=False).encode("utf-8")
@@ -142,6 +157,87 @@ def _fetch_candle_intervals(source, symbol: str, intervals: tuple[str, ...], lim
     return interval_payloads, interval_status, rows_by_interval
 
 
+def build_direct_market_history_payload(
+    *, source, symbol: str, allowed_symbols: Iterable[str],
+    start: datetime, end: datetime, limit: int, now: datetime | None = None,
+) -> dict[str, object]:
+    """Fetch bounded one-minute history directly from Binance public REST without persistence."""
+    if symbol not in allowed_symbols:
+        raise ValueError("symbol is not in the configured market allowlist")
+    if not isinstance(start, datetime) or start.tzinfo is None or start.utcoffset() is None:
+        raise ValueError("history start must be timezone-aware")
+    if not isinstance(end, datetime) or end.tzinfo is None or end.utcoffset() is None:
+        raise ValueError("history end must be timezone-aware")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 10000:
+        raise ValueError("history limit must be between 1 and 10000")
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        raise ValueError("history clock must be timezone-aware")
+    current = current.astimezone(timezone.utc)
+    start_utc = start.astimezone(timezone.utc)
+    end_utc = min(end.astimezone(timezone.utc), current)
+    if end_utc <= start_utc:
+        raise ValueError("history end must be later than start and not in the future")
+
+    cursor_ms = ((int(start_utc.timestamp() * 1000) + 59999) // 60000) * 60000
+    end_ms = int(end_utc.timestamp() * 1000) - 1
+    rows = []
+    while cursor_ms <= end_ms and len(rows) < limit:
+        page_limit = min(1500, limit - len(rows))
+        page = tuple(source.fetch_klines(
+            symbol, interval="1m", limit=page_limit, now=current,
+            start_time_ms=cursor_ms, end_time_ms=end_ms,
+        ))
+        if not page:
+            break
+        if len(page) > page_limit:
+            raise RuntimeError("historical market source exceeded its requested page size")
+        for row in page:
+            if getattr(row, "symbol", None) != symbol:
+                raise RuntimeError("historical market source returned a mismatched symbol")
+            opened = getattr(row, "open_time", None)
+            closed = getattr(row, "close_time", None)
+            if not isinstance(opened, datetime) or opened.tzinfo is None or opened.utcoffset() is None:
+                raise RuntimeError("historical market source returned an invalid candle timestamp")
+            if not isinstance(closed, datetime) or closed.tzinfo is None or closed.utcoffset() is None:
+                raise RuntimeError("historical market source returned an invalid candle close timestamp")
+            opened = opened.astimezone(timezone.utc)
+            if opened.timestamp() * 1000 < cursor_ms or opened.timestamp() * 1000 > end_ms:
+                raise RuntimeError("historical market source returned a candle outside the requested range")
+            if getattr(row, "is_closed", False) is not True or closed.astimezone(timezone.utc) >= current:
+                continue
+            if rows:
+                previous_ms = int(rows[-1].open_time.timestamp() * 1000)
+                current_ms = int(opened.timestamp() * 1000)
+                if current_ms - previous_ms != 60000:
+                    raise RuntimeError("historical market source returned a missing or duplicate one-minute candle")
+            rows.append(row)
+        last_open_ms = int(page[-1].open_time.timestamp() * 1000)
+        next_cursor_ms = last_open_ms + 60000
+        if next_cursor_ms <= cursor_ms:
+            raise RuntimeError("historical market pagination did not advance")
+        cursor_ms = next_cursor_ms
+        if len(page) < page_limit:
+            break
+
+    return {
+        "symbol": symbol,
+        "venue": "BINANCE_USDM_TESTNET",
+        "market_type": "FUTURES",
+        "interval": "1m",
+        "candles": [{
+            "open_time": row.open_time.isoformat(),
+            "close_time": row.close_time.isoformat(),
+            "open": row.open, "high": row.high, "low": row.low,
+            "close": row.close, "volume": row.volume, "is_closed": True,
+        } for row in rows],
+        "history_source": "BINANCE_PUBLIC_REST_ON_DEMAND",
+        "persistent_candle_storage": False,
+        "orders_authorized": False,
+        "mode": "PAPER_ONLY",
+    }
+
+
 def build_market_candle_payload(
     *, source, symbol: str, allowed_symbols: Iterable[str],
     intervals: tuple[str, ...], limit: int,
@@ -175,7 +271,9 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                market_history: Callable[[str, datetime, datetime, int], dict] | None = None,
                account_status: Callable[[], dict] | None = None,
                analysis_status: Callable[[], dict] | None = None,
-               market_intelligence: Callable[[], dict] | None = None):
+               market_intelligence: Callable[[], dict] | None = None,
+               research_experiments: Callable[[], list[dict]] | None = None,
+               opportunity_registry=None):
     """Create WSGI app. A strong API token is mandatory; no permissive defaults."""
     if not isinstance(token, str) or len(token) < 32:
         raise ValueError("API token must be at least 32 characters; configure it as a secret")
@@ -407,6 +505,113 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                         "orders_authorized": False,
                     }), "503 Service Unavailable"
 
+            elif method == "GET" and path == "/api/v1/research/experiments":
+                try:
+                    if research_experiments is None:
+                        raise RuntimeError("strategy research memory is not configured")
+                    items = research_experiments()
+                    if (
+                        not isinstance(items, list)
+                        or len(items) > 100
+                        or any(
+                            not isinstance(item, dict)
+                            or item.get("orders_authorized") is not False
+                            for item in items
+                        )
+                    ):
+                        raise ValueError("research memory returned invalid or unsafe records")
+                    body, status = _json_bytes({
+                        "status": "HEALTHY" if items else "EMPTY",
+                        "items": items,
+                        "orders_authorized": False,
+                        "mode": "PAPER_ONLY",
+                    }), "200 OK"
+                except Exception:
+                    body, status = _json_bytes({
+                        "status": "UNAVAILABLE", "items": [],
+                        "reason": "strategy research memory unavailable",
+                        "orders_authorized": False, "mode": "PAPER_ONLY",
+                    }), "503 Service Unavailable"
+
+            elif path == "/api/v1/opportunities":
+                try:
+                    if opportunity_registry is None:
+                        raise RuntimeError("opportunity registry is not configured")
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    def one(name):
+                        values = query.get(name, [])
+                        if len(values) > 1:
+                            raise ValueError(f"{name} must be supplied at most once")
+                        return values[0].strip() if values else None
+                    symbol = one("symbol")
+                    market_type = one("market_type")
+                    venue = one("venue")
+                    cursor = one("cursor")
+                    raw_limit = one("limit") or "50"
+                    if not raw_limit.isdigit() or not 1 <= int(raw_limit) <= 100:
+                        raise ValueError("limit must be between 1 and 100")
+                    states = tuple(value for item in query.get("state", []) for value in item.split(",") if value)
+                    if (market_type is None) != (venue is None):
+                        raise ValueError("market_type and venue must be supplied together")
+                    page = opportunity_registry.list_opportunities(
+                        states=states or None, symbol=symbol or None,
+                        market_type=market_type, venue=venue,
+                        limit=int(raw_limit), cursor=cursor,
+                    )
+                    items = _api_value(page.items)
+                    if any(not isinstance(item, dict) or item.get("orders_authorized") is not False for item in items):
+                        raise ValueError("opportunity registry returned an unsafe record")
+                    body, status = _json_bytes({
+                        "items": items, "next_cursor": page.next_cursor,
+                        "orders_authorized": False, "mode": "PAPER_ONLY",
+                    }), "200 OK"
+                except ValueError:
+                    body, status = _json_bytes({"error": "invalid_opportunity_query", "orders_authorized": False}), "400 Bad Request"
+                except Exception:
+                    body, status = _json_bytes({"error": "opportunities_unavailable", "orders_authorized": False}), "503 Service Unavailable"
+            elif path.startswith("/api/v1/opportunities/"):
+                try:
+                    if opportunity_registry is None:
+                        raise RuntimeError("opportunity registry is not configured")
+                    suffix = path[len("/api/v1/opportunities/"):]
+                    parts = suffix.split("/")
+                    if not parts[0] or len(parts[0]) > 160 or not all(ch.isalnum() or ch in "-_" for ch in parts[0]):
+                        raise ValueError("invalid opportunity id")
+                    opportunity_id = parts[0]
+                    if len(parts) == 1:
+                        record = opportunity_registry.get_opportunity(opportunity_id)
+                        if record is None:
+                            body, status = _json_bytes({"error": "not_found", "orders_authorized": False}), "404 Not Found"
+                        else:
+                            payload = _api_value(record)
+                            if payload.get("orders_authorized") is not False:
+                                raise ValueError("opportunity record is unsafe")
+                            body, status = _json_bytes({
+                                "opportunity": payload,
+                                "orders_authorized": False, "mode": "PAPER_ONLY",
+                            }), "200 OK"
+                    elif len(parts) == 2 and parts[1] in {"events", "assessments", "evidence"}:
+                        if opportunity_registry.get_opportunity(opportunity_id) is None:
+                            body, status = _json_bytes({"error": "not_found", "orders_authorized": False}), "404 Not Found"
+                        else:
+                            method_name = {
+                                "events": "list_events",
+                                "assessments": "list_assessments",
+                                "evidence": "list_evidence",
+                            }[parts[1]]
+                            records = _api_value(getattr(opportunity_registry, method_name)(opportunity_id))
+                            if any(not isinstance(item, dict) or item.get("orders_authorized") is not False for item in records):
+                                raise ValueError("opportunity history returned an unsafe record")
+                            body, status = _json_bytes({
+                                "items": records, "orders_authorized": False, "mode": "PAPER_ONLY",
+                            }), "200 OK"
+                    else:
+                        body, status = _json_bytes({"error": "not_found", "orders_authorized": False}), "404 Not Found"
+                except ValueError:
+                    body, status = _json_bytes({"error": "invalid_opportunity_request", "orders_authorized": False}), "400 Bad Request"
+                except Exception:
+                    body, status = _json_bytes({"error": "opportunity_unavailable", "orders_authorized": False}), "503 Service Unavailable"
+
             elif path in ("/api/v1/positions", "/api/v1/orders", "/api/v1/fills", "/api/v1/audit", "/api/v1/funding"):
                 try:
                     with _open_ledger(database_path) as ledger:
@@ -617,6 +822,27 @@ class MarketFeedCache:
             return [dict(item) for item in self._items]
 
 
+
+def _load_api_token(environ=None) -> str:
+    """Read the bearer secret without accidental surrounding whitespace."""
+    values = os.environ if environ is None else environ
+    return values.get("PAPER_API_TOKEN", "").strip()
+
+
+def _configured_market_symbols(environ=None) -> tuple[str, ...]:
+    """Resolve API symbols from the explicit market allowlist or shared PAPER_SYMBOLS."""
+    values = os.environ if environ is None else environ
+    if "PAPER_MARKET_SYMBOLS" in values:
+        raw = values.get("PAPER_MARKET_SYMBOLS", "")
+    elif "PAPER_SYMBOLS" in values:
+        raw = values.get("PAPER_SYMBOLS", "")
+    else:
+        raw = "BTCUSDT,ETHUSDT"
+    return tuple(dict.fromkeys(
+        item.strip().upper() for item in raw.split(",") if item.strip()
+    ))
+
+
 def main() -> None:
     """Run the authenticated read-only API and independent public market poller."""
     if os.environ.get("PAPER_MARKET_SUPERVISOR_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
@@ -633,15 +859,14 @@ def main() -> None:
     from backend.binance_spot_testnet_account import BinanceSpotTestnetAccountClient
     from backend.market_worker import MarketDataWorker, MarketWorkerConfig
 
-    token = os.environ.get("PAPER_API_TOKEN", "")
+    token = _load_api_token()
     database = os.environ.get("PAPER_DATABASE_PATH", "./data/paper-ledger.sqlite3")
     host = os.environ.get("PAPER_API_HOST", "127.0.0.1")
     port = int(os.environ.get("PAPER_API_PORT", "8080"))
     if host not in ("127.0.0.1", "localhost") and os.environ.get("PAPER_API_HTTPS_TERMINATED") != "1":
         raise SystemExit("Refusing non-loopback bind unless HTTPS termination is configured")
     max_age = float(os.environ.get("PAPER_MAX_MARKET_AGE_SECONDS", "90"))
-    symbols_raw = os.environ.get("PAPER_MARKET_SYMBOLS", "BTCUSDT,ETHUSDT")
-    symbols = tuple(dict.fromkeys(item.strip().upper() for item in symbols_raw.split(",") if item.strip()))
+    symbols = _configured_market_symbols()
     interval = os.environ.get("PAPER_MARKET_INTERVAL", "1m")
     poll_interval = float(os.environ.get("PAPER_MARKET_POLL_INTERVAL_SECONDS", "15"))
     candle_limit = int(os.environ.get("PAPER_MARKET_CANDLE_LIMIT", "100"))
@@ -754,32 +979,16 @@ def main() -> None:
         )
 
     market_history = None
-    if testnet and market_mode == "futures" and os.environ.get("PAPER_DATABASE_URL", "").strip():
-        from backend.historical_candle_archive import PostgresCandleArchive
-        history_archive = PostgresCandleArchive(os.environ["PAPER_DATABASE_URL"])
-
+    if testnet and market_mode == "futures":
         def market_history(symbol: str, start: datetime, end: datetime, limit: int) -> dict:
-            if symbol not in symbols:
-                raise ValueError("symbol is not in the configured market allowlist")
-            rows = history_archive.read_closed_candles(
-                venue="BINANCE_USDM_TESTNET", market_type="FUTURES",
-                symbol=symbol, start=start, end=end, limit=limit,
+            return build_direct_market_history_payload(
+                source=source, symbol=symbol, allowed_symbols=symbols,
+                start=start, end=end, limit=limit,
             )
-            return {
-                "symbol": symbol,
-                "venue": "BINANCE_USDM_TESTNET",
-                "market_type": "FUTURES",
-                "interval": "1m",
-                "candles": [{
-                    "open_time": row.open_time.isoformat(),
-                    "close_time": row.close_time.isoformat(),
-                    "open": row.open, "high": row.high, "low": row.low,
-                    "close": row.close, "volume": row.volume, "is_closed": True,
-                } for row in rows],
-                "orders_authorized": False,
-                "mode": "PAPER_ONLY",
-            }
-        logging.info("Authenticated read-only historical candle archive endpoint enabled for Futures Testnet")
+        logging.info(
+            "Authenticated read-only historical candles use bounded on-demand Binance REST retrieval; "
+            "raw candles are not persisted"
+        )
 
     stop = threading.Event()
 
@@ -820,6 +1029,31 @@ def main() -> None:
         poller.start()
     else:
         logging.info("API-only role enabled; no local market poller or analysis worker will be started")
+    opportunity_registry = None
+    research_experiments = None
+    if os.environ.get("PAPER_DATABASE_URL", "").strip():
+        from backend.opportunity_store import PostgresOpportunityStore
+        from backend.strategy_research_memory import PostgresStrategyResearchMemory
+        opportunity_registry = PostgresOpportunityStore(os.environ["PAPER_DATABASE_URL"])
+        research_memory = PostgresStrategyResearchMemory(os.environ["PAPER_DATABASE_URL"])
+
+        def research_experiments() -> list[dict]:
+            return [{
+                "experiment_id": item.experiment_id,
+                "candidate_id": item.candidate_id,
+                "candidate_fingerprint": item.candidate_fingerprint,
+                "source_provenance_id": item.source_provenance_id,
+                "experiment_version": item.experiment_version,
+                "dataset_start": _api_value(item.dataset_start),
+                "dataset_end": _api_value(item.dataset_end),
+                "configuration_version": item.configuration_version,
+                "assumptions": dict(item.assumptions),
+                "outcomes": dict(item.outcomes),
+                "status": item.status,
+                "failure_reasons": list(item.failure_reasons),
+                "orders_authorized": False,
+            } for item in research_memory.list_recent(limit=20)]
+
     try:
         http_app = create_app(database_path=database, token=token,
                               market_status=cache.status, market_items=cache.items,
@@ -827,7 +1061,9 @@ def main() -> None:
                               market_history=market_history,
                               account_status=binance_testnet_account.account_summary,
                               analysis_status=(cache.analysis_status if hasattr(cache, "analysis_status") else analysis_health.status),
-                              market_intelligence=(cache.market_intelligence if hasattr(cache, "market_intelligence") else None))
+                              market_intelligence=(cache.market_intelligence if hasattr(cache, "market_intelligence") else None),
+                              research_experiments=research_experiments,
+                              opportunity_registry=opportunity_registry)
         if enable_websocket:
             if len(token) < 32:
                 raise SystemExit("PAPER_WEBSOCKET_ENABLED requires a PAPER_API_TOKEN of at least 32 characters")
