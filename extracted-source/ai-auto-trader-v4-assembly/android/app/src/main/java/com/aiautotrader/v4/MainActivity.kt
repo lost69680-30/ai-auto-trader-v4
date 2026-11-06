@@ -323,6 +323,25 @@ private data class MarketIntelligenceFetchResult(
     val scanAttempts: Int = 0,
 )
 
+private data class StrategyResearchExperimentItem(
+    val experimentId: String,
+    val symbol: String,
+    val status: String,
+    val datasetStart: String,
+    val datasetEnd: String,
+    val foldCount: Int,
+    val holdoutNetPnl: Double?,
+    val holdoutTradeCount: Int,
+    val ordersAuthorized: Boolean,
+)
+
+private data class StrategyResearchFetchResult(
+    val status: String,
+    val message: String,
+    val items: List<StrategyResearchExperimentItem>,
+    val safeResponse: Boolean,
+)
+
 // App-level observable state deliberately lives above individual navigation screens.
 // Removing a composable from the screen tree must not erase an authenticated session.
 private object BackendSession {
@@ -353,6 +372,9 @@ private object BackendSession {
     val marketIntelligenceScanStartedAt = mutableStateOf("")
     val marketIntelligenceScanCompletedAt = mutableStateOf("")
     val marketIntelligenceScanAttempts = mutableStateOf(0)
+    val strategyResearchItems = mutableStateOf<List<StrategyResearchExperimentItem>>(emptyList())
+    val strategyResearchStatus = mutableStateOf("NOT CHECKED")
+    val strategyResearchMessage = mutableStateOf("Research evaluation has not been loaded.")
     // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
     val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
     val paperLedger = mutableStateOf<PaperLedgerSnapshot?>(null)
@@ -1107,6 +1129,76 @@ private fun fetchMarketIntelligence(token: String): MarketIntelligenceFetchResul
     }
 }
 
+private fun fetchStrategyResearchExperiments(token: String): StrategyResearchFetchResult {
+    val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
+    if (!base.startsWith("https://") || token.length < 32) {
+        return StrategyResearchFetchResult(
+            "NOT CONFIGURED", "A valid authenticated HTTPS backend session is required.",
+            emptyList(), false
+        )
+    }
+    val connection = URL("$base/api/v1/research/experiments").openConnection() as HttpURLConnection
+    try {
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 10000
+        connection.readTimeout = 15000
+        connection.setRequestProperty("Authorization", "Bearer $token")
+        connection.setRequestProperty("Accept", "application/json")
+        connection.useCaches = false
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        val raw = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        if (code !in 200..299 || raw.isBlank()) {
+            return StrategyResearchFetchResult(
+                if (code == 401) "UNAUTHORIZED" else "UNAVAILABLE",
+                "Research history endpoint is unavailable (HTTP $code).", emptyList(), false
+            )
+        }
+        val root = JSONObject(raw)
+        if (root.optString("mode") != "PAPER_ONLY" || root.optBoolean("orders_authorized", true)) {
+            return StrategyResearchFetchResult(
+                "UNSAFE RESPONSE", "Research history did not confirm paper-only authorization.", emptyList(), false
+            )
+        }
+        val array = root.optJSONArray("items") ?: JSONArray()
+        val items = mutableListOf<StrategyResearchExperimentItem>()
+        for (index in 0 until array.length()) {
+            val row = array.optJSONObject(index)
+                ?: return StrategyResearchFetchResult("UNSAFE RESPONSE", "Research record was malformed.", emptyList(), false)
+            if (row.optBoolean("orders_authorized", true)) {
+                return StrategyResearchFetchResult("UNSAFE RESPONSE", "A research record did not explicitly disable order authorization.", emptyList(), false)
+            }
+            val outcomes = row.optJSONObject("outcomes") ?: JSONObject()
+            val holdout = outcomes.optJSONObject("holdout") ?: JSONObject()
+            val netPnl = holdout.optDouble("net_pnl", Double.NaN)
+            items += StrategyResearchExperimentItem(
+                experimentId = row.optString("experiment_id", ""),
+                symbol = row.optString("candidate_id", "").substringAfterLast(":"),
+                status = row.optString("status", "UNKNOWN"),
+                datasetStart = row.optString("dataset_start", ""),
+                datasetEnd = row.optString("dataset_end", ""),
+                foldCount = outcomes.optJSONArray("folds")?.length() ?: 0,
+                holdoutNetPnl = netPnl.takeIf { it.isFinite() },
+                holdoutTradeCount = holdout.optInt("trade_count", 0),
+                ordersAuthorized = false,
+            )
+        }
+        return StrategyResearchFetchResult(
+            root.optString("status", "UNKNOWN"),
+            if (items.isEmpty()) "No completed research evaluations have been recorded yet."
+            else "Showing ${items.size} recent paper-only walk-forward evaluations.",
+            items, true
+        )
+    } catch (e: Exception) {
+        return StrategyResearchFetchResult(
+            "UNAVAILABLE", "Research history request failed (${e.javaClass.simpleName}).",
+            emptyList(), false
+        )
+    } finally {
+        connection.disconnect()
+    }
+}
+
 private fun fetchCandleHistory(token: String, symbol: String): Map<String, List<MarketCandle>> {
     val base = BuildConfig.PAPER_API_BASE_URL.trimEnd('/')
     if (!base.startsWith("https://") || token.length < 32 || normalizeSymbol(symbol).isBlank()) return emptyMap()
@@ -1286,6 +1378,32 @@ private fun BackendMarketIntelligenceEffect() {
 }
 
 @Composable
+private fun BackendStrategyResearchEffect() {
+    val sessionToken = BackendSession.activeToken.value
+    val isForeground = BackendSession.appInForeground.value
+
+    LaunchedEffect(sessionToken, isForeground) {
+        if (sessionToken.length >= 32 && isForeground) {
+            while (true) {
+                val response = withContext(Dispatchers.IO) {
+                    fetchStrategyResearchExperiments(sessionToken)
+                }
+                BackendSession.strategyResearchStatus.value = response.status
+                BackendSession.strategyResearchMessage.value = response.message
+                if (response.safeResponse) {
+                    BackendSession.strategyResearchItems.value = response.items
+                } else if (response.status == "UNSAFE RESPONSE" || response.status == "UNAUTHORIZED") {
+                    BackendSession.strategyResearchItems.value = emptyList()
+                }
+                delay(300_000)
+            }
+        } else {
+            BackendSession.strategyResearchStatus.value = "PAUSED"
+        }
+    }
+}
+
+@Composable
 private fun BackendMarketWebSocketEffect() {
     val sessionToken = BackendSession.activeToken.value
     val isForeground = BackendSession.appInForeground.value
@@ -1347,10 +1465,11 @@ private fun BackendMarketWebSocketEffect() {
 private fun TraderApp() {
     BackendMarketSessionEffect()
     BackendMarketIntelligenceEffect()
+    BackendStrategyResearchEffect()
     BackendMarketWebSocketEffect()
     PaperLedgerRefreshEffect()
     var screen by remember { mutableStateOf("Dashboard") }
-    val screens = listOf("Dashboard", "AI Agents", "Markets", "Opportunities", "Positions", "Risk Center", "Performance", "Notifications", "Security", "Settings")
+    val screens = listOf("Dashboard", "AI Agents", "Markets", "Opportunities", "Research", "Positions", "Risk Center", "Performance", "Notifications", "Security", "Settings")
     Column(Modifier.fillMaxSize().background(Background)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column {
@@ -1387,6 +1506,7 @@ private fun TraderApp() {
             "Charts & Analysis", "Markets" -> AnalysisScreen()
             "AI Agents" -> AgentNetworkScreen()
             "Opportunities" -> OpportunitiesScreen()
+            "Research" -> ResearchScreen()
             "Positions" -> PositionsScreen()
             "Risk Center" -> RiskCenterScreen()
             "Performance" -> PerformanceScreen()
@@ -1394,6 +1514,57 @@ private fun TraderApp() {
             "Security" -> SecurityScreen()
             "Settings" -> SettingsScreen()
             else -> DashboardScreen { screen = "Charts & Analysis" }
+        }
+    }
+}
+
+@Composable
+private fun ResearchScreen() {
+    val items = BackendSession.strategyResearchItems.value
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        CardPanel {
+            Text("SOLO STRATEGY RESEARCH", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+            Text("Walk-forward evaluation history", color = White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                IndicatorRow("Research status", BackendSession.strategyResearchStatus.value)
+                Tag("PAPER ONLY", Green)
+            }
+            Text(BackendSession.strategyResearchMessage.value, color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+            Text(
+                "Evaluations use archived Futures Testnet candles, fixed settings, estimated fees/slippage, disjoint validation windows and an untouched holdout. Results are historical diagnostics, not forecasts or recommendations.",
+                color = Muted, fontSize = 11.sp, lineHeight = 17.sp
+            )
+        }
+        if (items.isEmpty()) {
+            CardPanel {
+                Text("No research evaluations recorded", color = White, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "This remains empty until the backend research schedule is explicitly enabled and has enough continuous archived candles. No experiments are fabricated.",
+                    color = Muted, fontSize = 12.sp, lineHeight = 18.sp
+                )
+            }
+        } else {
+            items.forEach { item ->
+                CardPanel {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(displaySymbol(item.symbol), color = White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Tag(item.status, if (item.status == "EVALUATED") Green else Gold)
+                    }
+                    IndicatorRow("Validation folds", item.foldCount.toString())
+                    IndicatorRow("Holdout trades", item.holdoutTradeCount.toString())
+                    IndicatorRow(
+                        "Holdout net P&L",
+                        item.holdoutNetPnl?.let { String.format(Locale.US, "%.4f", it) } ?: "Unavailable"
+                    )
+                    IndicatorRow("Dataset start", item.datasetStart)
+                    IndicatorRow("Dataset end", item.datasetEnd)
+                    Text("Experiment: ${item.experimentId}", color = Muted, fontSize = 9.sp)
+                    SafetyRow("Order authorization", if (item.ordersAuthorized) "UNSAFE" else "DISABLED", if (item.ordersAuthorized) Red else Green)
+                }
+            }
         }
     }
 }
