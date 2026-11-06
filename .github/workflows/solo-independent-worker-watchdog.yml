@@ -1,6 +1,11 @@
 name: Solo Independent Worker Watchdog
 
 on:
+  push:
+    branches:
+      - test/solo-independent-watchdog-smoke
+    paths:
+      - ".github/workflows/solo-independent-worker-watchdog.yml"
   pull_request:
     paths:
       - ".github/workflows/solo-independent-worker-watchdog.yml"
@@ -32,7 +37,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_solo_independent_watchdog.py' -v
 
   monitor-and-recover:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
