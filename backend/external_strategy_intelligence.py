@@ -424,6 +424,10 @@ def evaluate_external_candidate(
             raise ValueError("market_data_identity must be a validated MarketDataIdentity")
         if market_data_identity.symbol != symbol:
             raise ValueError("market-data identity symbol must match the evaluation symbol")
+        if candidate.market_types and market_data_identity.market_type not in candidate.market_types:
+            raise ValueError("market-data identity market type is outside the candidate's published scope")
+        if candidate.timeframes and market_data_identity.interval not in candidate.timeframes:
+            raise ValueError("market-data identity interval is outside the candidate's published scope")
     rows = tuple(candles)
     from backend.walk_forward import evaluate_walk_forward
 
@@ -657,6 +661,14 @@ def persist_external_strategy_experiment(
         raise ValueError("canonical market-data manifest is required before persisting a research experiment")
     if not callable(getattr(manifest, "to_dict", None)):
         raise ValueError("walk-forward market-data manifest is invalid")
+    if (
+        manifest.symbol not in candidate.symbols
+        or manifest.market_type not in candidate.market_types
+        or manifest.interval not in candidate.timeframes
+    ):
+        raise ValueError("market-data manifest does not match the candidate's published market scope")
+    if manifest.start_timestamp != start or manifest.end_timestamp != end:
+        raise ValueError("market-data manifest window must exactly match the experiment dataset window")
     assumptions_payload["market_data_manifest"] = manifest.to_dict()
     assumptions_payload["source_provenance"] = {
         "source_name": candidate.source_name,
