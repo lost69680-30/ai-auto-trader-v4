@@ -2,9 +2,9 @@
 
 ## What this adds
 
-A GitHub-hosted scheduled monitor runs every ten minutes, outside the Render API and worker services. It calls the separate staging API's public `/readyz` endpoint, which reads the shared PostgreSQL worker heartbeat and validated market-feed readiness.
+A GitHub-hosted scheduled monitor runs every ten minutes, outside the Render API and worker services. It first calls the worker's minimal public `/healthz` endpoint to keep the Render Free web service awake, then calls the separate staging API's public `/readyz` endpoint, which reads the shared PostgreSQL worker heartbeat and validated market-feed readiness.
 
-The monitor distinguishes a confirmed worker-process/lease failure from ordinary data-feed degradation:
+The monitor gives a reachable worker 60 seconds to publish a fresh lease after waking, then distinguishes a confirmed worker-process/lease failure from ordinary data-feed degradation:
 - `status=ready`, `worker_status=RUNNING`, and `orders_authorized=false`: healthy; no restart.
 - `worker_status` is `STALE`, `STOPPED`, `ERROR`, or `MISSING`: confirmed worker heartbeat failure; one worker-service restart may be requested.
 - API unreachable, invalid response, `UNKNOWN`, or worker still `RUNNING` but readiness is degraded: fail closed and do not restart the worker. This avoids restarting a healthy process for a market-data outage or an API/network problem.
@@ -29,9 +29,9 @@ The readiness API is on a separate Render service and reads the shared worker he
 
 ## Recovery and safety limits
 
-- Scheduled interval: every ten minutes; GitHub Actions may delay scheduled runs.
+- Scheduled interval: every ten minutes; the worker liveness request also acts as a keepalive for Render Free, but GitHub Actions may delay scheduled runs.
 - At most one Render restart request is issued per workflow run.
-- Recovery is verified through the separate API's database-backed `/readyz` endpoint.
+- Recovery is verified through the separate API's database-backed `/readyz` endpoint; the worker `/healthz` endpoint is used only for keepalive/liveness.
 - No database writes, market-data mutations, exchange credentials, order endpoints, or trading permissions are used.
 - The readiness payload must explicitly report `orders_authorized=false`.
 - A stale market feed with a still-running worker does not trigger a restart.
