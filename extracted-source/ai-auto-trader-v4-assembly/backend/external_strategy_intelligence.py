@@ -6,7 +6,7 @@ probabilities, activates a strategy, or authorizes orders.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -15,6 +15,8 @@ from collections.abc import Mapping
 from urllib.parse import urlsplit
 from typing import Any
 from types import MappingProxyType
+
+from backend.market_data_lineage import MarketDataIdentity, build_market_data_manifest
 
 
 _SUPPORTED_RULE_FAMILIES = {
@@ -407,8 +409,9 @@ def evaluate_external_candidate(
     backtest_config: Any = None,
     research_config: Any = None,
     research_now: datetime,
+    market_data_identity: MarketDataIdentity | None = None,
 ):
-    """Run explicit external rules through the offline, cost-aware OOS harness."""
+    """Run explicit external rules and optionally bind the result to source candles."""
     if not isinstance(candidate, ExternalStrategyCandidate) or candidate.orders_authorized is not False:
         raise ValueError("a paper-only external strategy candidate is required")
     if not isinstance(candidate.rule_spec, ExternalRuleSpec):
@@ -416,17 +419,31 @@ def evaluate_external_candidate(
     symbol = _text(symbol, "evaluation symbol", 30)
     if candidate.symbols and symbol not in candidate.symbols:
         raise ValueError("evaluation symbol is outside the candidate's published market scope")
+    if market_data_identity is not None:
+        if not isinstance(market_data_identity, MarketDataIdentity):
+            raise ValueError("market_data_identity must be a validated MarketDataIdentity")
+        if market_data_identity.symbol != symbol:
+            raise ValueError("market-data identity symbol must match the evaluation symbol")
+        if candidate.market_types and market_data_identity.market_type not in candidate.market_types:
+            raise ValueError("market-data identity market type is outside the candidate's published scope")
+        if candidate.timeframes and market_data_identity.interval not in candidate.timeframes:
+            raise ValueError("market-data identity interval is outside the candidate's published scope")
+    rows = tuple(candles)
     from backend.walk_forward import evaluate_walk_forward
 
-    return evaluate_walk_forward(
+    result = evaluate_walk_forward(
         symbol,
-        candles,
+        rows,
         config=walk_forward_config,
         backtest_config=backtest_config,
         research_config=research_config,
         research_now=research_now,
         rule_spec=candidate.rule_spec,
     )
+    if market_data_identity is None:
+        return result
+    manifest = build_market_data_manifest(rows, market_data_identity)
+    return replace(result, market_data_manifest=manifest)
 
 
 @dataclass(frozen=True, slots=True)
@@ -639,6 +656,20 @@ def persist_external_strategy_experiment(
     assumptions_payload = dict(assumptions)
     if assumptions_payload.get("orders_authorized", False) is not False:
         raise ValueError("assumptions.orders_authorized must be false")
+    manifest = getattr(walk_forward_result, "market_data_manifest", None)
+    if manifest is None:
+        raise ValueError("canonical market-data manifest is required before persisting a research experiment")
+    if not callable(getattr(manifest, "to_dict", None)):
+        raise ValueError("walk-forward market-data manifest is invalid")
+    if (
+        manifest.symbol not in candidate.symbols
+        or manifest.market_type not in candidate.market_types
+        or manifest.interval not in candidate.timeframes
+    ):
+        raise ValueError("market-data manifest does not match the candidate's published market scope")
+    if manifest.start_timestamp != start or manifest.end_timestamp != end:
+        raise ValueError("market-data manifest window must exactly match the experiment dataset window")
+    assumptions_payload["market_data_manifest"] = manifest.to_dict()
     assumptions_payload["source_provenance"] = {
         "source_name": candidate.source_name,
         "source_url": candidate.source_url,
