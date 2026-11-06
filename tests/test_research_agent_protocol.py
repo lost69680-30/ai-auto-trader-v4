@@ -251,3 +251,16 @@ def test_specialist_run_cannot_be_constructed_complete_with_missing_role():
     )
     assert run.status == "INCOMPLETE"
     assert run.missing_roles == ("regime_analyst",)
+
+
+def test_specialist_message_exposes_versioned_contract():
+    run = execute_specialist_agents(
+        _snapshot(),
+        {"technical_analyst": lambda snapshot: {"ema20": 100.0}},
+        required_roles=("technical_analyst",),
+        as_of=NOW,
+        max_age_seconds=60,
+    )
+
+    assert run.messages[0].protocol_version == "1.0"
+    assert run.messages[0].orders_authorized is False
