@@ -33,6 +33,13 @@ def _env_bool(name: str, *, default: bool = False) -> bool:
     raise ValueError(f"{name} must be a boolean value")
 
 
+def create_candle_archive(dsn: str, *, enabled: bool):
+    """Create the persistent raw-candle writer only after explicit opt-in."""
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled must be an explicit boolean")
+    return PostgresCandleArchive(dsn) if enabled else None
+
+
 def run_scheduled_jobs(stop: threading.Event, scheduler: DurableJobScheduler,
                        dispatcher: AnalysisJobDispatcher, *, poll_interval: float = 1.0) -> None:
     """Run durable analysis jobs off the market-feed polling thread."""
@@ -160,10 +167,11 @@ def main() -> None:
                 raise SystemExit("historical candle archive is Testnet-only; refusing production market data")
             if app.config.candle_interval != "1m":
                 raise SystemExit("historical candle archive requires PAPER_CANDLE_INTERVAL=1m")
-                logger.warning("permanent candle archive explicitly enabled; PAPER_CANDLE_ARCHIVE_ENABLED=true")
-        else:
-            archive = None
+        archive = create_candle_archive(dsn, enabled=archive_enabled)
+        if archive is None:
             logger.info("stateless candle mode enabled; raw candles are fetched on demand and are not persisted")
+        else:
+            logger.warning("permanent candle archive explicitly enabled; PAPER_CANDLE_ARCHIVE_ENABLED=true")
         snapshot_runner = threading.Thread(
             target=run_equity_snapshot_scheduler,
             args=(stop, app.ledger),
@@ -176,7 +184,6 @@ def main() -> None:
             daemon=True,
         )
         snapshot_runner.start()
-        archive = PostgresCandleArchive(dsn)
         intelligence_handlers = {"market_feed_health_audit": market_feed_health_audit(store)}
         if intelligence_enabled:
             intelligence_candle_limit = int(
