@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from collections.abc import Mapping
 from typing import Any
 
@@ -105,23 +106,75 @@ def start_worker_health_server(port: int, *, host: str = "0.0.0.0"):
     return server
 
 
-def worker_heartbeat_requires_restart(
-    status: Any, *, uptime_seconds: float, startup_grace_seconds: float = 180.0
+def _scheduler_progress_is_stale(
+    status: Mapping[str, Any], *, now: datetime, stale_seconds: float,
 ) -> bool:
-    """Return true only for a confirmed stale/missing worker after startup grace.
+    """Detect a stalled durable-job runner without mistaking a failed job for a dead thread."""
+    details = status.get("details")
+    if not isinstance(details, Mapping):
+        return False
+    scheduler = details.get("scheduled_jobs")
+    if not isinstance(scheduler, Mapping):
+        return False
 
-    A database read exception is handled by the caller and must not be treated as
-    proof of worker failure. DEGRADED is deliberately not stale: a worker that is
-    still publishing fresh health is allowed to recover its data source.
+    progress_times = []
+    for field in ("last_poll_started_at", "last_poll_at"):
+        raw = scheduler.get(field)
+        if not isinstance(raw, str):
+            continue
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            continue
+        progress_times.append(parsed.astimezone(timezone.utc))
+    if not progress_times:
+        return False
+    age_seconds = (now.astimezone(timezone.utc) - max(progress_times)).total_seconds()
+    return age_seconds > stale_seconds
+
+
+def configured_scheduler_stale_seconds(environ: Mapping[str, str]) -> int:
+    """Read the scheduler watchdog threshold, bounded to avoid aggressive restarts."""
+    raw = environ.get("PAPER_SUPERVISOR_SCHEDULER_STALE_SECONDS", "900")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("PAPER_SUPERVISOR_SCHEDULER_STALE_SECONDS must be between 60 and 3600") from exc
+    if isinstance(value, bool) or not 60 <= value <= 3600:
+        raise ValueError("PAPER_SUPERVISOR_SCHEDULER_STALE_SECONDS must be between 60 and 3600")
+    return value
+
+
+def worker_heartbeat_requires_restart(
+    status: Any, *, uptime_seconds: float, startup_grace_seconds: float = 180.0,
+    scheduler_stale_seconds: float = 900.0, now: datetime | None = None,
+) -> bool:
+    """Restart only confirmed stale workers or workers with stalled scheduler progress.
+
+    A database read exception is handled by the caller and is not proof of worker
+    failure. Feed degradation or failed individual jobs do not trigger a restart
+    while heartbeat and scheduler progress timestamps continue advancing.
     """
     if uptime_seconds < startup_grace_seconds or not isinstance(status, dict):
         return False
     worker_status = status.get("worker_status")
-    # A STALE feed snapshot does not prove that the worker process is dead.
-    # Restart only when the heartbeat/lease itself is stale or the worker stopped.
-    return (
-        worker_status in {"STALE", "STOPPED", "ERROR", "MISSING"}
+    if (
+        status.get("status") == "STALE"
+        or worker_status in {"STALE", "STOPPED", "ERROR", "MISSING"}
         or status.get("lease_expired") is True
+    ):
+        return True
+    if (
+        isinstance(scheduler_stale_seconds, bool)
+        or not isinstance(scheduler_stale_seconds, (int, float))
+        or scheduler_stale_seconds <= 0
+    ):
+        raise ValueError("scheduler_stale_seconds must be positive")
+    return _scheduler_progress_is_stale(
+        status, now=now or datetime.now(timezone.utc),
+        stale_seconds=float(scheduler_stale_seconds),
     )
 
 
@@ -132,6 +185,8 @@ def main() -> None:
     max_market_age = max(5.0, float(os.environ.get("PAPER_MAX_MARKET_AGE_SECONDS", "90")))
     startup_grace = max(30.0, float(os.environ.get("PAPER_SUPERVISOR_WORKER_STARTUP_GRACE_SECONDS", "180")))
     health_check_interval = max(2.0, float(os.environ.get("PAPER_SUPERVISOR_WORKER_HEALTH_CHECK_SECONDS", "5")))
+    scheduler_stale_seconds = configured_scheduler_stale_seconds(os.environ)
+    restart_stable_seconds = max(60.0, float(os.environ.get("PAPER_SUPERVISOR_RESTART_STABLE_SECONDS", "300")))
     database_url = os.environ.get("PAPER_DATABASE_URL", "").strip()
     mode = os.environ.get("PAPER_MARKET_SUPERVISOR_MODE", "all")
     modules = configured_supervisor_modules(mode, worker_env, api_env)
@@ -168,6 +223,7 @@ def main() -> None:
         children[name] = {
             "process": proc, "started_at": time.monotonic(),
             "restart_delay": restart_delay, "next_start_at": None,
+            "healthy_since": None,
         }
 
     try:
@@ -188,19 +244,42 @@ def main() -> None:
                             # worker is dead. The API readiness check remains fail-closed.
                             logger.exception("worker heartbeat health check unavailable; preserving worker process")
                         else:
-                            if worker_heartbeat_requires_restart(
+                            restart_required = worker_heartbeat_requires_restart(
                                 worker_status,
                                 uptime_seconds=now - state["started_at"],
                                 startup_grace_seconds=startup_grace,
-                            ):
+                                scheduler_stale_seconds=scheduler_stale_seconds,
+                            )
+                            if restart_required:
+                                scheduler = (worker_status.get("details") or {}).get("scheduled_jobs", {})
                                 logger.error(
-                                    "worker heartbeat stale while process is alive; terminating for supervised recovery status=%s worker_status=%s age_seconds=%s",
+                                    "worker reliability watchdog detected stalled health; terminating for supervised recovery status=%s worker_status=%s age_seconds=%s scheduler_last_poll_at=%s",
                                     worker_status.get("status"),
                                     worker_status.get("worker_status"),
                                     worker_status.get("age_seconds"),
+                                    scheduler.get("last_poll_at") if isinstance(scheduler, dict) else None,
                                 )
+                                state["healthy_since"] = None
                                 proc.terminate()
-                    if now - state["started_at"] >= 30:
+                            else:
+                                age = worker_status.get("age_seconds")
+                                healthy = (
+                                    worker_status.get("status") in {"HEALTHY", "DEGRADED"}
+                                    and worker_status.get("worker_status") in {"RUNNING", "DEGRADED"}
+                                    and isinstance(age, (int, float))
+                                    and 0 <= age <= max_market_age
+                                )
+                                if healthy:
+                                    if state["healthy_since"] is None:
+                                        state["healthy_since"] = now
+                                    elif now - state["healthy_since"] >= restart_stable_seconds:
+                                        state["restart_delay"] = 1.0
+                                else:
+                                    state["healthy_since"] = None
+                        except Exception:
+                            state["healthy_since"] = None
+                            logger.exception("worker heartbeat health check unavailable; preserving worker process")
+                    elif name == "api" and now - state["started_at"] >= restart_stable_seconds:
                         state["restart_delay"] = 1.0
                     continue
                 if state["next_start_at"] is None:
