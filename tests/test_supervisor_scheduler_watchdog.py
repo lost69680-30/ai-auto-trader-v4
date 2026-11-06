@@ -64,6 +64,8 @@ def test_shared_market_status_exposes_diagnostic_details_to_supervisor_without_c
     now = datetime.now(timezone.utc)
     diagnostic = {
         "process_id": 1234,
+        "analysis_status": "ANALYSIS_FAILED: api_token=do-not-expose",
+        "analysis_error": "PrivateFailure: api_token=do-not-expose",
         "scheduled_jobs": {
             "last_poll_at": now.isoformat(),
             "last_error": "PrivateFailure: api_token=do-not-expose",
@@ -72,6 +74,8 @@ def test_shared_market_status_exposes_diagnostic_details_to_supervisor_without_c
     }
     expected_diagnostic = {
         "process_id": 1234,
+        "analysis_status": "ANALYSIS_FAILED",
+        "analysis_error_type": "PrivateFailure",
         "scheduled_jobs": {
             "last_poll_at": now.isoformat(),
             "last_error_type": "PrivateFailure",
