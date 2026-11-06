@@ -226,7 +226,7 @@ def build_strategy_research_handler(
                 )
 
         if not evaluated:
-            raise RuntimeError("strategy research completed with no symbols evaluated")
+            raise RuntimeError("strategy research completed; no symbols were evaluated")
         summary = {
             "evaluated": len(evaluated),
             "symbols": evaluated,
