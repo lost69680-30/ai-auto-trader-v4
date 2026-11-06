@@ -200,3 +200,48 @@ def test_learning_dataset_rows_and_proposal_weights_are_immutable():
         candidate.weights["momentum"] = 99.0
 
     assert snapshot.validation_rows[0]["strategy_net_return_pct"] == original_value
+
+
+def test_learning_comparison_rejects_overlapping_windows_even_with_a_new_fingerprint():
+    snapshot = build_research_dataset([experiment()])
+    candidate = proposal(snapshot)
+    overlapping = IndependentLearningEvaluation(
+        evaluation_dataset_fingerprint="different-fingerprint",
+        sample_size=100,
+        candidate_net_return_pct=4.0,
+        baseline_net_return_pct=3.0,
+        candidate_max_drawdown_pct=5.0,
+        baseline_max_drawdown_pct=5.5,
+        market_data_manifests=(
+            manifest(
+                start=NOW - timedelta(days=2),
+                end=NOW - timedelta(hours=1),
+                source_id="renamed-independent-source",
+                digest="d" * 64,
+            ),
+        ),
+        orders_authorized=False,
+    )
+    with pytest.raises(ValueError, match="overlap"):
+        compare_learning_proposal(candidate, snapshot, overlapping)
+
+
+def test_learning_dataset_rejects_legacy_experiment_without_canonical_manifest():
+    item = experiment()
+    item = StrategyResearchExperiment(
+        experiment_id=item.experiment_id,
+        candidate_id=item.candidate_id,
+        candidate_fingerprint=item.candidate_fingerprint,
+        source_provenance_id=item.source_provenance_id,
+        experiment_version=item.experiment_version,
+        dataset_start=item.dataset_start,
+        dataset_end=item.dataset_end,
+        configuration_version=item.configuration_version,
+        assumptions={"fee_bps_per_side": 4, "orders_authorized": False},
+        outcomes=item.outcomes,
+        status=item.status,
+        failure_reasons=item.failure_reasons,
+        orders_authorized=False,
+    )
+    with pytest.raises(ValueError, match="market_data_manifest"):
+        build_research_dataset([item])
