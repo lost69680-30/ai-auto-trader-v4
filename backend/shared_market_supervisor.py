@@ -74,6 +74,39 @@ def configured_supervisor_modules(
     return modules
 
 
+
+def start_worker_health_server(port: int, *, host: str = "0.0.0.0"):
+    """Serve a minimal, unauthenticated liveness route so Render can keep a free worker awake."""
+    import json
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path != "/healthz":
+                self.send_error(404)
+                return
+            body = json.dumps({
+                "status": "ok",
+                "mode": "PAPER_ONLY",
+                "orders_authorized": False,
+            }).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            logger.debug("worker health request: " + format, *args)
+
+    server = ThreadingHTTPServer((host, int(port)), HealthHandler)
+    thread = Thread(target=server.serve_forever, name="solo-worker-health", daemon=True)
+    thread.start()
+    logger.info("worker-only health endpoint listening host=%s port=%s", host, server.server_port)
+    return server
+
+
 def worker_heartbeat_requires_restart(
     status: Any, *, uptime_seconds: float, startup_grace_seconds: float = 180.0
 ) -> bool:
@@ -103,6 +136,9 @@ def main() -> None:
     database_url = os.environ.get("PAPER_DATABASE_URL", "").strip()
     mode = os.environ.get("PAPER_MARKET_SUPERVISOR_MODE", "all")
     modules = configured_supervisor_modules(mode, worker_env, api_env)
+    worker_health_server = None
+    if str(mode).strip().lower() == "worker":
+        worker_health_server = start_worker_health_server(int(os.environ["PORT"]))
     market_store = None
     if "worker" in modules and database_url:
         from backend.shared_market_store import PostgresMarketFeedStore
@@ -180,6 +216,10 @@ def main() -> None:
                     start_child(name, restart_delay=state["restart_delay"])
             time.sleep(1.0)
     finally:
+        if worker_health_server is not None:
+            logger.info("stopping worker-only health endpoint")
+            worker_health_server.shutdown()
+            worker_health_server.server_close()
         for name, state in children.items():
             proc = state["process"]
             if proc.poll() is None:
