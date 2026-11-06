@@ -1,6 +1,12 @@
 name: Solo Independent Worker Watchdog
 
 on:
+  push:
+    branches:
+      - feat/solo-independent-watchdog
+    paths:
+      - ".github/workflows/solo-independent-worker-watchdog.yml"
+      - "docs/SOLO_INDEPENDENT_WORKER_WATCHDOG.md"
   pull_request:
     paths:
       - ".github/workflows/solo-independent-worker-watchdog.yml"
@@ -18,7 +24,7 @@ concurrency:
 
 jobs:
   validate-workflow:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +32,7 @@ jobs:
         uses: rhysd/actionlint@v1.7.7
 
   monitor-and-recover:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
