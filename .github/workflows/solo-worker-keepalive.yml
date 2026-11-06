@@ -1,6 +1,10 @@
 name: Keep Solo paper worker awake on Render Free
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/solo-worker-keepalive.yml"
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
