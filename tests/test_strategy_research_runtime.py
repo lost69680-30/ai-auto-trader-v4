@@ -252,7 +252,7 @@ def test_research_handler_rejects_evaluator_provenance_for_wrong_symbol(monkeypa
     handler = strategy_research_runtime.build_strategy_research_handler(
         archive, memory, symbols=("BTCUSDT",), clock=lambda: NOW,
     )
-    with pytest.raises(RuntimeError, match="no symbols were evaluated"):
+    with pytest.raises(RuntimeError, match="no candidates were evaluated"):
         handler({
             "scope": "strategy_research", "market_type": "FUTURES",
             "venue": "BINANCE_USDM_TESTNET",
