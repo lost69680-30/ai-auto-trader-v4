@@ -30,6 +30,26 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate GitHub Actions workflow syntax
         uses: rhysd/actionlint@v1.7.7
+      - name: Compile the embedded watchdog Python script
+        run: |
+          python -m pip install pyyaml
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          workflow = yaml.load(
+              Path(".github/workflows/solo-independent-worker-watchdog.yml").read_text(),
+              Loader=yaml.BaseLoader,
+          )
+          shell = workflow["jobs"]["monitor-and-recover"]["steps"][0]["run"]
+          marker = "python - <<'PY'\\n"
+          start = shell.index(marker) + len(marker)
+          end = shell.rfind("\\nPY")
+          if end <= start:
+              raise SystemExit("watchdog Python heredoc was not found")
+          compile(shell[start:end], "solo_worker_watchdog.py", "exec")
+          print("Watchdog Python syntax is valid.")
+          PY
 
   monitor-and-recover:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
