@@ -70,6 +70,7 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     strategy = SimpleNamespace(
         initial_equity=1000.0, net_pnl=1.25, trade_count=4,
         win_rate_pct=50.0, max_drawdown_pct=2.5, total_costs=0.4,
+        orders_authorized=False,
     )
     regime = SimpleNamespace(
         trend_state="UP", volatility_state="LOW",
@@ -165,7 +166,7 @@ def test_research_handler_skips_symbols_without_sufficient_archive_history(monke
         archive, memory, symbols=("BTCUSDT",), candles_per_symbol=3000,
         clock=lambda: NOW,
     )
-    with pytest.raises(RuntimeError, match="no symbols were evaluated"):
+    with pytest.raises(RuntimeError, match="no candidates were evaluated"):
         handler({
             "scope": "strategy_research", "market_type": "FUTURES",
             "venue": "BINANCE_USDM_TESTNET",
@@ -189,6 +190,7 @@ def test_research_memory_write_failure_propagates_for_scheduler_retry(monkeypatc
     strategy = SimpleNamespace(
         initial_equity=1000.0, net_pnl=0.0, trade_count=0,
         win_rate_pct=0.0, max_drawdown_pct=0.0, total_costs=0.0,
+        orders_authorized=False,
     )
     regime = SimpleNamespace(
         trend_state="RANGE", volatility_state="LOW",
