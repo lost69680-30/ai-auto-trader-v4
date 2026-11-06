@@ -198,6 +198,8 @@ class ResearchAgentRun:
             raise ValueError("research agent run status is invalid")
         if not isinstance(self.required_roles, tuple) or not isinstance(self.missing_roles, tuple):
             raise ValueError("agent role lists must be immutable tuples")
+        if not self.required_roles:
+            raise ValueError("research agent run requires at least one specialist role")
         if len(self.required_roles) != len(set(self.required_roles)):
             raise ValueError("required specialist roles must be unique")
         if len(self.messages) != len({message.message_id for message in self.messages}):
@@ -253,6 +255,8 @@ def execute_specialist_agents(
     if not isinstance(required_roles, tuple):
         raise ValueError("required_roles must be an immutable tuple")
     roles = tuple(_validate_role(role) for role in required_roles)
+    if not roles:
+        raise ValueError("required_roles must contain at least one specialist role")
     if len(roles) != len(set(roles)):
         raise ValueError("required specialist roles must be unique")
 
@@ -265,7 +269,6 @@ def execute_specialist_agents(
         agent_id = f"specialist:{role}"
         try:
             payload = normalized_handlers[role](snapshot)
-            validated_payload = _validate_payload(payload)
             message = AgentEvidenceMessage(
                 message_id=message_id,
                 agent_id=agent_id,
@@ -277,7 +280,7 @@ def execute_specialist_agents(
                 observed_at=now,
                 expires_at=expiry,
                 status="COMPLETE",
-                payload=validated_payload,
+                payload=payload,
                 orders_authorized=False,
             )
         except Exception as exc:
