@@ -96,7 +96,8 @@ def test_shared_market_status_exposes_diagnostic_details_to_supervisor_without_c
 
     result = store.status()
 
-    assert result["details"] == expected_diagnostic\n    assert "do-not-expose" not in str(result)
+    assert result["details"] == expected_diagnostic
+    assert "do-not-expose" not in str(result)
     assert result["orders_authorized"] is False
     assert "dsn" not in result
     assert "password" not in str(result).lower()
