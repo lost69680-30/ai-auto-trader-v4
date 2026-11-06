@@ -5,9 +5,9 @@ import org.junit.Test
 
 class ResearchValidationQualityTest {
     @Test
-    fun onlyExplicitPassedValidationCountsAsPassed() {
+    fun backendQualifiedEvaluationCountsAsPassed() {
         assertEquals(ResearchValidationBucket.PASSED, researchValidationBucket("PASSED"))
-        assertEquals(ResearchValidationBucket.INCOMPLETE, researchValidationBucket("EVALUATED"))
+        assertEquals(ResearchValidationBucket.PASSED, researchValidationBucket("EVALUATED"))
     }
 
     @Test
@@ -29,7 +29,7 @@ class ResearchValidationQualityTest {
     @Test
     fun summarySeparatesPassFailAndIncompleteQuality() {
         assertEquals(
-            ResearchValidationCounts(passed = 1, failed = 2, incomplete = 3),
+            ResearchValidationCounts(passed = 2, failed = 2, incomplete = 2),
             summarizeResearchValidationQuality(
                 listOf("PASSED", "REJECTED", "FAILED", "INSUFFICIENT_DATA", "EVALUATED", null)
             ),
