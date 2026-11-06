@@ -594,3 +594,51 @@ def test_missing_scheduled_job_runner_is_not_a_failure_during_startup():
     assert shared_market_worker.scheduled_job_runner_stopped_unexpectedly(
         None, threading.Event()
     ) is False
+
+
+def test_worker_waits_for_existing_lease_during_rolling_deploy():
+    class Store:
+        def __init__(self):
+            self.results = iter([False, False, True])
+            self.calls = 0
+
+        def acquire_lease(self):
+            self.calls += 1
+            return next(self.results)
+
+    class Stop:
+        def __init__(self):
+            self.waits = []
+
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            self.waits.append(seconds)
+            return False
+
+    store = Store()
+    stop = Stop()
+
+    assert shared_market_worker.acquire_worker_lease_when_available(
+        store, stop, retry_seconds=0.25,
+    ) is True
+    assert store.calls == 3
+    assert stop.waits == [0.25, 0.25]
+
+
+def test_worker_stops_waiting_for_lease_when_shutdown_requested():
+    class Store:
+        def acquire_lease(self):
+            return False
+
+    class Stop:
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            return True
+
+    assert shared_market_worker.acquire_worker_lease_when_available(
+        Store(), Stop(), retry_seconds=0.25,
+    ) is False
