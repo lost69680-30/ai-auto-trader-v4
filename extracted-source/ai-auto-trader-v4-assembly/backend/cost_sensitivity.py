@@ -52,7 +52,7 @@ def _finite(value: object, field: str) -> float:
     return number
 
 
-def _fold_cost_stress(fold, multiplier: float) -> tuple[float, float, float, int, int, float]:
+def _fold_cost_stress(fold, multiplier: float) -> tuple[tuple[float, float, float, int, int, float], float, float]:
     backtest = fold.strategy
     if not isinstance(backtest, BacktestResult) or backtest.orders_authorized is not False:
         raise ValueError("validation fold must contain a paper-only backtest result")
@@ -92,10 +92,13 @@ def _fold_cost_stress(fold, multiplier: float) -> tuple[float, float, float, int
         costs_total += stressed_costs
         net_total += net
         winners += int(net > 0)
+        executed_trades += 1
         equity = max(0.0, equity + net)
         peak = max(peak, equity)
         if peak > 0:
             maximum_drawdown = max(maximum_drawdown, (peak - equity) / peak * 100.0)
+        if equity <= 0:
+            break
     if not all(math.isfinite(value) for value in (gross_total, costs_total, net_total, maximum_drawdown)):
         raise ValueError("validation fold aggregate metrics are non-finite")
     net_return_pct = net_total / initial_equity * 100.0
@@ -104,7 +107,7 @@ def _fold_cost_stress(fold, multiplier: float) -> tuple[float, float, float, int
         costs_total,
         net_total,
         winners,
-        backtest.trade_count,
+        executed_trades,
         max(maximum_drawdown, _finite(backtest.max_drawdown_pct, "base drawdown")),
     ), net_return_pct, benchmark
 
