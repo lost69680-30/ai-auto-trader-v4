@@ -29,7 +29,7 @@ The readiness API is on a separate Render service and reads the shared worker he
 
 ## Recovery and safety limits
 
-- Scheduled interval: every ten minutes; the worker liveness request also acts as a keepalive for Render Free, but GitHub Actions may delay scheduled runs. The recovery workflow timeout is 12 minutes.
+- Scheduled interval: the existing `.github/workflows/solo-render-keepwarm.yml` workflow runs this monitor every ten minutes. The separate `.github/workflows/solo-independent-worker-watchdog.yml` workflow provides pull-request validation and a manual dispatch entry point, avoiding duplicate scheduled runs. GitHub Actions may delay scheduled runs; the recovery job timeout is 12 minutes.
 - At most one Render restart request is issued per workflow run.
 - Recovery is verified through the separate API's database-backed `/readyz` endpoint; the worker `/healthz` endpoint is used only for keepalive/liveness.
 - No database writes, market-data mutations, exchange credentials, order endpoints, or trading permissions are used.
