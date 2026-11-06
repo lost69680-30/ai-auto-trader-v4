@@ -15,6 +15,7 @@ from typing import Callable, Iterable
 
 from backend.backtesting import BacktestConfig
 from backend.dataset_lineage import DatasetProvenance, candle_dataset_sha256
+from backend.external_strategy_intelligence import ExternalRuleSpec, assess_walk_forward_quality
 from backend.market_data_lineage import MarketDataIdentity, build_market_data_manifest
 from backend.strategy_research import Candle
 from backend.strategy_research_memory import (
@@ -25,7 +26,13 @@ from backend.walk_forward import WalkForwardConfig, evaluate_walk_forward
 
 
 logger = logging.getLogger(__name__)
-_RESEARCH_VERSION = "solo-fixed-consensus-walk-forward-v1"
+_RESEARCH_VERSION = "solo-four-family-candidate-benchmark-v1"
+_RESEARCH_CANDIDATES = (
+    ("trend_sma_cross", ExternalRuleSpec("SMA_CROSS", {"fast_period": 10, "slow_period": 30}, "ONE_BAR")),
+    ("momentum_20", ExternalRuleSpec("MOMENTUM", {"lookback": 20, "threshold_pct": 0.15}, "ONE_BAR")),
+    ("breakout_20", ExternalRuleSpec("BREAKOUT", {"lookback": 20, "buffer_pct": 0.05}, "ONE_BAR")),
+    ("mean_reversion_rsi", ExternalRuleSpec("RSI_THRESHOLD", {"period": 14, "oversold": 30.0, "overbought": 70.0}, "ONE_BAR")),
+)
 _SUPPORTED_MARKET = ("FUTURES", "BINANCE_USDM_TESTNET")
 
 
