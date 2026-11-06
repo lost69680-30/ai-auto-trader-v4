@@ -62,7 +62,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: solo-v4-step3-market-validation
+  group: solo-v4-step3-market-validation-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
