@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import math
 from typing import Iterable
 
 from backend.strategy_research import Candle, ResearchConfig, research_strategies
+from backend.external_strategy_intelligence import ExternalRuleSpec, evaluate_external_rule, external_rule_minimum_candles
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,7 +27,11 @@ class BacktestConfig:
                    self.minimum_signal_score)
         if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in numeric):
             raise ValueError("backtest configuration values must be numeric and finite")
-        if not all(math.isfinite(value) for value in numeric):
+        try:
+            finite_numeric = all(math.isfinite(float(value)) for value in numeric)
+        except (OverflowError, TypeError, ValueError):
+            finite_numeric = False
+        if not finite_numeric:
             raise ValueError("backtest configuration values must be numeric and finite")
         if self.initial_equity <= 0:
             raise ValueError("initial_equity must be positive")
@@ -94,6 +99,7 @@ def run_backtest(
     research_config: ResearchConfig | None = None,
     research_now: datetime,
     start_timestamp: datetime | None = None,
+    rule_spec: ExternalRuleSpec | None = None,
 ) -> BacktestResult:
     """Simulate one-bar holds with next-open fills and explicit estimated costs.
 
@@ -108,6 +114,12 @@ def run_backtest(
         raise ValueError("start_timestamp must be timezone-aware")
     cfg = config or BacktestConfig()
     strategy_cfg = research_config or ResearchConfig()
+    if rule_spec is not None:
+        if not isinstance(rule_spec, ExternalRuleSpec):
+            raise ValueError("rule_spec must be a supported ExternalRuleSpec")
+        required_bars = external_rule_minimum_candles(rule_spec)
+        if strategy_cfg.min_candles < required_bars:
+            strategy_cfg = replace(strategy_cfg, min_candles=required_bars)
     rows = list(candles)
     initial = cfg.initial_equity
     if len(rows) < strategy_cfg.min_candles:
@@ -164,16 +176,24 @@ def run_backtest(
         i = max(i, first_entry_index - 1)
     while i < len(rows) - 2 and equity > 0:
         window = rows[max(0, i - strategy_cfg.min_candles + 1):i + 1]
-        signal = research_strategies(symbol, window, now=window[-1].timestamp, config=strategy_cfg)
-        direction = signal.decision.removeprefix("REVIEW_")
-        if direction not in ("LONG", "SHORT"):
-            i += 1
-            continue
-        directional_scores = [a.confidence_score for a in signal.assessments
-                              if a.direction == direction and a.confidence_score >= cfg.minimum_signal_score]
-        if len(directional_scores) < 2:
-            i += 1
-            continue
+        if rule_spec is None:
+            signal = research_strategies(symbol, window, now=window[-1].timestamp, config=strategy_cfg)
+            direction = signal.decision.removeprefix("REVIEW_")
+            if direction not in ("LONG", "SHORT"):
+                i += 1
+                continue
+            directional_scores = [a.confidence_score for a in signal.assessments
+                                  if a.direction == direction and a.confidence_score >= cfg.minimum_signal_score]
+            if len(directional_scores) < 2:
+                i += 1
+                continue
+            strategy_consensus = signal.decision
+        else:
+            direction = evaluate_external_rule(rule_spec, window)
+            if direction not in ("LONG", "SHORT"):
+                i += 1
+                continue
+            strategy_consensus = f"EXTERNAL_RULE:{rule_spec.family}"
 
         entry = rows[i + 1]
         exit_candle = rows[i + 2]
@@ -196,7 +216,7 @@ def run_backtest(
         net = gross - costs
         trade = SimulatedTrade(symbol, direction, entry.timestamp, exit_candle.timestamp,
                                entry_price, exit_price, round(notional, 8), round(gross, 8),
-                               round(costs, 8), round(net, 8), signal.decision)
+                               round(costs, 8), round(net, 8), strategy_consensus)
         trades.append(trade)
         equity = max(0.0, equity + net)
         total_costs += costs
