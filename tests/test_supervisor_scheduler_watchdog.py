@@ -121,3 +121,19 @@ def test_scheduled_job_runner_publishes_progress_before_dispatch_and_after_compl
     assert health["last_poll_started_at"]
     assert health["last_poll_at"]
     assert health["last_error"] == "TemporarySourceFailure"
+
+
+def test_scheduler_watchdog_threshold_is_bounded_and_defaults_to_fifteen_minutes():
+    import pytest
+
+    from backend.shared_market_supervisor import configured_scheduler_stale_seconds
+
+    assert configured_scheduler_stale_seconds({}) == 900
+    assert configured_scheduler_stale_seconds({
+        "PAPER_SUPERVISOR_SCHEDULER_STALE_SECONDS": "600"
+    }) == 600
+    for invalid in ("59", "3601", "not-a-number"):
+        with pytest.raises(ValueError, match="PAPER_SUPERVISOR_SCHEDULER_STALE_SECONDS"):
+            configured_scheduler_stale_seconds({
+                "PAPER_SUPERVISOR_SCHEDULER_STALE_SECONDS": invalid
+            })
