@@ -225,3 +225,65 @@ def test_supervisor_shutdown_grace_exceeds_worker_scheduler_grace():
     assert configured_child_shutdown_grace({}) == 25.0
     assert configured_child_shutdown_grace({"PAPER_SUPERVISOR_CHILD_SHUTDOWN_GRACE_SECONDS": "40"}) == 40.0
     assert configured_child_shutdown_grace({"PAPER_SUPERVISOR_CHILD_SHUTDOWN_GRACE_SECONDS": "5"}) == 15.0
+
+
+def test_supervisor_releases_worker_lease_only_after_all_children_exit(monkeypatch):
+    import signal
+
+    from backend import shared_market_store, shared_market_supervisor as supervisor
+
+    monkeypatch.setenv("PORT", "10000")
+    monkeypatch.setenv("PAPER_DATABASE_URL", "postgresql://test")
+    clock = {"now": 0.0, "sleeps": 0}
+    handlers = []
+    started = []
+
+    class FakeStore:
+        def __init__(self, *args, **kwargs):
+            self.released = False
+
+        def status(self):
+            return {"status": "HEALTHY", "worker_status": "RUNNING"}
+
+        def release(self):
+            assert all(process.poll() is not None for process in started)
+            self.released = True
+
+    class FakeProcess:
+        def __init__(self, module):
+            self.module = module
+            self.terminated = False
+            self.pid = len(started) + 500
+
+        def poll(self):
+            return 0 if self.terminated else None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    def fake_start(module, env):
+        process = FakeProcess(module)
+        started.append(process)
+        return process
+
+    def fake_sleep(seconds):
+        clock["sleeps"] += 1
+        clock["now"] += 2.0
+        if clock["sleeps"] == 2:
+            handlers[-1](signal.SIGTERM, None)
+
+    store = FakeStore()
+    monkeypatch.setattr(shared_market_store, "PostgresMarketFeedStore", lambda *args, **kwargs: store)
+    monkeypatch.setattr(supervisor, "_start", fake_start)
+    monkeypatch.setattr(supervisor.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(supervisor.time, "sleep", fake_sleep)
+    monkeypatch.setattr(supervisor.signal, "signal", lambda sig, handler: handlers.append(handler))
+
+    supervisor.main()
+
+    assert len(started) == 2
+    assert store.released is True
+    assert all(process.poll() is not None for process in started)
