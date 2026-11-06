@@ -16,6 +16,7 @@ from backend.external_strategy_intelligence import (
 )
 from backend.walk_forward import WalkForwardConfig
 from backend.strategy_research import Candle
+from backend.market_data_lineage import MarketDataIdentity
 
 NOW = datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc)
 
@@ -280,6 +281,13 @@ def test_external_strategy_evaluation_is_written_to_research_memory_without_auth
         ),
         backtest_config=BacktestConfig(fee_bps_per_side=4, slippage_bps_per_side=2),
         research_now=NOW,
+        market_data_identity=MarketDataIdentity(
+            venue="BINANCE_USDM_TESTNET",
+            market_type="FUTURES",
+            symbol="BTCUSDT",
+            interval="1m",
+            source_id="supabase:paper_ledger.market_candles",
+        ),
     )
 
     class MemoryCapture:
@@ -305,6 +313,8 @@ def test_external_strategy_evaluation_is_written_to_research_memory_without_auth
     assert memory.experiment.source_provenance_id == assessment.provenance_id
     assert memory.experiment.candidate_fingerprint == assessment.candidate.candidate_fingerprint
     assert memory.experiment.assumptions["orders_authorized"] is False
+    assert memory.experiment.assumptions["market_data_manifest"]["source_id"] == "supabase:paper_ledger.market_candles"
+    assert memory.experiment.assumptions["market_data_manifest"]["sha256"]
     assert memory.experiment.outcomes["orders_authorized"] is False
     assert memory.experiment.outcomes["holdout_used_for_selection"] is False
     assert memory.experiment.outcomes["promotion_decision"] == "NOT_PROMOTED"
