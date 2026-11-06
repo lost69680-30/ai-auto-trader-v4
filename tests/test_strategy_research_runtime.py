@@ -8,6 +8,7 @@ from backend.dataset_lineage import DatasetProvenance, candle_dataset_sha256
 from backend.market_data_lineage import MarketDataIdentity, build_market_data_manifest
 from backend.strategy_research import Candle
 from backend.strategy_learning_lab import build_research_dataset
+from backend.walk_forward import WalkForwardResult
 
 
 NOW = datetime(2026, 11, 6, 5, 0, tzinfo=timezone.utc)
@@ -69,6 +70,7 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     strategy = SimpleNamespace(
         initial_equity=1000.0, net_pnl=1.25, trade_count=4,
         win_rate_pct=50.0, max_drawdown_pct=2.5, total_costs=0.4,
+        orders_authorized=False,
     )
     regime = SimpleNamespace(
         trend_state="UP", volatility_state="LOW",
@@ -84,9 +86,10 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
         name="untouched_holdout", start_index=2500, end_index=3000,
         strategy=strategy, market_regime=regime, buy_hold_return_pct=0.25,
     )
-    result = SimpleNamespace(
-        dataset_provenance=provenance, folds=(window,), holdout=holdout,
-        warnings=("holdout is not used for selection",), orders_authorized=False,
+    result = WalkForwardResult(
+        symbol="BTCUSDT", dataset_provenance=provenance, folds=(window,),
+        holdout=holdout, warnings=("holdout is not used for selection",),
+        orders_authorized=False,
     )
     calls = []
 
@@ -106,8 +109,17 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     }, "scheduled-research-1")
 
     assert summary["evaluated"] == 1
+    assert summary["candidate_evaluations"] == 4
     assert summary["orders_authorized"] is False
     assert calls[0][0:2] == ("BTCUSDT", 3000)
+    assert {call[2]["rule_spec"].family for call in calls} == {
+        "SMA_CROSS", "MOMENTUM", "BREAKOUT", "RSI_THRESHOLD",
+    }
+    experiments = [item[0] for item in memory.items]
+    assert len(experiments) == 4
+    assert len({item.candidate_id for item in experiments}) == 4
+    assert all(item.orders_authorized is False for item in experiments)
+    assert all(item.outcomes["validation_quality"]["status"] == "INSUFFICIENT_DATA" for item in experiments)
     experiment, key = memory.items[0]
     expected_manifest = build_market_data_manifest(
         canonical_candles,
@@ -128,7 +140,7 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     assert experiment.outcomes["holdout_used_for_selection"] is False
     assert experiment.outcomes["untouched_holdout"]["used_for_selection"] is False
     assert experiment.outcomes["validation_folds"][0]["market_regime"]["orders_authorized"] is False
-    dataset = build_research_dataset((experiment,))
+    dataset = build_research_dataset(tuple(experiments))
     assert dataset.market_data_manifests[0].sha256 == expected_manifest.sha256
     assert dataset.orders_authorized is False
     assert key.startswith("solo-research:")
@@ -154,7 +166,7 @@ def test_research_handler_skips_symbols_without_sufficient_archive_history(monke
         archive, memory, symbols=("BTCUSDT",), candles_per_symbol=3000,
         clock=lambda: NOW,
     )
-    with pytest.raises(RuntimeError, match="no symbols were evaluated"):
+    with pytest.raises(RuntimeError, match="no candidates were evaluated"):
         handler({
             "scope": "strategy_research", "market_type": "FUTURES",
             "venue": "BINANCE_USDM_TESTNET",
@@ -178,6 +190,7 @@ def test_research_memory_write_failure_propagates_for_scheduler_retry(monkeypatc
     strategy = SimpleNamespace(
         initial_equity=1000.0, net_pnl=0.0, trade_count=0,
         win_rate_pct=0.0, max_drawdown_pct=0.0, total_costs=0.0,
+        orders_authorized=False,
     )
     regime = SimpleNamespace(
         trend_state="RANGE", volatility_state="LOW",
@@ -189,14 +202,14 @@ def test_research_memory_write_failure_propagates_for_scheduler_retry(monkeypatc
         name="fold", start_index=2000, end_index=2500,
         strategy=strategy, market_regime=regime, buy_hold_return_pct=0.0,
     )
-    result = SimpleNamespace(
-        dataset_provenance=provenance, folds=(window,), holdout=window,
-        warnings=(), orders_authorized=False,
+    result = WalkForwardResult(
+        symbol="BTCUSDT", dataset_provenance=provenance, folds=(window,),
+        holdout=window, warnings=(), orders_authorized=False,
     )
 
     class BrokenMemory:
         def append(self, experiment, *, idempotency_key):
-            raise RuntimeError("database write unavailable")
+            raise ValueError("database write unavailable")
 
     monkeypatch.setattr(
         strategy_research_runtime, "evaluate_walk_forward",
@@ -205,7 +218,7 @@ def test_research_memory_write_failure_propagates_for_scheduler_retry(monkeypatc
     handler = strategy_research_runtime.build_strategy_research_handler(
         archive, BrokenMemory(), symbols=("BTCUSDT",), clock=lambda: NOW,
     )
-    with pytest.raises(RuntimeError, match="database write unavailable"):
+    with pytest.raises(ValueError, match="database write unavailable"):
         handler({
             "scope": "strategy_research", "market_type": "FUTURES",
             "venue": "BINANCE_USDM_TESTNET",
@@ -239,7 +252,7 @@ def test_research_handler_rejects_evaluator_provenance_for_wrong_symbol(monkeypa
     handler = strategy_research_runtime.build_strategy_research_handler(
         archive, memory, symbols=("BTCUSDT",), clock=lambda: NOW,
     )
-    with pytest.raises(RuntimeError, match="no symbols were evaluated"):
+    with pytest.raises(RuntimeError, match="no candidates were evaluated"):
         handler({
             "scope": "strategy_research", "market_type": "FUTURES",
             "venue": "BINANCE_USDM_TESTNET",

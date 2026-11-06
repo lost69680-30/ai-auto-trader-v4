@@ -15,6 +15,7 @@ from typing import Callable, Iterable
 
 from backend.backtesting import BacktestConfig
 from backend.dataset_lineage import DatasetProvenance, candle_dataset_sha256
+from backend.external_strategy_intelligence import ExternalRuleSpec, assess_walk_forward_quality
 from backend.market_data_lineage import MarketDataIdentity, build_market_data_manifest
 from backend.strategy_research import Candle
 from backend.strategy_research_memory import (
@@ -25,7 +26,13 @@ from backend.walk_forward import WalkForwardConfig, evaluate_walk_forward
 
 
 logger = logging.getLogger(__name__)
-_RESEARCH_VERSION = "solo-fixed-consensus-walk-forward-v1"
+_RESEARCH_VERSION = "solo-four-family-candidate-benchmark-v1"
+_RESEARCH_CANDIDATES = (
+    ("trend_sma_cross", ExternalRuleSpec("SMA_CROSS", {"fast_period": 10, "slow_period": 30}, "ONE_BAR")),
+    ("momentum_20", ExternalRuleSpec("MOMENTUM", {"lookback": 20, "threshold_pct": 0.15}, "ONE_BAR")),
+    ("breakout_20", ExternalRuleSpec("BREAKOUT", {"lookback": 20, "buffer_pct": 0.05}, "ONE_BAR")),
+    ("mean_reversion_rsi", ExternalRuleSpec("RSI_THRESHOLD", {"period": 14, "oversold": 30.0, "overbought": 70.0}, "ONE_BAR")),
+)
 _SUPPORTED_MARKET = ("FUTURES", "BINANCE_USDM_TESTNET")
 
 
@@ -123,6 +130,7 @@ def build_strategy_research_handler(
         now = (clock or (lambda: datetime.now(timezone.utc)))()
         _iso(now)
         evaluated: list[str] = []
+        evaluated_symbols: set[str] = set()
         skipped: list[dict[str, str]] = []
         for symbol in configured_symbols:
             try:
@@ -160,99 +168,22 @@ def build_strategy_research_handler(
                         interval="1m", source_id=provider,
                     ),
                 )
-                result = evaluate_walk_forward(
-                    symbol, candles,
-                    config=wf_config,
-                    backtest_config=bt_config,
-                    research_now=now,
-                    dataset_provider=provider,
-                    dataset_venue=venue,
-                )
-                if result.orders_authorized is not False or result.dataset_provenance is None:
-                    raise ValueError("walk-forward evaluator returned an unsafe or unproven result")
-                provenance = result.dataset_provenance
-                if (
-                    provenance.provider != provider
-                    or provenance.venue != venue
-                    or provenance.symbol != symbol
-                    or provenance.timeframe != "1m"
-                    or provenance.window_start != canonical_manifest.start_timestamp
-                    or provenance.window_end != canonical_manifest.end_timestamp
-                    or provenance.candle_count != canonical_manifest.row_count
-                    or provenance.data_sha256 != candle_dataset_sha256(candles)
-                ):
-                    raise ValueError("walk-forward provenance does not match the canonical market-data manifest")
-                canonical_manifest_dict = canonical_manifest.to_dict()
-                manifest = {
+                manifest = canonical_manifest.to_dict()
+                source_provenance_id = _canonical_digest(manifest)
+                canonical_digest = candle_dataset_sha256(candles)
+                dataset_manifest = {
                     "provider": provider,
                     "source_identifier": provider,
                     "venue": venue,
                     "market_type": market_type,
                     "symbol": symbol,
                     "interval": "1m",
-                    "timeframe": provenance.timeframe,
-                    "first_candle_open_time": _iso(provenance.window_start),
-                    "last_candle_open_time": _iso(provenance.window_end),
-                    "row_count": provenance.candle_count,
-                    "sha256_ordered_ohlcv": provenance.data_sha256,
+                    "timeframe": "1m",
+                    "first_candle_open_time": _iso(canonical_manifest.start_timestamp),
+                    "last_candle_open_time": _iso(canonical_manifest.end_timestamp),
+                    "row_count": canonical_manifest.row_count,
+                    "sha256_ordered_ohlcv": canonical_digest,
                 }
-                source_provenance_id = _canonical_digest(canonical_manifest_dict)
-                fingerprint_material = {
-                    "research_version": _RESEARCH_VERSION,
-                    "symbol": symbol,
-                    "dataset_manifest": manifest,
-                    "market_data_manifest": canonical_manifest_dict,
-                    "walk_forward": {
-                        "train_bars": wf_config.train_bars,
-                        "validation_bars": wf_config.validation_bars,
-                        "holdout_bars": wf_config.holdout_bars,
-                        "step_bars": wf_config.step_bars,
-                        "candle_interval_minutes": wf_config.candle_interval_minutes,
-                    },
-                    "backtest": {
-                        "position_fraction": bt_config.position_fraction,
-                        "fee_bps_per_side": bt_config.fee_bps_per_side,
-                        "slippage_bps_per_side": bt_config.slippage_bps_per_side,
-                        "funding_bps_per_8h": bt_config.funding_bps_per_8h,
-                        "minimum_signal_score": bt_config.minimum_signal_score,
-                    },
-                }
-                fingerprint = _canonical_digest(fingerprint_material)
-                folds = tuple(_window_summary(fold, used_for_selection=False) for fold in result.folds)
-                holdout = _window_summary(result.holdout, used_for_selection=False)
-                assumptions = {
-                    "research_version": _RESEARCH_VERSION,
-                    "dataset_manifest": manifest,
-                    "market_data_manifest": canonical_manifest_dict,
-                    "walk_forward": fingerprint_material["walk_forward"],
-                    "backtest": fingerprint_material["backtest"],
-                    "selection_policy": "fixed settings; no parameter tuning; holdout excluded from selection",
-                    "orders_authorized": False,
-                }
-                outcomes = {
-                    "folds": list(folds),
-                    "holdout": holdout,
-                    "validation_folds": list(folds),
-                    "untouched_holdout": holdout,
-                    "holdout_used_for_selection": False,
-                    "warnings": list(result.warnings),
-                    "orders_authorized": False,
-                }
-                experiment = StrategyResearchExperiment(
-                    experiment_id=f"solo-exp-{fingerprint[:32]}",
-                    candidate_id=f"solo-fixed-consensus:{symbol}",
-                    candidate_fingerprint=fingerprint,
-                    source_provenance_id=source_provenance_id,
-                    experiment_version=1,
-                    dataset_start=provenance.window_start,
-                    dataset_end=provenance.window_end,
-                    configuration_version=_RESEARCH_VERSION,
-                    assumptions=assumptions,
-                    outcomes=outcomes,
-                    status="EVALUATED",
-                    failure_reasons=(),
-                    orders_authorized=False,
-                )
             except (ValueError, TypeError) as exc:
                 skipped.append({"symbol": symbol, "reason": f"{type(exc).__name__}: {str(exc)}"[:180]})
                 logger.warning(
@@ -261,27 +192,147 @@ def build_strategy_research_handler(
                 )
                 continue
 
-            # Persistence failures must fail the scheduled job so the durable
-            # scheduler retries it; never turn a database outage into a partial success.
-            memory.append(
-                experiment,
-                idempotency_key=f"solo-research:{fingerprint}",
-            )
-            evaluated.append(symbol)
+            for candidate_id, rule_spec in _RESEARCH_CANDIDATES:
+                try:
+                    result = evaluate_walk_forward(
+                        symbol, candles,
+                        config=wf_config,
+                        backtest_config=bt_config,
+                        research_now=now,
+                        dataset_provider=provider,
+                        dataset_venue=venue,
+                        rule_spec=rule_spec,
+                    )
+                    if result.orders_authorized is not False or result.dataset_provenance is None:
+                        raise ValueError("walk-forward evaluator returned an unsafe or unproven result")
+                    provenance = result.dataset_provenance
+                    if (
+                        provenance.provider != provider
+                        or provenance.venue != venue
+                        or provenance.symbol != symbol
+                        or provenance.timeframe != "1m"
+                        or provenance.window_start != canonical_manifest.start_timestamp
+                        or provenance.window_end != canonical_manifest.end_timestamp
+                        or provenance.candle_count != canonical_manifest.row_count
+                        or provenance.data_sha256 != canonical_digest
+                    ):
+                        raise ValueError("walk-forward provenance does not match the canonical market-data manifest")
+
+                    quality = assess_walk_forward_quality(result)
+                    quality_summary = {
+                        "status": quality.status,
+                        "fold_count": quality.fold_count,
+                        "total_validation_trades": quality.total_validation_trades,
+                        "mean_excess_return_pct": quality.mean_excess_return_pct,
+                        "positive_fold_pct": quality.positive_fold_pct,
+                        "maximum_fold_drawdown_pct": quality.maximum_fold_drawdown_pct,
+                        "failure_reasons": list(quality.failure_reasons),
+                        "holdout_used": False,
+                        "orders_authorized": False,
+                    }
+                    candidate_definition = {
+                        "candidate_id": candidate_id,
+                        "family": rule_spec.family,
+                        "parameters": dict(rule_spec.parameters),
+                        "exit_policy": rule_spec.exit_policy,
+                        "orders_authorized": False,
+                    }
+                    fingerprint_material = {
+                        "research_version": _RESEARCH_VERSION,
+                        "candidate": candidate_definition,
+                        "symbol": symbol,
+                        "dataset_manifest": dataset_manifest,
+                        "market_data_manifest": manifest,
+                        "walk_forward": {
+                            "train_bars": wf_config.train_bars,
+                            "validation_bars": wf_config.validation_bars,
+                            "holdout_bars": wf_config.holdout_bars,
+                            "step_bars": wf_config.step_bars,
+                            "candle_interval_minutes": wf_config.candle_interval_minutes,
+                        },
+                        "backtest": {
+                            "initial_equity": bt_config.initial_equity,
+                            "position_fraction": bt_config.position_fraction,
+                            "fee_bps_per_side": bt_config.fee_bps_per_side,
+                            "slippage_bps_per_side": bt_config.slippage_bps_per_side,
+                            "funding_bps_per_8h": bt_config.funding_bps_per_8h,
+                            "minimum_signal_score": bt_config.minimum_signal_score,
+                        },
+                    }
+                    fingerprint = _canonical_digest(fingerprint_material)
+                    folds = tuple(_window_summary(fold, used_for_selection=False) for fold in result.folds)
+                    holdout = _window_summary(result.holdout, used_for_selection=False)
+                    assumptions = {
+                        "research_version": _RESEARCH_VERSION,
+                        "strategy_candidate": candidate_definition,
+                        "dataset_manifest": dataset_manifest,
+                        "market_data_manifest": manifest,
+                        "walk_forward": fingerprint_material["walk_forward"],
+                        "backtest": fingerprint_material["backtest"],
+                        "selection_policy": "four pre-registered fixed-rule families; validation folds only; untouched holdout excluded; no automatic promotion",
+                        "orders_authorized": False,
+                    }
+                    outcomes = {
+                        "folds": list(folds),
+                        "holdout": holdout,
+                        "validation_folds": list(folds),
+                        "untouched_holdout": holdout,
+                        "holdout_used_for_selection": False,
+                        "validation_quality": quality_summary,
+                        "warnings": list(result.warnings),
+                        "orders_authorized": False,
+                    }
+                    experiment = StrategyResearchExperiment(
+                        experiment_id=f"solo-exp-{fingerprint[:32]}",
+                        candidate_id=f"solo-{candidate_id}:{symbol}",
+                        candidate_fingerprint=fingerprint,
+                        source_provenance_id=source_provenance_id,
+                        experiment_version=1,
+                        dataset_start=provenance.window_start,
+                        dataset_end=provenance.window_end,
+                        configuration_version=_RESEARCH_VERSION,
+                        assumptions=assumptions,
+                        outcomes=outcomes,
+                        status="EVALUATED",
+                        failure_reasons=(),
+                        orders_authorized=False,
+                    )
+                except (ValueError, TypeError) as exc:
+                    skipped.append({
+                        "symbol": symbol,
+                        "candidate": candidate_id,
+                        "reason": f"{type(exc).__name__}: {str(exc)}"[:180],
+                    })
+                    logger.warning(
+                        "strategy research candidate skipped symbol=%s candidate=%s reason=%s detail=%s orders_authorized=False",
+                        symbol, candidate_id, type(exc).__name__, str(exc)[:120],
+                    )
+                    continue
+
+                # Persistence is deliberately outside the candidate-validation catch:
+                # any database error, including ValueError/TypeError, must fail the job
+                # so the durable scheduler retries instead of recording a false success.
+                memory.append(
+                    experiment,
+                    idempotency_key=f"solo-research:{fingerprint}",
+                )
+                evaluated.append(f"{candidate_id}:{symbol}")
+                evaluated_symbols.add(symbol)
 
         if not evaluated:
-            raise RuntimeError("strategy research completed; no symbols were evaluated")
+            raise RuntimeError("strategy research completed; no candidates were evaluated")
         summary = {
-            "evaluated": len(evaluated),
-            "symbols": evaluated,
+            "evaluated": len(evaluated_symbols),
+            "candidate_evaluations": len(evaluated),
+            "symbols": sorted(evaluated_symbols),
+            "candidates": [candidate_id for candidate_id, _ in _RESEARCH_CANDIDATES],
             "skipped": skipped,
             "orders_authorized": False,
             "job_idempotency_key": idempotency_key,
         }
         logger.info(
-            "strategy research cycle completed evaluated=%d skipped=%d venue=%s orders_authorized=False",
-            len(evaluated), len(skipped), venue,
+            "strategy research cycle completed symbols=%d candidate_evaluations=%d skipped=%d venue=%s orders_authorized=False",
+            len(evaluated_symbols), len(evaluated), len(skipped), venue,
         )
         return summary
-
     return handle
