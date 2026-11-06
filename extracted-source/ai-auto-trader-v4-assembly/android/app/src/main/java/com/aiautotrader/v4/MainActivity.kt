@@ -323,17 +323,58 @@ private data class MarketIntelligenceFetchResult(
     val scanAttempts: Int = 0,
 )
 
-private data class StrategyResearchExperimentItem(
+internal data class StrategyResearchExperimentItem(
     val experimentId: String,
     val symbol: String,
+    val candidateFamily: String,
     val status: String,
+    val qualityStatus: String,
     val datasetStart: String,
     val datasetEnd: String,
     val foldCount: Int,
+    val validationTradeCount: Int,
+    val meanExcessReturnPct: Double?,
+    val positiveFoldPct: Double?,
+    val maximumFoldDrawdownPct: Double?,
+    val qualityFailureReasons: List<String>,
+    val holdoutUsedForSelection: Boolean,
     val holdoutNetPnl: Double?,
     val holdoutTradeCount: Int,
     val ordersAuthorized: Boolean,
 )
+
+internal data class ResearchQualityCounts(
+    val qualified: Int,
+    val rejected: Int,
+    val insufficient: Int,
+)
+
+internal fun calculateResearchQualityCounts(
+    items: List<StrategyResearchExperimentItem>,
+): ResearchQualityCounts {
+    var qualified = 0
+    var rejected = 0
+    var insufficient = 0
+    items.forEach { item ->
+        val status = item.status.uppercase(Locale.ROOT)
+        val quality = item.qualityStatus.uppercase(Locale.ROOT)
+        when {
+            quality == "REJECTED" || status == "FAILED" || status == "ERROR" -> rejected++
+            quality == "EVALUATED" &&
+                status == "EVALUATED" &&
+                item.foldCount >= 4 &&
+                item.validationTradeCount >= 30 &&
+                item.meanExcessReturnPct?.let { it.isFinite() && it > 0.0 } == true &&
+                item.positiveFoldPct?.let { it.isFinite() && it >= 50.0 } == true &&
+                item.maximumFoldDrawdownPct?.let { it.isFinite() && it <= 25.0 } == true &&
+                item.qualityFailureReasons.isEmpty() &&
+                !item.holdoutUsedForSelection &&
+                !item.ordersAuthorized -> qualified++
+            else -> insufficient++
+        }
+    }
+    return ResearchQualityCounts(qualified, rejected, insufficient)
+}
 
 private data class StrategyResearchFetchResult(
     val status: String,
@@ -1169,15 +1210,36 @@ private fun fetchStrategyResearchExperiments(token: String): StrategyResearchFet
                 return StrategyResearchFetchResult("UNSAFE RESPONSE", "A research record did not explicitly disable order authorization.", emptyList(), false)
             }
             val outcomes = row.optJSONObject("outcomes") ?: JSONObject()
-            val holdout = outcomes.optJSONObject("holdout") ?: JSONObject()
+            val quality = outcomes.optJSONObject("validation_quality") ?: JSONObject()
+            val candidateId = row.optString("candidate_id", "")
+            val holdout = outcomes.optJSONObject("untouched_holdout")
+                ?: outcomes.optJSONObject("holdout")
+                ?: JSONObject()
             val netPnl = holdout.optDouble("net_pnl", Double.NaN)
+            val foldArray = outcomes.optJSONArray("validation_folds")
+                ?: outcomes.optJSONArray("folds")
+            val failureArray = quality.optJSONArray("failure_reasons")
+            val failureReasons = if (failureArray == null) emptyList() else
+                (0 until failureArray.length()).map { failureArray.optString(it, "Unknown validation failure") }
+            val meanExcess = quality.optDouble("mean_excess_return_pct", Double.NaN)
+            val positiveFolds = quality.optDouble("positive_fold_pct", Double.NaN)
+            val maximumDrawdown = quality.optDouble("maximum_fold_drawdown_pct", Double.NaN)
             items += StrategyResearchExperimentItem(
                 experimentId = row.optString("experiment_id", ""),
-                symbol = row.optString("candidate_id", "").substringAfterLast(":"),
+                symbol = candidateId.substringAfterLast(":").ifBlank { "UNKNOWN" },
+                candidateFamily = candidateId.substringBefore(":").removePrefix("solo-").ifBlank { "unknown" },
                 status = row.optString("status", "UNKNOWN"),
+                qualityStatus = quality.optString("status", "INCOMPLETE"),
                 datasetStart = row.optString("dataset_start", ""),
                 datasetEnd = row.optString("dataset_end", ""),
-                foldCount = outcomes.optJSONArray("folds")?.length() ?: 0,
+                foldCount = foldArray?.length() ?: 0,
+                validationTradeCount = quality.optInt("total_validation_trades", -1),
+                meanExcessReturnPct = meanExcess.takeIf { it.isFinite() },
+                positiveFoldPct = positiveFolds.takeIf { it.isFinite() },
+                maximumFoldDrawdownPct = maximumDrawdown.takeIf { it.isFinite() },
+                qualityFailureReasons = failureReasons,
+                holdoutUsedForSelection = outcomes.optBoolean("holdout_used_for_selection", true) ||
+                    quality.optBoolean("holdout_used", true),
                 holdoutNetPnl = netPnl.takeIf { it.isFinite() },
                 holdoutTradeCount = holdout.optInt("trade_count", 0),
                 ordersAuthorized = false,
@@ -1186,7 +1248,7 @@ private fun fetchStrategyResearchExperiments(token: String): StrategyResearchFet
         return StrategyResearchFetchResult(
             root.optString("status", "UNKNOWN"),
             if (items.isEmpty()) "No completed research evaluations have been recorded yet."
-            else "Showing ${items.size} recent paper-only walk-forward evaluations.",
+            else "Loaded ${items.size} recent paper-only walk-forward evaluations; showing the latest 20 below.",
             items, true
         )
     } catch (e: Exception) {
@@ -1521,13 +1583,7 @@ private fun TraderApp() {
 @Composable
 private fun ResearchScreen() {
     val items = BackendSession.strategyResearchItems.value
-    val evaluatedCount = items.count { it.status.equals("EVALUATED", ignoreCase = true) }
-    val failedCount = items.count {
-        it.status.equals("FAILED", ignoreCase = true) ||
-            it.status.equals("ERROR", ignoreCase = true) ||
-            it.status.equals("REJECTED", ignoreCase = true)
-    }
-    val incompleteCount = items.size - evaluatedCount - failedCount
+    val qualityCounts = calculateResearchQualityCounts(items)
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp),
@@ -1548,12 +1604,12 @@ private fun ResearchScreen() {
             }
             Text(BackendSession.strategyResearchMessage.value, color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ResearchCount("Evaluated", evaluatedCount, Gold, Modifier.weight(1f))
-                ResearchCount("Failed", failedCount, Red, Modifier.weight(1f))
-                ResearchCount("Incomplete", incompleteCount, Muted, Modifier.weight(1f))
+                ResearchCount("Qualified", qualityCounts.qualified, Green, Modifier.weight(1f))
+                ResearchCount("Rejected", qualityCounts.rejected, Red, Modifier.weight(1f))
+                ResearchCount("Insufficient", qualityCounts.insufficient, Muted, Modifier.weight(1f))
             }
             Text(
-                "Historical diagnostics only — not forecasts, recommendations, or proof of profitability. Holdout data is not used for selection.",
+                "Historical diagnostics only — not forecasts, recommendations, or proof of profitability. Unverified holdout records never qualify for learning.",
                 color = Muted, fontSize = 10.sp, lineHeight = 14.sp
             )
         }
@@ -1566,13 +1622,48 @@ private fun ResearchScreen() {
                 )
             }
         } else {
-            items.forEach { item ->
+            items.take(20).forEach { item ->
+                val itemCounts = calculateResearchQualityCounts(listOf(item))
+                val qualityLabel = when {
+                    itemCounts.qualified == 1 -> "QUALITY PASS"
+                    itemCounts.rejected == 1 -> "REJECTED"
+                    else -> "INSUFFICIENT"
+                }
+                val qualityColor = when {
+                    itemCounts.qualified == 1 -> Green
+                    itemCounts.rejected == 1 -> Red
+                    else -> Muted
+                }
                 CardPanel {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text(displaySymbol(item.symbol), color = White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        Tag(item.status, if (item.status.equals("EVALUATED", ignoreCase = true)) Gold else Muted)
+                        Tag(qualityLabel, qualityColor)
                     }
+                    Text(
+                        item.candidateFamily.replace('_', ' ').uppercase(Locale.ROOT),
+                        color = Gold, fontSize = 10.sp, fontWeight = FontWeight.SemiBold
+                    )
+                    IndicatorRow("Evaluation status", item.status)
                     IndicatorRow("Validation folds", item.foldCount.toString())
+                    IndicatorRow("Validation trades", if (item.validationTradeCount >= 0) item.validationTradeCount.toString() else "Unavailable")
+                    IndicatorRow(
+                        "Mean excess vs baseline",
+                        item.meanExcessReturnPct?.let { String.format(Locale.US, "%.4f%%", it) } ?: "Unavailable"
+                    )
+                    IndicatorRow(
+                        "Positive folds",
+                        item.positiveFoldPct?.let { String.format(Locale.US, "%.1f%%", it) } ?: "Unavailable"
+                    )
+                    IndicatorRow(
+                        "Maximum validation drawdown",
+                        item.maximumFoldDrawdownPct?.let { String.format(Locale.US, "%.3f%%", it) } ?: "Unavailable"
+                    )
+                    if (item.qualityFailureReasons.isNotEmpty()) {
+                        Text(
+                            item.qualityFailureReasons.take(2).joinToString(" · "),
+                            color = Muted, fontSize = 10.sp, lineHeight = 14.sp
+                        )
+                    }
                     if (item.holdoutTradeCount > 0) {
                         IndicatorRow("Holdout trades", item.holdoutTradeCount.toString())
                         IndicatorRow(
@@ -1583,6 +1674,7 @@ private fun ResearchScreen() {
                         IndicatorRow("Holdout trades", "None recorded")
                         IndicatorRow("Holdout performance", "Not demonstrated")
                     }
+                    IndicatorRow("Holdout used for selection", if (item.holdoutUsedForSelection) "Not verified" else "No")
                     IndicatorRow("Dataset start", item.datasetStart)
                     IndicatorRow("Dataset end", item.datasetEnd)
                     Text("Experiment: ${item.experimentId}", color = Muted, fontSize = 9.sp)
