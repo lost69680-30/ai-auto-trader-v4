@@ -171,7 +171,7 @@ def test_supervisor_restarts_live_worker_after_stale_heartbeat(monkeypatch):
 
         def status(self):
             if clock["now"] >= 30:
-                return {"status": "STALE", "worker_status": "RUNNING", "age_seconds": 120}
+                return {"status": "STALE", "worker_status": "STALE", "age_seconds": 120, "lease_expired": False}
             return {"status": "HEALTHY", "worker_status": "RUNNING", "age_seconds": 1}
 
     class FakeProcess:
@@ -286,7 +286,7 @@ def test_worker_heartbeat_requires_restart_for_stale_lease_even_when_process_is_
     from backend.shared_market_supervisor import worker_heartbeat_requires_restart
 
     assert worker_heartbeat_requires_restart(
-        {"status": "STALE", "worker_status": "RUNNING", "age_seconds": 120},
+        {"status": "STALE", "worker_status": "STALE", "age_seconds": 120, "lease_expired": False},
         uptime_seconds=300,
         startup_grace_seconds=30,
     ) is True
