@@ -441,16 +441,21 @@ class PostgresMarketFeedStore:
         now = datetime.now(timezone.utc)
         if hb is None:
             return {"status": "STARTING", "reason": "no worker heartbeat", "checked_at": None,
-                    "age_seconds": None, "worker_status": "MISSING", "orders_authorized": False}
+                    "age_seconds": None, "worker_status": "MISSING", "details": {},
+                    "orders_authorized": False}
         age = (now - hb["heartbeat_at"]).total_seconds()
+        details = hb.get("details") or {}
+        diagnostics = details if isinstance(details, dict) else {}
         if age < 0 or age > self.max_age_seconds or hb["lease_expires_at"] <= now or hb["status"] in {"STOPPED", "ERROR"}:
             return {"status": "STALE", "reason": "market worker heartbeat is stale or stopped",
                     "checked_at": hb["heartbeat_at"].timestamp(), "age_seconds": age,
-                    "worker_status": hb["status"], "orders_authorized": False}
+                    "worker_status": hb["status"], "details": diagnostics,
+                    "orders_authorized": False}
         if hb["status"] == "STARTING":
             return {"status": "STARTING", "reason": "worker has not published its first validated market poll",
                     "checked_at": hb["heartbeat_at"].timestamp(), "age_seconds": age,
-                    "worker_status": hb["status"], "orders_authorized": False}
+                    "worker_status": hb["status"], "details": diagnostics,
+                    "orders_authorized": False}
         if not rows or any(
             (now - datetime.fromisoformat(row["checked_at"])).total_seconds() < -1.0
             or (now - datetime.fromisoformat(row["checked_at"])).total_seconds() > self.max_age_seconds
@@ -458,12 +463,14 @@ class PostgresMarketFeedStore:
         ):
             return {"status": "STALE", "reason": "market snapshots are missing or stale",
                     "checked_at": hb["heartbeat_at"].timestamp(), "age_seconds": age,
-                    "worker_status": hb["status"], "orders_authorized": False}
+                    "worker_status": hb["status"], "details": diagnostics,
+                    "orders_authorized": False}
         healthy = sum(1 for row in rows if row["status"] == "HEALTHY")
         feed_status = "HEALTHY" if healthy == len(rows) else ("DEGRADED" if healthy else "OFFLINE")
         return {"status": feed_status, "reason": None if feed_status == "HEALTHY" else "one or more symbols are unhealthy",
                 "checked_at": hb["heartbeat_at"].timestamp(), "age_seconds": age,
-                "worker_status": hb["status"], "orders_authorized": False}
+                "worker_status": hb["status"], "details": diagnostics,
+                "orders_authorized": False}
 
     def analysis_status(self) -> dict[str, Any]:
         hb, _rows = self._read()
