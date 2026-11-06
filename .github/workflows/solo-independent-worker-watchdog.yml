@@ -42,9 +42,9 @@ jobs:
               Loader=yaml.BaseLoader,
           )
           shell = workflow["jobs"]["monitor-and-recover"]["steps"][0]["run"]
-          marker = "python - <<'PY'\\n"
+          marker = "python - <<'PY'\n"
           start = shell.index(marker) + len(marker)
-          end = shell.rfind("\\nPY")
+          end = shell.rfind("\nPY")
           if end <= start:
               raise SystemExit("watchdog Python heredoc was not found")
           compile(shell[start:end], "solo_worker_watchdog.py", "exec")
