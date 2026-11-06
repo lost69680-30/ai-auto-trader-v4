@@ -31,7 +31,7 @@ def record(*, sample_size=80, rules=None, methodology="Published backtest method
         published_at=NOW - timedelta(days=30),
         market_types=("CRYPTO_SPOT",),
         symbols=("BTCUSDT",),
-        timeframes=("1h",),
+        timeframes=("1m",),
         indicators=("SMA", "ATR"),
         performance=ExternalPerformanceEvidence(
             sample_size=sample_size,
@@ -285,7 +285,7 @@ def test_external_strategy_evaluation_is_written_to_research_memory_without_auth
             venue="BINANCE_SPOT_TESTNET",
             market_type="CRYPTO_SPOT",
             symbol="BTCUSDT",
-            interval="1h",
+            interval="1m",
             source_id="supabase:paper_ledger.market_candles",
         ),
     )
