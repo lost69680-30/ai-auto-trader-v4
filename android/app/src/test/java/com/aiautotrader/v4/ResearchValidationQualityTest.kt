@@ -7,6 +7,7 @@ class ResearchValidationQualityTest {
     @Test
     fun acceptedValidationCountsAsPassed() {
         assertEquals(ResearchValidationBucket.PASSED, researchValidationBucket("PASSED"))
+        assertEquals(ResearchValidationBucket.PASSED, researchValidationBucket("EVALUATED"))
     }
 
     @Test
