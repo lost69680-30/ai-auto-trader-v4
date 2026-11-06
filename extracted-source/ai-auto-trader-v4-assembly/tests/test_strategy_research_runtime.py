@@ -303,7 +303,7 @@ def test_stateless_history_loader_fetches_closed_candles_in_bounded_pages():
 def test_stateless_history_loader_rejects_missing_minute_candles():
     from backend.strategy_research_runtime import fetch_stateless_closed_candles
 
-    rows = candle_rows(count=30)
+    rows = candle_rows(count=31)
     market_rows = tuple(SimpleNamespace(
         symbol="BTCUSDT",
         open_time=row.open_time,
