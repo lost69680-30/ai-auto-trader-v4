@@ -91,9 +91,10 @@ def test_memory_is_durable_append_only_and_idempotent_across_store_instances():
     _apply_migration()
     first_store = PostgresStrategyResearchMemory(DSN)
     record = _record()
-    first = first_store.append(record, idempotency_key="external-alpha-v1")
+    key = "external-alpha-v1-" + uuid.uuid4().hex
+    first = first_store.append(record, idempotency_key=key)
     second_store = PostgresStrategyResearchMemory(DSN)
-    duplicate = second_store.append(record, idempotency_key="external-alpha-v1")
+    duplicate = second_store.append(record, idempotency_key=key)
 
     assert first.experiment == record
     assert first.duplicate is False
@@ -105,18 +106,19 @@ def test_memory_is_durable_append_only_and_idempotent_across_store_instances():
 def test_memory_rejects_idempotency_conflicts_and_duplicate_versions():
     _apply_migration()
     store = PostgresStrategyResearchMemory(DSN)
-    fingerprint = "candidate-fingerprint-conflict"
+    fingerprint = "candidate-fingerprint-conflict-" + uuid.uuid4().hex
     first = _record(candidate_fingerprint=fingerprint)
-    store.append(first, idempotency_key="memory-conflict-key")
+    conflict_key = "memory-conflict-key-" + uuid.uuid4().hex
+    store.append(first, idempotency_key=conflict_key)
     conflicting = _record(experiment_version=2, candidate_fingerprint=fingerprint)
 
     with pytest.raises(ValueError, match="idempotency"):
-        store.append(conflicting, idempotency_key="memory-conflict-key")
+        store.append(conflicting, idempotency_key=conflict_key)
 
     with pytest.raises(ValueError, match="version"):
         store.append(
             _record(experiment_version=1, candidate_fingerprint=fingerprint),
-            idempotency_key="memory-different-key",
+            idempotency_key="memory-different-key-" + uuid.uuid4().hex,
         )
 
 
