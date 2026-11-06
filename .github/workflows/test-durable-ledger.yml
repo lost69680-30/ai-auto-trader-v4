@@ -47,9 +47,148 @@ jobs:
       - name: Install package and test dependencies
         working-directory: extracted-source/ai-auto-trader-v4-assembly
         run: python -m pip install -e '.[test]'
+      - name: Run staging preflight unit tests
+        working-directory: extracted-source/ai-auto-trader-v4-assembly
+        run: python -m pytest -q tests/test_staging_preflight.py
+      - name: Apply repository migrations to disposable CI database
+        env:
+          PAPER_TEST_DATABASE_URL: ${{ env.PAPER_TEST_DATABASE_URL }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import psycopg
+
+          migrations = sorted(Path("supabase/migrations").glob("*.sql"))
+          if not migrations:
+              raise SystemExit("No Supabase migrations found")
+          with psycopg.connect(
+              os.environ["PAPER_TEST_DATABASE_URL"],
+              autocommit=True,
+              prepare_threshold=None,
+          ) as connection:
+              # Exercise the optional backup-reader branch in the migration.
+              connection.execute(
+                  "CREATE ROLE solo_backup_reader LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT"
+              )
+              connection.execute("CREATE ROLE anon")
+              connection.execute("CREATE ROLE authenticated")
+              connection.execute("CREATE ROLE service_role")
+              for migration in migrations:
+                  connection.execute(migration.read_text(encoding="utf-8"), prepare=False)
+
+              expected = [
+                  "opportunities", "opportunity_assessments", "opportunity_evidence",
+                  "opportunity_watch_conditions", "opportunity_events", "opportunity_claims",
+              ]
+              for table in expected:
+                  row = connection.execute(
+                      """
+                      SELECT c.relrowsecurity,
+                             has_table_privilege('solo_backup_reader', c.oid, 'SELECT'),
+                             has_table_privilege('solo_backup_reader', c.oid, 'INSERT'),
+                             has_table_privilege('solo_backup_reader', c.oid, 'UPDATE'),
+                             has_table_privilege('solo_backup_reader', c.oid, 'DELETE'),
+                             EXISTS (
+                                 SELECT 1 FROM pg_policies p
+                                 WHERE p.schemaname = 'paper_ledger'
+                                   AND p.tablename = c.relname
+                                   AND p.policyname = 'solo_backup_reader_select'
+                                   AND 'solo_backup_reader' = ANY(p.roles)
+                                   AND p.cmd = 'SELECT'
+                             )
+                      FROM pg_class c
+                      JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'paper_ledger'
+                        AND c.relname = %s
+                        AND c.relkind = 'r'
+                      """,
+                      (table,),
+                  ).fetchone()
+                  if row is None or row != (True, True, False, False, False, True):
+                      raise SystemExit(
+                          f"Backup-reader/RLS contract failed for paper_ledger.{table}: {row}"
+                      )
+                  for client_role in ("anon", "authenticated", "service_role"):
+                      client_access = connection.execute(
+                          """
+                          SELECT has_table_privilege(%s, %s, 'SELECT')
+                              OR has_table_privilege(%s, %s, 'INSERT')
+                              OR has_table_privilege(%s, %s, 'UPDATE')
+                              OR has_table_privilege(%s, %s, 'DELETE')
+                          """,
+                          (
+                              client_role, f"paper_ledger.{table}",
+                              client_role, f"paper_ledger.{table}",
+                              client_role, f"paper_ledger.{table}",
+                              client_role, f"paper_ledger.{table}",
+                          ),
+                      ).fetchone()[0]
+                      if client_access:
+                          raise SystemExit(
+                              f"Client-facing role {client_role} unexpectedly has access to {table}"
+                          )
+          print(
+              f"Applied {len(migrations)} migrations and verified six private opportunity tables "
+              "have RLS, backup-reader SELECT-only access, and no client/service-role grants."
+          )
+          PY
+      - name: Run worker staging preflight and read-only schema inspection
+        working-directory: extracted-source/ai-auto-trader-v4-assembly
+        env:
+          PAPER_DATABASE_URL: ${{ env.PAPER_TEST_DATABASE_URL }}
+          PAPER_MARKET_TESTNET: "true"
+          PAPER_CANDLE_INTERVAL: "1m"
+          PAPER_MARKET_INTELLIGENCE_ENABLED: "false"
+          PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED: "false"
+          PAPER_RESEARCH_WORKER_ENABLED: "false"
+          PAPER_MARKET_SUPERVISOR_ENABLED: "false"
+          PAPER_SYMBOLS: "BTCUSDT,ETHUSDT"
+          PAPER_SIMULATED_EQUITY: "1000"
+          PAPER_RISK_FRACTION: "0.005"
+          PAPER_MAX_POSITION_NOTIONAL: "100"
+          PAPER_MAX_DAILY_LOSS: "20"
+          PAPER_MAX_OPEN_POSITIONS: "2"
+          PAPER_MAX_RISK_PER_TRADE: "5"
+          PAPER_ESTIMATED_ROUND_TRIP_COST_PCT: "0.12"
+          PAPER_FEE_RATE: "0.0004"
+          PAPER_SLIPPAGE_BPS: "2"
+        run: python -m backend.staging_preflight --role worker --check-database
+      - name: Run API staging preflight
+        working-directory: extracted-source/ai-auto-trader-v4-assembly
+        env:
+          PAPER_DATABASE_URL: ${{ env.PAPER_TEST_DATABASE_URL }}
+          PAPER_MARKET_TESTNET: "true"
+          PAPER_CANDLE_INTERVAL: "1m"
+          PAPER_MARKET_INTELLIGENCE_ENABLED: "false"
+          PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED: "false"
+          PAPER_RESEARCH_WORKER_ENABLED: "false"
+          PAPER_MARKET_SUPERVISOR_ENABLED: "false"
+          PAPER_SYMBOLS: "BTCUSDT,ETHUSDT"
+          PAPER_SIMULATED_EQUITY: "1000"
+          PAPER_RISK_FRACTION: "0.005"
+          PAPER_MAX_POSITION_NOTIONAL: "100"
+          PAPER_MAX_DAILY_LOSS: "20"
+          PAPER_MAX_OPEN_POSITIONS: "2"
+          PAPER_MAX_RISK_PER_TRADE: "5"
+          PAPER_ESTIMATED_ROUND_TRIP_COST_PCT: "0.12"
+          PAPER_FEE_RATE: "0.0004"
+          PAPER_SLIPPAGE_BPS: "2"
+          PAPER_MARKET_ROLE: "api"
+          PAPER_MARKET_DATA_MODE: "futures"
+          PAPER_API_TOKEN: "ci-only-placeholder-token-0123456789"
+          PAPER_API_HOST: "127.0.0.1"
+          PAPER_WEBSOCKET_ENABLED: "true"
+        run: python -m backend.staging_preflight --role api
       - name: Run PostgreSQL ledger integration tests
         working-directory: extracted-source/ai-auto-trader-v4-assembly
         run: python -m pytest -q tests/test_postgres_paper_ledger.py
+      - name: Run PostgreSQL paper-service recovery integration
+        working-directory: extracted-source/ai-auto-trader-v4-assembly
+        run: python -m pytest -q tests/test_postgres_paper_runtime_integration.py
+      - name: Run PostgreSQL opportunity registry integration tests
+        working-directory: extracted-source/ai-auto-trader-v4-assembly
+        run: python -m pytest -q tests/test_opportunity_store.py
       - name: Run complete backend test suite
         working-directory: extracted-source/ai-auto-trader-v4-assembly
         run: python -m pytest -q
