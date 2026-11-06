@@ -217,6 +217,8 @@ def run_scheduled_jobs(
                 health.update(values)
 
     while not stop.is_set():
+        poll_started_at = datetime.now(timezone.utc).isoformat()
+        publish_health(last_poll_started_at=poll_started_at)
         try:
             enqueued = scheduler.enqueue_due()
             dispatcher.run_once()
@@ -299,6 +301,7 @@ def main() -> None:
     app = None
     job_runner = None
     stop = threading.Event()
+    process_started_at = datetime.now(timezone.utc).isoformat()
 
     def request_stop(signum, frame) -> None:
         logger.info("shutdown requested; stopping paper-only market worker")
@@ -470,6 +473,8 @@ def main() -> None:
         job_runner.start()
 
         while not stop.is_set():
+            cycle_started_at = datetime.now(timezone.utc).isoformat()
+            cycle_started_monotonic = time.monotonic()
             try:
                 backfill_clock = datetime.now(timezone.utc)
                 archived_count = 0
@@ -548,7 +553,11 @@ def main() -> None:
                     details={
                         "analysis_status": cycle_status,
                         "analysis_error": analysis_error,
+                        "process_id": os.getpid(),
+                        "process_started_at": process_started_at,
+                        "last_cycle_started_at": cycle_started_at,
                         "last_cycle_at": datetime.now(timezone.utc).isoformat(),
+                        "cycle_duration_seconds": round(time.monotonic() - cycle_started_monotonic, 3),
                         "healthy_symbols": list(report.healthy_symbols),
                         "unhealthy_symbols": list(report.unhealthy_symbols),
                         "archived_new_candles": archived_count,
@@ -575,7 +584,11 @@ def main() -> None:
                     store.heartbeat("DEGRADED", details={
                         "analysis_status": "ANALYSIS_FAILED:WorkerCycleError",
                         "analysis_error": type(exc).__name__,
+                        "process_id": os.getpid(),
+                        "process_started_at": process_started_at,
+                        "last_cycle_started_at": cycle_started_at,
                         "last_cycle_at": datetime.now(timezone.utc).isoformat(),
+                        "cycle_duration_seconds": round(time.monotonic() - cycle_started_monotonic, 3),
                         "orders_authorized": False,
                     })
                 except Exception:
