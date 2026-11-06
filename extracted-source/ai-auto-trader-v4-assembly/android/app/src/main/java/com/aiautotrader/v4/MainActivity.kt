@@ -338,6 +338,7 @@ private data class StrategyResearchExperimentItem(
     val positiveFoldPct: Double?,
     val maximumFoldDrawdownPct: Double?,
     val validationFailureReasons: List<String>,
+    val costSensitivity: ResearchCostSensitivity,
     val holdoutNetPnl: Double?,
     val holdoutTradeCount: Int,
     val ordersAuthorized: Boolean,
@@ -1199,6 +1200,7 @@ private fun fetchStrategyResearchExperiments(token: String): StrategyResearchFet
             val validationReasons = (0 until reasonArray.length())
                 .mapNotNull { reasonIndex -> reasonArray.optString(reasonIndex).trim().takeIf { it.isNotBlank() && it != "null" } }
                 .distinct()
+            val costSensitivity = parseResearchCostSensitivity(outcomes)
             val holdout = outcomes.optJSONObject("holdout") ?: JSONObject()
             val netPnl = holdout.optDouble("net_pnl", Double.NaN)
             val candidateId = row.optString("candidate_id", "")
@@ -1218,6 +1220,7 @@ private fun fetchStrategyResearchExperiments(token: String): StrategyResearchFet
                 positiveFoldPct = rawPositiveFoldPct.takeIf { it.isFinite() },
                 maximumFoldDrawdownPct = rawMaximumDrawdown.takeIf { it.isFinite() },
                 validationFailureReasons = validationReasons,
+                costSensitivity = costSensitivity,
                 holdoutNetPnl = netPnl.takeIf { it.isFinite() },
                 holdoutTradeCount = holdout.optInt("trade_count", 0),
                 ordersAuthorized = false,
@@ -1632,6 +1635,30 @@ private fun ResearchScreen() {
                     if (item.validationFailureReasons.isEmpty() && item.validationQualityStatus == "MISSING") {
                         Text("Validation-quality evidence is missing for this legacy record.", color = Muted, fontSize = 10.sp)
                     }
+                    Text("COST SENSITIVITY · VALIDATION ONLY", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Tag(item.costSensitivity.status, when (item.costSensitivity.status) {
+                        "EVALUATED" -> Green
+                        "UNAVAILABLE" -> Color(0xFFE7B65E)
+                        else -> Muted
+                    })
+                    item.costSensitivity.reason?.let { reason ->
+                        Text(reason, color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                    }
+                    item.costSensitivity.scenarios.forEach { scenario ->
+                        IndicatorRow(
+                            String.format(Locale.US, "%.1fx estimated costs", scenario.multiplier),
+                            String.format(Locale.US, "net %+.3f%% · excess %+.3f%%", scenario.meanNetReturnPct, scenario.meanExcessReturnPct)
+                        )
+                        IndicatorRow(
+                            "Stress costs / positive folds",
+                            String.format(Locale.US, "%.4f · %.1f%%", scenario.totalEstimatedCosts, scenario.positiveFoldPct)
+                        )
+                        IndicatorRow(
+                            "Stress drawdown / trades",
+                            String.format(Locale.US, "%.3f%% · %d", scenario.maximumFoldDrawdownPct, scenario.tradeCount)
+                        )
+                    }
+                    Text("Cost stress excludes untouched holdout data and does not change validation status.", color = Muted, fontSize = 9.sp, lineHeight = 13.sp)
                     if (item.holdoutTradeCount > 0) {
                         IndicatorRow("Holdout trades", item.holdoutTradeCount.toString())
                         IndicatorRow(
