@@ -130,3 +130,9 @@ def test_backtest_start_timestamp_uses_prior_candles_only_as_warmup():
 def test_backtest_config_rejects_non_numeric_boolean_and_non_finite_values(config_kwargs):
     with pytest.raises(ValueError, match="numeric|finite|positive integer"):
         BacktestConfig(**config_kwargs)
+
+
+@pytest.mark.parametrize("interval", [True, 1.5, 0, -1])
+def test_backtest_config_requires_positive_integer_candle_interval(interval):
+    with pytest.raises(ValueError, match="candle_interval_minutes"):
+        BacktestConfig(candle_interval_minutes=interval)
