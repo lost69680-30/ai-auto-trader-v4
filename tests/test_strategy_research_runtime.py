@@ -209,7 +209,7 @@ def test_research_memory_write_failure_propagates_for_scheduler_retry(monkeypatc
 
     class BrokenMemory:
         def append(self, experiment, *, idempotency_key):
-            raise RuntimeError("database write unavailable")
+            raise ValueError("database write unavailable")
 
     monkeypatch.setattr(
         strategy_research_runtime, "evaluate_walk_forward",
@@ -218,7 +218,7 @@ def test_research_memory_write_failure_propagates_for_scheduler_retry(monkeypatc
     handler = strategy_research_runtime.build_strategy_research_handler(
         archive, BrokenMemory(), symbols=("BTCUSDT",), clock=lambda: NOW,
     )
-    with pytest.raises(RuntimeError, match="database write unavailable"):
+    with pytest.raises(ValueError, match="database write unavailable"):
         handler({
             "scope": "strategy_research", "market_type": "FUTURES",
             "venue": "BINANCE_USDM_TESTNET",
