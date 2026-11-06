@@ -225,3 +225,31 @@ def test_supervisor_shutdown_grace_exceeds_worker_scheduler_grace():
     assert configured_child_shutdown_grace({}) == 25.0
     assert configured_child_shutdown_grace({"PAPER_SUPERVISOR_CHILD_SHUTDOWN_GRACE_SECONDS": "40"}) == 40.0
     assert configured_child_shutdown_grace({"PAPER_SUPERVISOR_CHILD_SHUTDOWN_GRACE_SECONDS": "5"}) == 15.0
+
+
+def test_supervisor_mode_defaults_to_both_processes():
+    from backend.shared_market_supervisor import configured_supervisor_modules
+
+    modules = configured_supervisor_modules("all", {}, {})
+    assert set(modules) == {"worker", "api"}
+
+
+def test_worker_only_supervisor_does_not_start_a_second_api():
+    from backend.shared_market_supervisor import configured_supervisor_modules
+
+    modules = configured_supervisor_modules("worker", {"role": "worker"}, {"role": "api"})
+    assert modules == {"worker": ("backend.shared_market_worker", {"role": "worker"})}
+
+
+def test_api_only_supervisor_does_not_start_a_second_worker():
+    from backend.shared_market_supervisor import configured_supervisor_modules
+
+    modules = configured_supervisor_modules("api", {"role": "worker"}, {"role": "api"})
+    assert modules == {"api": ("app.engines.read_only_api", {"role": "api"})}
+
+
+def test_supervisor_rejects_unknown_mode():
+    from backend.shared_market_supervisor import configured_supervisor_modules
+
+    with pytest.raises(ValueError, match="PAPER_MARKET_SUPERVISOR_MODE"):
+        configured_supervisor_modules("both-ish", {}, {})
