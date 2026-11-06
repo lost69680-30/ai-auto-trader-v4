@@ -184,9 +184,9 @@ def build_strategy_research_handler(
     if (
         isinstance(candles_per_symbol, bool)
         or not isinstance(candles_per_symbol, int)
-        or not 3000 <= candles_per_symbol <= 100000
+        or not 3000 <= candles_per_symbol <= 10000
     ):
-        raise ValueError("candles_per_symbol must be between 3000 and 100000")
+        raise ValueError("candles_per_symbol must be between 3000 and 10000")
     wf_config = walk_forward_config or WalkForwardConfig()
     bt_config = backtest_config or BacktestConfig(candle_interval_minutes=1)
     if wf_config.candle_interval_minutes != 1 or bt_config.candle_interval_minutes != 1:
