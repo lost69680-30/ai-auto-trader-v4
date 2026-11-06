@@ -989,3 +989,78 @@ def test_research_experiments_endpoint_rejects_unsafe_records_and_missing_provid
     assert status.startswith("503")
     assert body["items"] == []
     assert body["orders_authorized"] is False
+
+
+def test_worker_health_ping_requires_https_and_valid_paper_only_response():
+    import json
+    from contextlib import closing
+    from app.engines.read_only_api import ping_worker_health_endpoint
+
+    class Response:
+        status = 200
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self):
+            return json.dumps({
+                "status": "ok",
+                "mode": "PAPER_ONLY",
+                "orders_authorized": False,
+            }).encode()
+
+    seen = {}
+    def opener(request, timeout):
+        seen["url"] = request.full_url
+        seen["method"] = request.get_method()
+        seen["timeout"] = timeout
+        return Response()
+
+    assert ping_worker_health_endpoint(
+        "https://solo-worker.example/healthz", opener=opener,
+    ) is True
+    assert seen["method"] == "GET"
+    assert seen["url"] == "https://solo-worker.example/healthz"
+
+    with pytest.raises(ValueError, match="HTTPS"):
+        ping_worker_health_endpoint("http://solo-worker.example/healthz", opener=opener)
+
+
+def test_worker_health_ping_rejects_non_read_only_health_payload():
+    import json
+    from app.engines.read_only_api import ping_worker_health_endpoint
+
+    class Response:
+        status = 200
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self):
+            return json.dumps({
+                "status": "ok",
+                "mode": "PAPER_ONLY",
+                "orders_authorized": True,
+            }).encode()
+
+    assert ping_worker_health_endpoint(
+        "https://solo-worker.example/healthz", opener=lambda *args, **kwargs: Response(),
+    ) is False
+
+
+def test_worker_health_keepalive_pings_immediately_and_stops_cleanly():
+    import threading
+    from app.engines.read_only_api import run_worker_health_keepalive
+
+    stop = threading.Event()
+    calls = []
+    def ping(url):
+        calls.append(url)
+        stop.set()
+        return True
+
+    run_worker_health_keepalive(
+        stop, "https://solo-worker.example/healthz",
+        interval_seconds=300, ping=ping,
+    )
+    assert calls == ["https://solo-worker.example/healthz"]
