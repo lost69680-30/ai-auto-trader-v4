@@ -78,7 +78,7 @@ def run_scheduled_jobs(
         publish_health(
             status="DEGRADED" if degraded else "RUNNING",
             last_poll_at=datetime.now(timezone.utc).isoformat(),
-            last_error=scheduler_error or dispatch_error,
+            last_error=(scheduler_error or (dispatch_error.partition(":")[0][:80] if isinstance(dispatch_error, str) else None)),
             last_dispatch_status=dispatch_status,
             jobs_enqueued=enqueued,
         )
@@ -347,6 +347,8 @@ def main() -> None:
                 delay = app.worker.next_delay_seconds
             except Exception as exc:
                 logger.exception("shared market worker cycle failed; feed remains fail-closed")
+                with scheduler_health_lock:
+                    scheduler_health_snapshot = dict(scheduler_health)
                 try:
                     store.heartbeat("DEGRADED", details={
                         "analysis_status": "ANALYSIS_FAILED:WorkerCycleError",
@@ -356,7 +358,7 @@ def main() -> None:
                         "last_cycle_started_at": cycle_started_at,
                         "last_cycle_at": datetime.now(timezone.utc).isoformat(),
                         "cycle_duration_seconds": round(time.monotonic() - cycle_started_monotonic, 3),
-                        "scheduled_jobs": dict(scheduler_health),
+                        "scheduled_jobs": scheduler_health_snapshot,
                         "orders_authorized": False,
                     })
                 except Exception:
