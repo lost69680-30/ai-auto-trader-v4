@@ -7,6 +7,7 @@ from backend import strategy_research_runtime
 from backend.dataset_lineage import DatasetProvenance, candle_dataset_sha256
 from backend.market_data_lineage import MarketDataIdentity, build_market_data_manifest
 from backend.strategy_research import Candle
+from backend.strategy_learning_lab import build_research_dataset
 
 
 NOW = datetime(2026, 11, 6, 5, 0, tzinfo=timezone.utc)
@@ -66,16 +67,22 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
         candle_count=len(rows), data_sha256=candle_dataset_sha256(canonical_candles),
     )
     strategy = SimpleNamespace(
-        net_pnl=1.25, trade_count=4, win_rate_pct=50.0,
-        max_drawdown_pct=2.5, total_costs=0.4,
+        initial_equity=1000.0, net_pnl=1.25, trade_count=4,
+        win_rate_pct=50.0, max_drawdown_pct=2.5, total_costs=0.4,
+    )
+    regime = SimpleNamespace(
+        trend_state="UP", volatility_state="LOW",
+        trend_return_pct=1.2, realized_volatility_pct=0.1,
+        observations=499, methodology="test close-to-close regime evidence",
+        orders_authorized=False,
     )
     window = SimpleNamespace(
         name="walk_forward_1", start_index=2000, end_index=2500,
-        strategy=strategy, buy_hold_return_pct=0.5,
+        strategy=strategy, market_regime=regime, buy_hold_return_pct=0.5,
     )
     holdout = SimpleNamespace(
         name="untouched_holdout", start_index=2500, end_index=3000,
-        strategy=strategy, buy_hold_return_pct=0.25,
+        strategy=strategy, market_regime=regime, buy_hold_return_pct=0.25,
     )
     result = SimpleNamespace(
         dataset_provenance=provenance, folds=(window,), holdout=holdout,
@@ -118,6 +125,12 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     assert experiment.outcomes["holdout"]["name"] == "untouched_holdout"
     assert experiment.outcomes["holdout"]["used_for_selection"] is False
     assert experiment.outcomes["orders_authorized"] is False
+    assert experiment.outcomes["holdout_used_for_selection"] is False
+    assert experiment.outcomes["untouched_holdout"]["used_for_selection"] is False
+    assert experiment.outcomes["validation_folds"][0]["market_regime"]["orders_authorized"] is False
+    dataset = build_research_dataset((experiment,))
+    assert dataset.market_data_manifests[0].sha256 == expected_manifest.sha256
+    assert dataset.orders_authorized is False
     assert key.startswith("solo-research:")
 
 
@@ -163,12 +176,18 @@ def test_research_memory_write_failure_propagates_for_scheduler_retry(monkeypatc
         candle_count=len(rows), data_sha256=candle_dataset_sha256(canonical_candles),
     )
     strategy = SimpleNamespace(
-        net_pnl=0.0, trade_count=0, win_rate_pct=0.0,
-        max_drawdown_pct=0.0, total_costs=0.0,
+        initial_equity=1000.0, net_pnl=0.0, trade_count=0,
+        win_rate_pct=0.0, max_drawdown_pct=0.0, total_costs=0.0,
+    )
+    regime = SimpleNamespace(
+        trend_state="RANGE", volatility_state="LOW",
+        trend_return_pct=0.0, realized_volatility_pct=0.0,
+        observations=499, methodology="test close-to-close regime evidence",
+        orders_authorized=False,
     )
     window = SimpleNamespace(
         name="fold", start_index=2000, end_index=2500,
-        strategy=strategy, buy_hold_return_pct=0.0,
+        strategy=strategy, market_regime=regime, buy_hold_return_pct=0.0,
     )
     result = SimpleNamespace(
         dataset_provenance=provenance, folds=(window,), holdout=window,
