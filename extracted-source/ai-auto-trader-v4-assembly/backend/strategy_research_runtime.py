@@ -17,6 +17,7 @@ from backend.backtesting import BacktestConfig
 from backend.dataset_lineage import DatasetProvenance, candle_dataset_sha256
 from backend.external_strategy_intelligence import ExternalRuleSpec, assess_walk_forward_quality
 from backend.market_data_lineage import MarketDataIdentity, build_market_data_manifest
+from backend.market_data_adapter import MarketDataError
 from backend.strategy_research import Candle
 from backend.strategy_research_memory import (
     PostgresStrategyResearchMemory,
@@ -78,10 +79,86 @@ def _canonical_digest(value: dict) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+
+def fetch_stateless_closed_candles(
+    source,
+    *,
+    symbol: str,
+    count: int,
+    now: datetime,
+    page_size: int = 1500,
+) -> tuple[Candle, ...]:
+    """Fetch a bounded, contiguous 1m research window directly from the Testnet source."""
+    if not callable(getattr(source, "fetch_klines", None)):
+        raise ValueError("stateless research source must provide fetch_klines")
+    if not isinstance(symbol, str) or not symbol or symbol != symbol.strip().upper():
+        raise ValueError("stateless research symbol must be canonical uppercase text")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise ValueError("stateless research candle count must be positive")
+    if isinstance(page_size, bool) or not isinstance(page_size, int) or not 1 <= page_size <= 1500:
+        raise ValueError("stateless research page_size must be between 1 and 1500")
+    _iso(now)
+    now = now.astimezone(timezone.utc)
+    end_time_ms = int(now.timestamp() * 1000) - 1
+    by_open_ms: dict[int, object] = {}
+    max_pages = math.ceil(count / page_size) + 2
+    for _ in range(max_pages):
+        remaining = count - len(by_open_ms)
+        if remaining <= 0:
+            break
+        page = source.fetch_klines(
+            symbol, interval="1m", limit=min(page_size, remaining),
+            end_time_ms=end_time_ms, now=now,
+        )
+        if not isinstance(page, (tuple, list)):
+            raise ValueError("stateless market source returned an invalid candle page")
+        if not page:
+            break
+        page_open_ms: list[int] = []
+        for row in page:
+            if getattr(row, "symbol", None) != symbol:
+                raise ValueError("stateless market source returned a mismatched symbol")
+            if getattr(row, "is_closed", False) is not True:
+                continue
+            open_time = getattr(row, "open_time", None)
+            close_time = getattr(row, "close_time", None)
+            if (
+                not isinstance(open_time, datetime) or open_time.tzinfo is None or open_time.utcoffset() is None
+                or not isinstance(close_time, datetime) or close_time.tzinfo is None or close_time.utcoffset() is None
+            ):
+                raise ValueError("stateless market source returned an invalid candle timestamp")
+            open_time = open_time.astimezone(timezone.utc)
+            close_time = close_time.astimezone(timezone.utc)
+            if open_time.second or open_time.microsecond or close_time >= now or close_time < open_time:
+                raise ValueError("stateless market source returned an open, future or malformed candle")
+            open_ms = int(open_time.timestamp() * 1000)
+            if open_ms in by_open_ms:
+                raise ValueError("stateless market source returned duplicate candles")
+            by_open_ms[open_ms] = row
+            page_open_ms.append(open_ms)
+        if not page_open_ms:
+            break
+        end_time_ms = min(page_open_ms) - 1
+    ordered_rows = [by_open_ms[key] for key in sorted(by_open_ms)]
+    if len(ordered_rows) < count:
+        raise ValueError(
+            f"insufficient stateless history: expected {count} closed candles, got {len(ordered_rows)}"
+        )
+    ordered_rows = ordered_rows[-count:]
+    for previous, current in zip(ordered_rows, ordered_rows[1:]):
+        if current.open_time.astimezone(timezone.utc) - previous.open_time.astimezone(timezone.utc) != timedelta(minutes=1):
+            raise ValueError("stateless research candle history is not continuous")
+    return tuple(Candle(
+        symbol=symbol, timestamp=row.open_time.astimezone(timezone.utc),
+        open=row.open, high=row.high, low=row.low, close=row.close, volume=row.volume,
+    ) for row in ordered_rows)
+
+
 def build_strategy_research_handler(
     archive,
     memory: PostgresStrategyResearchMemory,
     *,
+    source=None,
     symbols: Iterable[str],
     candles_per_symbol: int = 3000,
     venue: str = "BINANCE_USDM_TESTNET",
@@ -91,15 +168,17 @@ def build_strategy_research_handler(
     backtest_config: BacktestConfig | None = None,
     clock: Callable[[], datetime] | None = None,
 ):
-    """Create an allowlisted scheduled handler; only archived closed candles are read."""
+    """Create an allowlisted handler over archived or bounded on-demand closed Testnet candles."""
     configured_symbols = tuple(dict.fromkeys(symbols))
     if not configured_symbols or any(
         not isinstance(symbol, str) or not symbol or symbol != symbol.strip().upper()
         or not symbol.isalnum() for symbol in configured_symbols
     ):
         raise ValueError("research symbols must be a non-empty canonical uppercase allowlist")
+    if archive is None and not callable(getattr(source, "fetch_klines", None)):
+        raise ValueError("stateless strategy research requires a read-only market source")
     if (market_type, venue) != _SUPPORTED_MARKET:
-        raise ValueError("scheduled strategy research is restricted to Futures Testnet archive data")
+        raise ValueError("scheduled strategy research is restricted to Futures Testnet market data")
     if not isinstance(provider, str) or not provider.strip():
         raise ValueError("dataset provider identifier is required")
     if (
@@ -121,7 +200,7 @@ def build_strategy_research_handler(
         if not isinstance(payload, dict) or payload.get("scope") != "strategy_research":
             raise ValueError("strategy research job requires scope=strategy_research")
         if payload.get("market_type") != market_type or payload.get("venue") != venue:
-            raise ValueError("strategy research job venue does not match its isolated archive")
+            raise ValueError("strategy research job venue does not match its isolated Testnet source")
         if payload.get("orders_authorized", False) is not False:
             raise ValueError("strategy research payload cannot authorize orders")
         if not isinstance(idempotency_key, str) or not idempotency_key.strip():
@@ -134,33 +213,38 @@ def build_strategy_research_handler(
         skipped: list[dict[str, str]] = []
         for symbol in configured_symbols:
             try:
-                latest = archive.latest_open_time(
-                    venue=venue, market_type=market_type, symbol=symbol,
-                )
-                if latest is None:
-                    raise ValueError("no archived candles are available")
-                latest_utc = datetime.fromisoformat(_iso(latest))
-                start = latest_utc - timedelta(minutes=candles_per_symbol - 1)
-                end = latest_utc + timedelta(minutes=1)
-                rows = tuple(archive.read_closed_candles(
-                    venue=venue, market_type=market_type, symbol=symbol,
-                    start=start, end=end, limit=candles_per_symbol,
-                ))
-                if len(rows) != candles_per_symbol:
-                    raise ValueError(
-                        f"insufficient archived history: expected {candles_per_symbol}, got {len(rows)}"
+                if archive is None:
+                    candles = fetch_stateless_closed_candles(
+                        source, symbol=symbol, count=candles_per_symbol, now=now,
                     )
-                if any(
-                    row.venue != venue or row.market_type != market_type
-                    or row.symbol != symbol or row.interval != "1m" or row.is_closed is not True
-                    for row in rows
-                ):
-                    raise ValueError("archive returned a mixed, open, or non-canonical candle series")
-                candles = tuple(Candle(
-                    symbol=symbol, timestamp=row.open_time,
-                    open=row.open, high=row.high, low=row.low,
-                    close=row.close, volume=row.volume,
-                ) for row in rows)
+                else:
+                    latest = archive.latest_open_time(
+                        venue=venue, market_type=market_type, symbol=symbol,
+                    )
+                    if latest is None:
+                        raise ValueError("no archived candles are available")
+                    latest_utc = datetime.fromisoformat(_iso(latest))
+                    start = latest_utc - timedelta(minutes=candles_per_symbol - 1)
+                    end = latest_utc + timedelta(minutes=1)
+                    rows = tuple(archive.read_closed_candles(
+                        venue=venue, market_type=market_type, symbol=symbol,
+                        start=start, end=end, limit=candles_per_symbol,
+                    ))
+                    if len(rows) != candles_per_symbol:
+                        raise ValueError(
+                            f"insufficient archived history: expected {candles_per_symbol}, got {len(rows)}"
+                        )
+                    if any(
+                        row.venue != venue or row.market_type != market_type
+                        or row.symbol != symbol or row.interval != "1m" or row.is_closed is not True
+                        for row in rows
+                    ):
+                        raise ValueError("archive returned a mixed, open, or non-canonical candle series")
+                    candles = tuple(Candle(
+                        symbol=symbol, timestamp=row.open_time,
+                        open=row.open, high=row.high, low=row.low,
+                        close=row.close, volume=row.volume,
+                    ) for row in rows)
                 canonical_manifest = build_market_data_manifest(
                     candles,
                     MarketDataIdentity(
@@ -184,11 +268,11 @@ def build_strategy_research_handler(
                     "row_count": canonical_manifest.row_count,
                     "sha256_ordered_ohlcv": canonical_digest,
                 }
-            except (ValueError, TypeError) as exc:
+            except (ValueError, TypeError, MarketDataError) as exc:
                 skipped.append({"symbol": symbol, "reason": f"{type(exc).__name__}: {str(exc)}"[:180]})
                 logger.warning(
-                    "strategy research skipped symbol=%s reason=%s orders_authorized=False",
-                    symbol, type(exc).__name__,
+                    "strategy research skipped symbol=%s reason=%s detail=%s orders_authorized=False",
+                    symbol, type(exc).__name__, " ".join(str(exc).split())[:160],
                 )
                 continue
 
