@@ -40,19 +40,48 @@ def create_candle_archive(dsn: str, *, enabled: bool):
     return PostgresCandleArchive(dsn) if enabled else None
 
 
-def run_scheduled_jobs(stop: threading.Event, scheduler: DurableJobScheduler,
-                       dispatcher: AnalysisJobDispatcher, *, poll_interval: float = 1.0) -> None:
-    """Run durable analysis jobs off the market-feed polling thread."""
+def run_scheduled_jobs(
+    stop: threading.Event, scheduler: DurableJobScheduler,
+    dispatcher: AnalysisJobDispatcher, *, poll_interval: float = 5.0,
+    health: dict | None = None, health_lock=None,
+) -> None:
+    """Run durable analysis jobs off the market-feed thread and publish progress."""
     if not isinstance(stop, threading.Event):
         raise ValueError("stop must be a threading.Event")
     if not isinstance(poll_interval, (int, float)) or poll_interval <= 0:
         raise ValueError("poll_interval must be positive")
+    if health is not None and not isinstance(health, dict):
+        raise ValueError("health must be a dictionary when supplied")
+
+    def publish_health(**values):
+        if health is None:
+            return
+        if health_lock is None:
+            health.update(values)
+        else:
+            with health_lock:
+                health.update(values)
+
     while not stop.is_set():
+        publish_health(last_poll_started_at=datetime.now(timezone.utc).isoformat())
+        scheduler_error = None
         try:
-            scheduler.enqueue_due()
+            enqueued = scheduler.enqueue_due()
             dispatcher.run_once()
-        except Exception:
+        except Exception as exc:
+            scheduler_error = type(exc).__name__
             logger.exception("durable read-only analysis scheduler thread failed")
+            enqueued = 0
+        dispatch_status = getattr(dispatcher, "last_run_status", "IDLE")
+        dispatch_error = getattr(dispatcher, "last_error", None)
+        degraded = scheduler_error is not None or dispatch_error is not None or dispatch_status == "LEASE_LOST"
+        publish_health(
+            status="DEGRADED" if degraded else "RUNNING",
+            last_poll_at=datetime.now(timezone.utc).isoformat(),
+            last_error=scheduler_error or dispatch_error,
+            last_dispatch_status=dispatch_status,
+            jobs_enqueued=enqueued,
+        )
         stop.wait(float(poll_interval))
 
 
@@ -122,6 +151,7 @@ def main() -> None:
     job_runner = None
     snapshot_runner = None
     stop = threading.Event()
+    process_started_at = datetime.now(timezone.utc).isoformat()
 
     def request_stop(signum, frame) -> None:
         logger.info("shutdown requested; stopping paper-only market worker")
@@ -208,15 +238,30 @@ def main() -> None:
             if not 1 <= archive_lookback_days <= 365:
                 raise SystemExit("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS must be between 1 and 365")
 
+        scheduler_poll_interval = max(
+            1.0, min(30.0, float(os.environ.get("PAPER_SCHEDULED_JOB_POLL_INTERVAL_SECONDS", "5")))
+        )
+        scheduler_health = {
+            "status": "STARTING", "last_poll_started_at": None, "last_poll_at": None,
+            "last_error": None, "last_dispatch_status": "IDLE", "jobs_enqueued": 0,
+        }
+        scheduler_health_lock = threading.Lock()
         job_runner = threading.Thread(
             target=run_scheduled_jobs,
             args=(stop, scheduler, dispatcher),
+            kwargs={
+                "poll_interval": scheduler_poll_interval,
+                "health": scheduler_health,
+                "health_lock": scheduler_health_lock,
+            },
             name=f"{worker_id[:80]}-scheduled-jobs",
             daemon=True,
         )
         job_runner.start()
 
         while not stop.is_set():
+            cycle_started_at = datetime.now(timezone.utc).isoformat()
+            cycle_started_monotonic = time.monotonic()
             try:
                 backfill_clock = datetime.now(timezone.utc)
                 archived_count = 0
@@ -259,7 +304,11 @@ def main() -> None:
                 report = app.process_poll(poll, now=time.time())
                 cycle_status = str(report.analysis_status)
                 analysis_error = cycle_status.partition(":")[2] if cycle_status.startswith("ANALYSIS_FAILED:") else None
-                heartbeat_status = "DEGRADED" if analysis_error or cycle_status in {
+                with scheduler_health_lock:
+                    scheduler_health_snapshot = dict(scheduler_health)
+                heartbeat_status = "DEGRADED" if (
+                    analysis_error or scheduler_health_snapshot.get("status") == "DEGRADED"
+                ) or cycle_status in {
                     "SKIPPED_UNHEALTHY_MARKET_DATA", "FUNDING_SYNC_DEGRADED",
                     "MARKET_UNIVERSE_STALE", "NO_HEALTHY_ALLOWLISTED_SYMBOLS",
                     "NO_ELIGIBLE_SYMBOLS", "ANALYZED_WITH_EXCLUSIONS",
@@ -272,7 +321,12 @@ def main() -> None:
                     details={
                         "analysis_status": cycle_status,
                         "analysis_error": analysis_error,
+                        "process_id": os.getpid(),
+                        "process_started_at": process_started_at,
+                        "last_cycle_started_at": cycle_started_at,
                         "last_cycle_at": datetime.now(timezone.utc).isoformat(),
+                        "cycle_duration_seconds": round(time.monotonic() - cycle_started_monotonic, 3),
+                        "scheduled_jobs": scheduler_health_snapshot,
                         "healthy_symbols": list(report.healthy_symbols),
                         "unhealthy_symbols": list(report.unhealthy_symbols),
                         "archived_new_candles": archived_count,
@@ -297,7 +351,12 @@ def main() -> None:
                     store.heartbeat("DEGRADED", details={
                         "analysis_status": "ANALYSIS_FAILED:WorkerCycleError",
                         "analysis_error": type(exc).__name__,
+                        "process_id": os.getpid(),
+                        "process_started_at": process_started_at,
+                        "last_cycle_started_at": cycle_started_at,
                         "last_cycle_at": datetime.now(timezone.utc).isoformat(),
+                        "cycle_duration_seconds": round(time.monotonic() - cycle_started_monotonic, 3),
+                        "scheduled_jobs": dict(scheduler_health),
                         "orders_authorized": False,
                     })
                 except Exception:
