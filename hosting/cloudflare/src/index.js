@@ -10,6 +10,7 @@ const READ_ONLY_PATHS = new Set([
   '/api/v1/markets/candles',
   '/api/v1/markets/history',
   '/api/v1/markets/assessment',
+  '/api/v1/research/experiments',
   '/api/v1/opportunities',
   '/api/v1/binance-spot-testnet/account',
 ]);
