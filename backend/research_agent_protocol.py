@@ -65,22 +65,27 @@ def _freeze(value: Any) -> Any:
 def _validate_payload(value: object) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("specialist payload must be a mapping")
-    plain = dict(value)
 
-    def inspect_keys(item: Any) -> None:
+    def inspect_keys(item: Any) -> Any:
         if isinstance(item, Mapping):
+            normalized_mapping = {}
             for key, child in item.items():
                 if not isinstance(key, str) or not key.strip():
                     raise ValueError("specialist payload keys must be non-empty strings")
                 normalized = re.sub(r"[^a-z0-9]", "", key.strip().lower())
                 if normalized in _FORBIDDEN_PAYLOAD_KEYS:
                     raise ValueError("specialist payload cannot contain risk or execution controls")
-                inspect_keys(child)
-        elif isinstance(item, (tuple, list)):
-            for child in item:
-                inspect_keys(child)
+                normalized_mapping[key] = inspect_keys(child)
+            return normalized_mapping
+        if isinstance(item, (tuple, list)):
+            return [inspect_keys(child) for child in item]
+        if item is None or isinstance(item, (str, bool, int)):
+            return item
+        if isinstance(item, float) and math.isfinite(item):
+            return item
+        raise ValueError("specialist payload must contain finite JSON-safe evidence")
 
-    inspect_keys(plain)
+    plain = inspect_keys(value)
     try:
         encoded = json.dumps(plain, sort_keys=True, separators=(",", ":"), allow_nan=False)
     except (TypeError, ValueError, OverflowError) as exc:
