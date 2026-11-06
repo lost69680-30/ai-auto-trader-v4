@@ -56,6 +56,66 @@ def _safe_startup_error(exc: Exception) -> str:
     message = " ".join(message.split())[:240]
     return f"{type(exc).__name__}: {message}"
 
+
+def ping_worker_health_endpoint(url: str, *, timeout_seconds: float = 5.0, opener=None) -> bool:
+    """Wake/check the separate worker using only its unauthenticated paper-only liveness route."""
+    from urllib.parse import urlsplit
+    from urllib.request import Request, urlopen
+
+    parsed = urlsplit(url) if isinstance(url, str) else None
+    if (
+        parsed is None or parsed.scheme != "https" or not parsed.hostname
+        or parsed.username is not None or parsed.password is not None
+    ):
+        raise ValueError("PAPER_WORKER_HEALTH_URL must be an HTTPS URL without embedded credentials")
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    request = Request(
+        url,
+        headers={"Accept": "application/json", "User-Agent": "solo-worker-health-keepalive/1.0"},
+        method="GET",
+    )
+    try:
+        with (opener or urlopen)(request, timeout=float(timeout_seconds)) as response:
+            if getattr(response, "status", 200) != 200:
+                return False
+            payload = json.loads(response.read().decode("utf-8"))
+        return (
+            isinstance(payload, dict)
+            and payload.get("status") == "ok"
+            and payload.get("mode") == "PAPER_ONLY"
+            and payload.get("orders_authorized") is False
+        )
+    except Exception:
+        return False
+
+
+def run_worker_health_keepalive(
+    stop: threading.Event,
+    url: str,
+    *,
+    interval_seconds: float = 300.0,
+    ping: Callable[[str], bool] = ping_worker_health_endpoint,
+) -> None:
+    """Ping the worker immediately and periodically while this API process is alive."""
+    if not isinstance(stop, threading.Event):
+        raise ValueError("stop must be a threading.Event")
+    if isinstance(interval_seconds, bool) or not isinstance(interval_seconds, (int, float)) or interval_seconds < 60:
+        raise ValueError("interval_seconds must be at least 60")
+    if not callable(ping):
+        raise ValueError("ping must be callable")
+    while not stop.is_set():
+        try:
+            if ping(url):
+                logging.info("separate paper market worker health ping succeeded")
+            else:
+                logging.warning("separate paper market worker health ping failed; worker may be starting or asleep")
+        except Exception:
+            logging.exception("separate paper market worker health ping raised; API remains read-only")
+        if stop.wait(float(interval_seconds)):
+            break
+
+
 def _api_value(value):
     if isinstance(value, datetime):
         if value.tzinfo is None or value.utcoffset() is None:
@@ -991,6 +1051,24 @@ def main() -> None:
         )
 
     stop = threading.Event()
+    worker_health_thread = None
+    worker_health_url = os.environ.get("PAPER_WORKER_HEALTH_URL", "").strip()
+    if worker_health_url:
+        try:
+            worker_health_interval = float(os.environ.get("PAPER_WORKER_HEALTH_PING_SECONDS", "300"))
+        except ValueError as exc:
+            raise SystemExit("PAPER_WORKER_HEALTH_PING_SECONDS must be numeric") from exc
+        if not 60 <= worker_health_interval <= 600:
+            raise SystemExit("PAPER_WORKER_HEALTH_PING_SECONDS must be between 60 and 600")
+        worker_health_thread = threading.Thread(
+            target=run_worker_health_keepalive,
+            args=(stop, worker_health_url),
+            kwargs={"interval_seconds": worker_health_interval},
+            name="solo-worker-health-keepalive",
+            daemon=True,
+        )
+        worker_health_thread.start()
+        logging.info("separate paper market worker keepalive enabled interval_seconds=%s", worker_health_interval)
 
     def poll_loop() -> None:
         while not stop.is_set():
@@ -1087,6 +1165,8 @@ def main() -> None:
                 server.serve_forever()
     finally:
         stop.set()
+        if worker_health_thread is not None:
+            worker_health_thread.join(timeout=2)
         if poller is not None:
             poller.join(timeout=5)
         if paper_app is not None:
