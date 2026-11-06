@@ -120,6 +120,9 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     assert len({item.candidate_id for item in experiments}) == 4
     assert all(item.orders_authorized is False for item in experiments)
     assert all(item.outcomes["validation_quality"]["status"] == "INSUFFICIENT_DATA" for item in experiments)
+    assert all(item.outcomes["cost_sensitivity"]["status"] == "UNAVAILABLE" for item in experiments)
+    assert all(item.outcomes["cost_sensitivity"]["holdout_used"] is False for item in experiments)
+    assert all(item.outcomes["cost_sensitivity"]["scenarios"] == [] for item in experiments)
     with pytest.raises(ValueError, match="quality-qualified"):
         build_research_dataset(tuple(experiments))
     experiment, key = memory.items[0]

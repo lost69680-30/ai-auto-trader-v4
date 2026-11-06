@@ -26,18 +26,12 @@ on:
       - "app/engines/read_only_api.py"
       - "backend/binance_spot_testnet_account.py"
       - "backend/timeframe_aggregation.py"
-      - "backend/research_agent_protocol.py"
-      - "backend/market_relationship_graph.py"
-      - "tests/test_research_agent_protocol.py"
-      - "tests/test_market_relationship_graph.py"
-      - "docs/SOLO_SPECIALIST_RESEARCH_PROTOCOL.md"
-      - "docs/SOLO_RESEARCH_LEARNING_AND_AGENTS.md"
-      - "extracted-source/ai-auto-trader-v4-assembly/backend/research_agent_protocol.py"
-      - "extracted-source/ai-auto-trader-v4-assembly/backend/market_relationship_graph.py"
-      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_research_agent_protocol.py"
-      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_market_relationship_graph.py"
-      - "extracted-source/ai-auto-trader-v4-assembly/docs/SOLO_SPECIALIST_RESEARCH_PROTOCOL.md"
-      - "extracted-source/ai-auto-trader-v4-assembly/docs/SOLO_RESEARCH_LEARNING_AND_AGENTS.md"
+      - "backend/cost_sensitivity.py"
+      - "backend/strategy_research_runtime.py"
+      - "tests/test_cost_sensitivity.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/cost_sensitivity.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/strategy_research_runtime.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_cost_sensitivity.py"
       - "tests/**"
       - "backend/**"
       - "PROJECT_COMPLETENESS_AUDIT.md"
@@ -87,12 +81,13 @@ jobs:
           cmp app/engines/read_only_api.py extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py
           cmp app/engines/paper_runtime.py extracted-source/ai-auto-trader-v4-assembly/app/engines/paper_runtime.py
           cmp backend/timeframe_aggregation.py extracted-source/ai-auto-trader-v4-assembly/backend/timeframe_aggregation.py
-          cmp backend/research_agent_protocol.py extracted-source/ai-auto-trader-v4-assembly/backend/research_agent_protocol.py
-          cmp backend/market_relationship_graph.py extracted-source/ai-auto-trader-v4-assembly/backend/market_relationship_graph.py
-          cmp tests/test_research_agent_protocol.py extracted-source/ai-auto-trader-v4-assembly/tests/test_research_agent_protocol.py
-          cmp tests/test_market_relationship_graph.py extracted-source/ai-auto-trader-v4-assembly/tests/test_market_relationship_graph.py
-          cmp docs/SOLO_SPECIALIST_RESEARCH_PROTOCOL.md extracted-source/ai-auto-trader-v4-assembly/docs/SOLO_SPECIALIST_RESEARCH_PROTOCOL.md
-          cmp docs/SOLO_RESEARCH_LEARNING_AND_AGENTS.md extracted-source/ai-auto-trader-v4-assembly/docs/SOLO_RESEARCH_LEARNING_AND_AGENTS.md
+          cmp backend/cost_sensitivity.py extracted-source/ai-auto-trader-v4-assembly/backend/cost_sensitivity.py
+          cmp backend/strategy_research_runtime.py extracted-source/ai-auto-trader-v4-assembly/backend/strategy_research_runtime.py
+          cmp tests/test_cost_sensitivity.py extracted-source/ai-auto-trader-v4-assembly/tests/test_cost_sensitivity.py
+          cmp tests/test_strategy_research_runtime.py extracted-source/ai-auto-trader-v4-assembly/tests/test_strategy_research_runtime.py
+          cmp backend/cost_sensitivity.py extracted-source/ai-auto-trader-v4-assembly/backend/cost_sensitivity.py
+          cmp backend/strategy_research_runtime.py extracted-source/ai-auto-trader-v4-assembly/backend/strategy_research_runtime.py
+          cmp tests/test_cost_sensitivity.py extracted-source/ai-auto-trader-v4-assembly/tests/test_cost_sensitivity.py
           cmp backend/backtesting.py extracted-source/ai-auto-trader-v4-assembly/backend/backtesting.py
           cmp backend/binance_spot_testnet_account.py extracted-source/ai-auto-trader-v4-assembly/backend/binance_spot_testnet_account.py
           cmp app/core/models.py extracted-source/ai-auto-trader-v4-assembly/app/core/models.py
