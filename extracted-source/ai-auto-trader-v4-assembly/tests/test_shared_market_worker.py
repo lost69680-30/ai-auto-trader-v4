@@ -103,7 +103,7 @@ def test_scheduled_job_runner_surfaces_database_failure_in_health():
 
 
 def test_opportunity_reassessment_handler_uses_venue_scoped_read_only_price_source():
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     from types import SimpleNamespace
 
     from backend.opportunity_coordinator import OpportunityCoordinator
