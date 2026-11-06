@@ -225,3 +225,29 @@ def test_supervisor_shutdown_grace_exceeds_worker_scheduler_grace():
     assert configured_child_shutdown_grace({}) == 25.0
     assert configured_child_shutdown_grace({"PAPER_SUPERVISOR_CHILD_SHUTDOWN_GRACE_SECONDS": "40"}) == 40.0
     assert configured_child_shutdown_grace({"PAPER_SUPERVISOR_CHILD_SHUTDOWN_GRACE_SECONDS": "5"}) == 15.0
+
+
+def test_supervisor_does_not_restart_running_worker_for_stale_market_snapshots():
+    from backend.shared_market_supervisor import worker_heartbeat_requires_restart
+
+    status = {
+        "status": "STALE",
+        "worker_status": "RUNNING",
+        "last_reported_worker_status": "RUNNING",
+        "age_seconds": 24.3,
+        "lease_expired": False,
+    }
+    assert worker_heartbeat_requires_restart(status, uptime_seconds=240) is False
+
+
+def test_supervisor_restarts_only_when_worker_heartbeat_or_lease_is_stale():
+    from backend.shared_market_supervisor import worker_heartbeat_requires_restart
+
+    heartbeat_stale = {
+        "status": "STALE", "worker_status": "STALE",
+        "last_reported_worker_status": "RUNNING",
+        "age_seconds": 100.0, "lease_expired": True,
+    }
+    stopped = {"status": "STALE", "worker_status": "STOPPED", "age_seconds": 0.0}
+    assert worker_heartbeat_requires_restart(heartbeat_stale, uptime_seconds=240) is True
+    assert worker_heartbeat_requires_restart(stopped, uptime_seconds=240) is True
