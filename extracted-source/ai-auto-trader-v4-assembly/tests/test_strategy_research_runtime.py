@@ -106,8 +106,17 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     }, "scheduled-research-1")
 
     assert summary["evaluated"] == 1
+    assert summary["candidate_evaluations"] == 4
     assert summary["orders_authorized"] is False
     assert calls[0][0:2] == ("BTCUSDT", 3000)
+    assert {call[2]["rule_spec"].family for call in calls} == {
+        "SMA_CROSS", "MOMENTUM", "BREAKOUT", "RSI_THRESHOLD",
+    }
+    experiments = [item[0] for item in memory.items]
+    assert len(experiments) == 4
+    assert len({item.candidate_id for item in experiments}) == 4
+    assert all(item.orders_authorized is False for item in experiments)
+    assert all(item.outcomes["validation_quality"]["status"] == "INSUFFICIENT_DATA" for item in experiments)
     experiment, key = memory.items[0]
     expected_manifest = build_market_data_manifest(
         canonical_candles,
@@ -128,7 +137,7 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     assert experiment.outcomes["holdout_used_for_selection"] is False
     assert experiment.outcomes["untouched_holdout"]["used_for_selection"] is False
     assert experiment.outcomes["validation_folds"][0]["market_regime"]["orders_authorized"] is False
-    dataset = build_research_dataset((experiment,))
+    dataset = build_research_dataset(tuple(experiments))
     assert dataset.market_data_manifests[0].sha256 == expected_manifest.sha256
     assert dataset.orders_authorized is False
     assert key.startswith("solo-research:")
