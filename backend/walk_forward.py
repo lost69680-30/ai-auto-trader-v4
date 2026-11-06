@@ -13,6 +13,7 @@ from typing import Iterable
 from backend.backtesting import BacktestConfig, BacktestResult, run_backtest
 from backend.external_strategy_intelligence import ExternalRuleSpec
 from backend.strategy_research import Candle, ResearchConfig
+from backend.market_data_lineage import MarketDataManifest
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +110,7 @@ class WalkForwardResult:
     holdout: EvaluationWindow
     warnings: tuple[str, ...]
     orders_authorized: bool = False
+    market_data_manifest: MarketDataManifest | None = None
 
 
 def _validate_dataset(symbol: str, rows: list[Candle], interval_minutes: int) -> None:
