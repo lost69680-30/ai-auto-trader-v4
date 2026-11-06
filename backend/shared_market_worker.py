@@ -382,9 +382,11 @@ def main() -> None:
         intelligence_enabled = _env_bool("PAPER_MARKET_INTELLIGENCE_ENABLED", default=False)
         strategy_research_enabled = _env_bool("PAPER_STRATEGY_RESEARCH_ENABLED", default=False)
         paper_handoff_enabled = _env_bool("PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED", default=False)
-        research_interval = _bounded_env_int(
-            "PAPER_STRATEGY_RESEARCH_INTERVAL_SECONDS", 21600,
-            minimum=3600, maximum=86400,
+        research_interval = (
+            _bounded_env_int(
+                "PAPER_STRATEGY_RESEARCH_INTERVAL_SECONDS", 21600,
+                minimum=3600, maximum=86400,
+            ) if strategy_research_enabled else 21600
         )
         configure_strategy_research_schedule(
             scheduler, enabled=strategy_research_enabled,
