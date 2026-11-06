@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +25,18 @@ class PairwiseCorrelation:
 class PortfolioCorrelationReport:
     min_observations: int
     pairs: tuple[PairwiseCorrelation, ...]
+    orders_authorized: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioCorrelationSummary:
+    pair_count: int
+    defined_pair_count: int
+    undefined_pair_count: int
+    coverage_pct: float | None
+    max_abs_correlation: float | None
+    high_correlation_pairs: tuple[PairwiseCorrelation, ...]
+    high_correlation_threshold: float
     orders_authorized: bool = False
 
 
@@ -44,6 +58,76 @@ def _finite_return(value: object) -> float:
         raise ValueError("returns must contain finite numeric values") from exc
     if not math.isfinite(result):
         raise ValueError("returns must contain finite numeric values")
+    return result
+
+
+def build_close_to_close_returns(
+    candles_by_symbol: Mapping[str, Iterable[Any]],
+    *,
+    interval_seconds: int,
+) -> dict[str, dict[int, float]]:
+    """Build timestamp-aligned close returns without bridging missing candles.
+
+    Each return is timestamped at the later candle. A return is emitted only
+    when two adjacent supplied candles are exactly one configured interval
+    apart. Gaps are omitted rather than forward-filled or bridged.
+    """
+    if not isinstance(candles_by_symbol, Mapping):
+        raise ValueError("candles_by_symbol must be a mapping")
+    if (
+        isinstance(interval_seconds, bool)
+        or not isinstance(interval_seconds, int)
+        or interval_seconds <= 0
+    ):
+        raise ValueError("interval_seconds must be a positive integer")
+
+    result: dict[str, dict[int, float]] = {}
+    for symbol, candle_rows in candles_by_symbol.items():
+        if not _valid_symbol(symbol):
+            raise ValueError("each candle series must use a canonical uppercase symbol")
+        if isinstance(candle_rows, (str, bytes)):
+            raise ValueError("each candle series must be iterable candle records")
+        try:
+            rows = list(candle_rows)
+        except TypeError as exc:
+            raise ValueError("each candle series must be iterable candle records") from exc
+
+        normalized: list[tuple[int, float]] = []
+        seen_timestamps: set[int] = set()
+        for row in rows:
+            if getattr(row, "symbol", None) != symbol:
+                raise ValueError("candle symbol does not match its mapping key")
+            stamp = getattr(row, "timestamp", None)
+            if (
+                not isinstance(stamp, datetime)
+                or stamp.tzinfo is None
+                or stamp.utcoffset() is None
+            ):
+                raise ValueError("candle timestamps must be timezone-aware")
+            epoch = stamp.astimezone(timezone.utc).timestamp()
+            if not math.isfinite(epoch) or epoch < 0 or not epoch.is_integer():
+                raise ValueError("candle timestamps must resolve to non-negative whole seconds")
+            timestamp = int(epoch)
+            if timestamp in seen_timestamps:
+                raise ValueError("candle timestamps must be unique within each series")
+            seen_timestamps.add(timestamp)
+            close = _finite_return(getattr(row, "close", None))
+            if close <= 0:
+                raise ValueError("candle close prices must be positive")
+            normalized.append((timestamp, close))
+
+        normalized.sort(key=lambda item: item[0])
+        returns: dict[int, float] = {}
+        for previous, current in zip(normalized, normalized[1:]):
+            previous_time, previous_close = previous
+            current_time, current_close = current
+            if current_time - previous_time != interval_seconds:
+                continue
+            value = current_close / previous_close - 1.0
+            if not math.isfinite(value):
+                raise ValueError("computed close-to-close return is not finite")
+            returns[current_time] = value
+        result[symbol] = returns
     return result
 
 
@@ -138,5 +222,93 @@ def calculate_pairwise_correlations(
     return PortfolioCorrelationReport(
         min_observations=min_observations,
         pairs=tuple(pairs),
+        orders_authorized=False,
+    )
+
+
+def summarize_portfolio_correlations(
+    report: PortfolioCorrelationReport,
+    *,
+    high_correlation_threshold: float,
+) -> PortfolioCorrelationSummary:
+    """Summarize observed correlation coverage; undefined pairs stay undefined."""
+    if not isinstance(report, PortfolioCorrelationReport) or report.orders_authorized is not False:
+        raise ValueError("a paper-only PortfolioCorrelationReport is required")
+    if (
+        isinstance(report.min_observations, bool)
+        or not isinstance(report.min_observations, int)
+        or report.min_observations < 2
+        or not isinstance(report.pairs, tuple)
+    ):
+        raise ValueError("portfolio correlation report metadata is invalid")
+    seen_pairs: set[tuple[str, str]] = set()
+    for pair in report.pairs:
+        if not isinstance(pair, PairwiseCorrelation):
+            raise ValueError("portfolio correlation report contains an invalid pair record")
+        if (
+            not _valid_symbol(pair.symbol_a)
+            or not _valid_symbol(pair.symbol_b)
+            or pair.symbol_a >= pair.symbol_b
+            or isinstance(pair.observations, bool)
+            or not isinstance(pair.observations, int)
+            or pair.observations < 0
+        ):
+            raise ValueError("portfolio correlation pair metadata is invalid")
+        pair_key = (pair.symbol_a, pair.symbol_b)
+        if pair_key in seen_pairs:
+            raise ValueError("portfolio correlation report contains duplicate pairs")
+        seen_pairs.add(pair_key)
+        if pair.status == "OK":
+            if (
+                pair.observations < report.min_observations
+                or isinstance(pair.correlation, bool)
+                or not isinstance(pair.correlation, (int, float))
+            ):
+                raise ValueError("portfolio correlation value is invalid")
+            try:
+                correlation_value = float(pair.correlation)
+            except (OverflowError, TypeError, ValueError) as exc:
+                raise ValueError("portfolio correlation value is invalid") from exc
+            if not math.isfinite(correlation_value) or not -1 <= correlation_value <= 1:
+                raise ValueError("portfolio correlation value is invalid")
+        elif pair.status == "INSUFFICIENT_OVERLAP":
+            if pair.observations >= report.min_observations or pair.correlation is not None:
+                raise ValueError("insufficient-overlap pair record is inconsistent")
+        elif pair.status == "ZERO_VARIANCE":
+            if pair.observations < report.min_observations or pair.correlation is not None:
+                raise ValueError("zero-variance pair record is inconsistent")
+        else:
+            raise ValueError("portfolio correlation pair status is invalid")
+    if (
+        isinstance(high_correlation_threshold, bool)
+        or not isinstance(high_correlation_threshold, (int, float))
+    ):
+        raise ValueError("high_correlation_threshold must be finite and between 0 and 1")
+    try:
+        threshold = float(high_correlation_threshold)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError("high_correlation_threshold must be finite and between 0 and 1") from exc
+    if not math.isfinite(threshold) or not 0 <= threshold <= 1:
+        raise ValueError("high_correlation_threshold must be finite and between 0 and 1")
+    defined = tuple(
+        pair for pair in report.pairs
+        if pair.status == "OK" and pair.correlation is not None
+    )
+    undefined_count = len(report.pairs) - len(defined)
+    pair_count = len(report.pairs)
+    coverage = (len(defined) / pair_count * 100.0) if pair_count else None
+    max_abs = max((abs(pair.correlation) for pair in defined), default=None)
+    high_pairs = tuple(
+        pair for pair in defined
+        if abs(pair.correlation) >= threshold
+    )
+    return PortfolioCorrelationSummary(
+        pair_count=pair_count,
+        defined_pair_count=len(defined),
+        undefined_pair_count=undefined_count,
+        coverage_pct=round(coverage, 4) if coverage is not None else None,
+        max_abs_correlation=round(max_abs, 8) if max_abs is not None else None,
+        high_correlation_pairs=high_pairs,
+        high_correlation_threshold=threshold,
         orders_authorized=False,
     )
