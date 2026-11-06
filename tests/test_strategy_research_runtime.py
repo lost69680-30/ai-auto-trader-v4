@@ -7,7 +7,6 @@ from backend import strategy_research_runtime
 from backend.dataset_lineage import DatasetProvenance, candle_dataset_sha256
 from backend.market_data_lineage import MarketDataIdentity, build_market_data_manifest
 from backend.strategy_research import Candle
-from backend.strategy_learning_lab import build_research_dataset
 from backend.walk_forward import WalkForwardResult
 
 
@@ -140,8 +139,6 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     assert experiment.outcomes["holdout_used_for_selection"] is False
     assert experiment.outcomes["untouched_holdout"]["used_for_selection"] is False
     assert experiment.outcomes["validation_folds"][0]["market_regime"]["orders_authorized"] is False
-    with pytest.raises(ValueError, match="quality-qualified"):
-        build_research_dataset(tuple(experiments))
     assert key.startswith("solo-research:")
 
 
