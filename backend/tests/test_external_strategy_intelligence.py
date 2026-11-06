@@ -282,10 +282,10 @@ def test_external_strategy_evaluation_is_written_to_research_memory_without_auth
         backtest_config=BacktestConfig(fee_bps_per_side=4, slippage_bps_per_side=2),
         research_now=NOW,
         market_data_identity=MarketDataIdentity(
-            venue="BINANCE_USDM_TESTNET",
-            market_type="FUTURES",
+            venue="BINANCE_SPOT_TESTNET",
+            market_type="CRYPTO_SPOT",
             symbol="BTCUSDT",
-            interval="1m",
+            interval="1h",
             source_id="supabase:paper_ledger.market_candles",
         ),
     )
