@@ -239,6 +239,7 @@ def run_scheduled_jobs(
                 health.update(values)
 
     while not stop.is_set():
+        publish_health(last_poll_started_at=datetime.now(timezone.utc).isoformat())
         try:
             enqueued = scheduler.enqueue_due()
             dispatcher.run_once()
@@ -569,7 +570,7 @@ def main() -> None:
             minimum=3, maximum=30,
         )
         scheduler_health = {
-            "status": "STARTING", "last_poll_at": None,
+            "status": "STARTING", "last_poll_started_at": None, "last_poll_at": None,
             "last_error": None, "last_dispatch_status": "IDLE",
             "jobs_enqueued": 0,
         }
@@ -586,8 +587,11 @@ def main() -> None:
             daemon=True,
         )
         job_runner.start()
+        process_started_at = datetime.now(timezone.utc).isoformat()
 
         while not stop.is_set():
+            cycle_started_at = datetime.now(timezone.utc).isoformat()
+            cycle_started_monotonic = time.monotonic()
             try:
                 backfill_clock = datetime.now(timezone.utc)
                 archived_count = 0
@@ -664,6 +668,11 @@ def main() -> None:
                 store.heartbeat(
                     heartbeat_status,
                     details={
+                        "process_id": os.getpid(),
+                        "process_started_at": process_started_at,
+                        "last_cycle_started_at": cycle_started_at,
+                        "last_cycle_at": datetime.now(timezone.utc).isoformat(),
+                        "cycle_duration_seconds": round(time.monotonic() - cycle_started_monotonic, 3),
                         "analysis_status": cycle_status,
                         "analysis_error": analysis_error,
                         "last_cycle_at": datetime.now(timezone.utc).isoformat(),
@@ -690,10 +699,17 @@ def main() -> None:
             except Exception as exc:
                 logger.exception("shared market worker cycle failed; feed remains fail-closed")
                 try:
+                    with scheduler_health_lock:
+                        scheduler_health_snapshot = dict(scheduler_health)
                     store.heartbeat("DEGRADED", details={
+                        "process_id": os.getpid(),
+                        "process_started_at": process_started_at,
+                        "last_cycle_started_at": cycle_started_at,
+                        "last_cycle_at": datetime.now(timezone.utc).isoformat(),
+                        "cycle_duration_seconds": round(time.monotonic() - cycle_started_monotonic, 3),
                         "analysis_status": "ANALYSIS_FAILED:WorkerCycleError",
                         "analysis_error": type(exc).__name__,
-                        "last_cycle_at": datetime.now(timezone.utc).isoformat(),
+                        "scheduled_jobs": scheduler_health_snapshot,
                         "orders_authorized": False,
                     })
                 except Exception:
