@@ -50,6 +50,28 @@ def disable_optional_intelligence_schedules(scheduler: DurableJobScheduler) -> N
         )
 
 
+
+def disable_spot_intelligence_schedules(scheduler: DurableJobScheduler) -> None:
+    """Keep Spot research dormant until its separate Testnet scope is explicitly enabled."""
+    first_run = datetime.now(timezone.utc) + timedelta(days=3650)
+    disabled = (
+        ("market_intelligence_scan_spot", {"scope": "continuous_opportunity_search"}),
+        ("opportunity_reassessment_spot", {
+            "scope": "opportunity_reassessment",
+            "market_type": "SPOT",
+            "venue": "BINANCE_SPOT_TESTNET",
+        }),
+    )
+    for job_name, payload in disabled:
+        scheduler.register_interval(
+            job_name,
+            interval_seconds=1800,
+            first_run_at=first_run,
+            payload=payload,
+            enabled=False,
+        )
+
+
 def _env_bool(name: str, *, default: bool = False) -> bool:
     """Parse an opt-in feature flag; missing values stay disabled by default."""
     raw = os.environ.get(name)
@@ -380,6 +402,7 @@ def main() -> None:
             payload={"scope": "market_feed"},
         )
         intelligence_enabled = _env_bool("PAPER_MARKET_INTELLIGENCE_ENABLED", default=False)
+        spot_intelligence_enabled = _env_bool("PAPER_SPOT_INTELLIGENCE_ENABLED", default=False)
         strategy_research_enabled = _env_bool("PAPER_STRATEGY_RESEARCH_ENABLED", default=False)
         paper_handoff_enabled = _env_bool("PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED", default=False)
         research_interval = (
@@ -417,16 +440,19 @@ def main() -> None:
                     "venue": "BINANCE_USDM_TESTNET",
                 },
             )
-            scheduler.register_interval(
-                "opportunity_reassessment_spot",
-                interval_seconds=opportunity_interval,
-                first_run_at=datetime.now(timezone.utc) + timedelta(seconds=150),
-                payload={
-                    "scope": "opportunity_reassessment",
-                    "market_type": "SPOT",
-                    "venue": "BINANCE_SPOT_TESTNET",
-                },
-            )
+            if spot_intelligence_enabled:
+                scheduler.register_interval(
+                    "opportunity_reassessment_spot",
+                    interval_seconds=opportunity_interval,
+                    first_run_at=datetime.now(timezone.utc) + timedelta(seconds=150),
+                    payload={
+                        "scope": "opportunity_reassessment",
+                        "market_type": "SPOT",
+                        "venue": "BINANCE_SPOT_TESTNET",
+                    },
+                )
+            else:
+                disable_spot_intelligence_schedules(scheduler)
         # Acquire the durable lease before creating the paper runtime: create() performs
         # restart recovery and must never run in a duplicate worker process.
         app = PaperServiceApplication.from_env()
@@ -486,11 +512,6 @@ def main() -> None:
                 owner=f"{worker_id[:72]}-futures-opportunities",
                 market_type="FUTURES", venue="BINANCE_USDM_TESTNET",
             )
-            spot_coordinator = OpportunityCoordinator(
-                opportunity_store,
-                owner=f"{worker_id[:72]}-spot-opportunities",
-                market_type="SPOT", venue="BINANCE_SPOT_TESTNET",
-            )
             intelligence_handlers["market_intelligence_scan"] = continuous_opportunity_search(
                 store, app.worker.source, app.config.symbols,
                 market_type="FUTURES", venue="BINANCE_USDM_TESTNET",
@@ -498,30 +519,33 @@ def main() -> None:
                 max_fetch_workers=intelligence_fetch_workers,
                 opportunity_coordinator=futures_coordinator,
             )
-            # Spot uses its own public Testnet adapter and scan identity. It does
-            # not share Futures mark/funding semantics or the paper runtime's
-            # market source, and it has no exchange-order interface.
-            spot_source = BinanceSpotMarketDataAdapter()
-            scheduler.register_interval(
-                "market_intelligence_scan_spot",
-                interval_seconds=intelligence_interval,
-                first_run_at=datetime.now(timezone.utc) + timedelta(seconds=90),
-                payload={"scope": "continuous_opportunity_search"},
-            )
-            intelligence_handlers["market_intelligence_scan_spot"] = continuous_opportunity_search(
-                store, spot_source, app.config.symbols,
-                market_type="SPOT", venue="BINANCE_SPOT_TESTNET",
-                candle_limit=intelligence_candle_limit,
-                max_fetch_workers=intelligence_fetch_workers,
-                opportunity_coordinator=spot_coordinator,
-            )
             intelligence_handlers["opportunity_reassessment_futures"] = opportunity_reassessment_handler(
                 futures_coordinator, app.worker.source, paper_service=app,
                 allow_paper_handoff=paper_handoff_enabled,
             )
-            intelligence_handlers["opportunity_reassessment_spot"] = opportunity_reassessment_handler(
-                spot_coordinator, spot_source,
-            )
+            if spot_intelligence_enabled:
+                spot_coordinator = OpportunityCoordinator(
+                    opportunity_store,
+                    owner=f"{worker_id[:72]}-spot-opportunities",
+                    market_type="SPOT", venue="BINANCE_SPOT_TESTNET",
+                )
+                spot_source = BinanceSpotMarketDataAdapter()
+                scheduler.register_interval(
+                    "market_intelligence_scan_spot",
+                    interval_seconds=intelligence_interval,
+                    first_run_at=datetime.now(timezone.utc) + timedelta(seconds=90),
+                    payload={"scope": "continuous_opportunity_search"},
+                )
+                intelligence_handlers["market_intelligence_scan_spot"] = continuous_opportunity_search(
+                    store, spot_source, app.config.symbols,
+                    market_type="SPOT", venue="BINANCE_SPOT_TESTNET",
+                    candle_limit=intelligence_candle_limit,
+                    max_fetch_workers=intelligence_fetch_workers,
+                    opportunity_coordinator=spot_coordinator,
+                )
+                intelligence_handlers["opportunity_reassessment_spot"] = opportunity_reassessment_handler(
+                    spot_coordinator, spot_source,
+                )
         else:
             disable_optional_intelligence_schedules(scheduler)
         dispatcher = AnalysisJobDispatcher(
