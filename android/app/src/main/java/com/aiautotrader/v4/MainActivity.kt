@@ -326,11 +326,18 @@ private data class MarketIntelligenceFetchResult(
 private data class StrategyResearchExperimentItem(
     val experimentId: String,
     val symbol: String,
+    val strategyProfile: String,
     val status: String,
     val validationQualityStatus: String,
     val datasetStart: String,
     val datasetEnd: String,
     val foldCount: Int,
+    val validationTradeCount: Int,
+    val validationTotalCosts: Double?,
+    val meanExcessReturnPct: Double?,
+    val positiveFoldPct: Double?,
+    val maximumFoldDrawdownPct: Double?,
+    val validationFailureReasons: List<String>,
     val holdoutNetPnl: Double?,
     val holdoutTradeCount: Int,
     val ordersAuthorized: Boolean,
@@ -1173,16 +1180,44 @@ private fun fetchStrategyResearchExperiments(token: String): StrategyResearchFet
             val validationQuality = outcomes.optJSONObject("validation_quality")
             val validationQualityStatus = validationQuality?.optString("status")
                 ?.takeIf { it.isNotBlank() && it != "null" } ?: "MISSING"
+            val validationFolds = outcomes.optJSONArray("validation_folds")
+                ?: outcomes.optJSONArray("folds") ?: JSONArray()
+            val foldEvidence = (0 until validationFolds.length()).map { foldIndex ->
+                val fold = validationFolds.optJSONObject(foldIndex)
+                    ?: throw IllegalArgumentException("Research validation fold was malformed")
+                val rawCosts = fold.optDouble("total_costs", Double.NaN)
+                ResearchFoldEvidence(
+                    tradeCount = fold.optInt("trade_count", 0),
+                    totalCosts = rawCosts.takeIf { it.isFinite() },
+                )
+            }
+            val foldSummary = summarizeResearchFolds(foldEvidence)
+            val rawMeanExcess = validationQuality?.optDouble("mean_excess_return_pct", Double.NaN) ?: Double.NaN
+            val rawPositiveFoldPct = validationQuality?.optDouble("positive_fold_pct", Double.NaN) ?: Double.NaN
+            val rawMaximumDrawdown = validationQuality?.optDouble("maximum_fold_drawdown_pct", Double.NaN) ?: Double.NaN
+            val reasonArray = validationQuality?.optJSONArray("failure_reasons") ?: JSONArray()
+            val validationReasons = (0 until reasonArray.length())
+                .mapNotNull { reasonIndex -> reasonArray.optString(reasonIndex).trim().takeIf { it.isNotBlank() && it != "null" } }
+                .distinct()
             val holdout = outcomes.optJSONObject("holdout") ?: JSONObject()
             val netPnl = holdout.optDouble("net_pnl", Double.NaN)
+            val candidateId = row.optString("candidate_id", "")
             items += StrategyResearchExperimentItem(
                 experimentId = row.optString("experiment_id", ""),
-                symbol = row.optString("candidate_id", "").substringAfterLast(":"),
+                symbol = candidateId.substringAfterLast(":"),
+                strategyProfile = candidateId.substringAfter("solo-", "").substringBefore(":").ifBlank { "UNKNOWN" },
                 status = row.optString("status", "UNKNOWN"),
                 validationQualityStatus = validationQualityStatus,
                 datasetStart = row.optString("dataset_start", ""),
                 datasetEnd = row.optString("dataset_end", ""),
-                foldCount = outcomes.optJSONArray("folds")?.length() ?: 0,
+                foldCount = validationFolds.length(),
+                validationTradeCount = validationQuality?.optInt("total_validation_trades", foldSummary.tradeCount)
+                    ?: foldSummary.tradeCount,
+                validationTotalCosts = foldSummary.totalCosts,
+                meanExcessReturnPct = rawMeanExcess.takeIf { it.isFinite() },
+                positiveFoldPct = rawPositiveFoldPct.takeIf { it.isFinite() },
+                maximumFoldDrawdownPct = rawMaximumDrawdown.takeIf { it.isFinite() },
+                validationFailureReasons = validationReasons,
                 holdoutNetPnl = netPnl.takeIf { it.isFinite() },
                 holdoutTradeCount = holdout.optInt("trade_count", 0),
                 ordersAuthorized = false,
@@ -1575,8 +1610,28 @@ private fun ResearchScreen() {
                             ResearchValidationBucket.INCOMPLETE -> Muted
                         })
                     }
+                    IndicatorRow("Strategy profile", item.strategyProfile)
                     IndicatorRow("Execution status", item.status)
                     IndicatorRow("Validation folds", item.foldCount.toString())
+                    IndicatorRow("Validation trades", item.validationTradeCount.toString())
+                    item.meanExcessReturnPct?.let {
+                        IndicatorRow("Mean validation excess return", String.format(Locale.US, "%+.3f%%", it))
+                    } ?: IndicatorRow("Mean validation excess return", "Unavailable")
+                    item.positiveFoldPct?.let {
+                        IndicatorRow("Positive validation folds", String.format(Locale.US, "%.1f%%", it))
+                    } ?: IndicatorRow("Positive validation folds", "Unavailable")
+                    item.maximumFoldDrawdownPct?.let {
+                        IndicatorRow("Maximum validation drawdown", String.format(Locale.US, "%.3f%%", it))
+                    } ?: IndicatorRow("Maximum validation drawdown", "Unavailable")
+                    item.validationTotalCosts?.let {
+                        IndicatorRow("Estimated validation costs", String.format(Locale.US, "%.4f", it))
+                    } ?: IndicatorRow("Estimated validation costs", "Unavailable")
+                    item.validationFailureReasons.take(3).forEach { reason ->
+                        Text("• $reason", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                    }
+                    if (item.validationFailureReasons.isEmpty() && item.validationQualityStatus == "MISSING") {
+                        Text("Validation-quality evidence is missing for this legacy record.", color = Muted, fontSize = 10.sp)
+                    }
                     if (item.holdoutTradeCount > 0) {
                         IndicatorRow("Holdout trades", item.holdoutTradeCount.toString())
                         IndicatorRow(
@@ -1702,30 +1757,30 @@ private fun NotificationsScreen() {
 @Composable
 private fun AgentNetworkScreen() {
     val agents = listOf(
-        Triple("Market Observer", "Market feed, candle integrity and freshness", "SPECIFIED · NOT RUNNING"),
-        Triple("Technical Analyst", "Trend, momentum, indicators and price structure", "SPECIFIED · NOT RUNNING"),
-        Triple("Regime Analyst", "Market regime and phase classification", "SPECIFIED · NOT RUNNING"),
-        Triple("Liquidity Analyst", "Liquidity conditions; candle estimates distinguished from order-book evidence", "SPECIFIED · NOT RUNNING"),
-        Triple("Volatility Analyst", "Volatility state and range expansion", "SPECIFIED · NOT RUNNING"),
-        Triple("Pattern Analyst", "Validated candle and swing-pattern research", "SPECIFIED · NOT RUNNING"),
-        Triple("Multi-Timeframe Analyst", "Cross-interval agreement and conflict detection", "SPECIFIED · NOT RUNNING"),
-        Triple("Strategy Researcher", "Backtesting, walk-forward and out-of-sample research", "SPECIFIED · NOT RUNNING"),
-        Triple("Opportunity Evaluator", "Candidate ranking, evidence and expiry monitoring", "SPECIFIED · NOT RUNNING"),
-        Triple("Performance Auditor", "Ledger-derived metrics and strategy attribution", "SPECIFIED · NOT RUNNING"),
-        Triple("Data Integrity Guardian", "Freshness, gaps, schema and source validation", "SPECIFIED · NOT RUNNING"),
+        Triple("Market Observer", "Market feed, candle integrity and freshness", "CONNECTED · FEED HEALTH"),
+        Triple("Technical Analyst", "Trend, momentum, indicators and price structure", "CONNECTED · INDICATORS"),
+        Triple("Regime Analyst", "Market regime and phase classification", "CONNECTED · REGIME"),
+        Triple("Liquidity Analyst", "Candle-derived liquidity structure; order-book evidence remains distinct", "IMPLEMENTED · PARTIAL DATA"),
+        Triple("Volatility Analyst", "Volatility state and range expansion", "CONNECTED · REGIME"),
+        Triple("Pattern Analyst", "Validated candle-pattern and swing-structure analysis", "IMPLEMENTED · BACKEND"),
+        Triple("Multi-Timeframe Analyst", "Cross-interval agreement and conflict detection", "CONNECTED · MULTI-TF"),
+        Triple("Strategy Researcher", "Backtesting, walk-forward and out-of-sample research", "SCHEDULED · RESEARCH"),
+        Triple("Opportunity Evaluator", "Candidate ranking, evidence and expiry monitoring", "SCHEDULED · FUTURES SCAN"),
+        Triple("Performance Auditor", "Ledger-derived metrics and strategy attribution", "PARTIAL · RESEARCH DATA"),
+        Triple("Data Integrity Guardian", "Freshness, gaps, schema and source validation", "CONNECTED · HEALTH AUDIT"),
         Triple("Risk Guardian", "Independent paper-intent authorization gate", "BACKEND AUTHORITY"),
-        Triple("Portfolio Analyst", "Exposure, allocation and correlation analysis", "SPECIFIED · NOT RUNNING"),
-        Triple("Anomaly Detector", "Market and runtime anomaly screening", "SPECIFIED · NOT RUNNING"),
-        Triple("Intelligence Supervisor", "Orchestration, audit and fail-closed coordination", "SPECIFIED · NOT RUNNING")
+        Triple("Portfolio Analyst", "Exposure, allocation and correlation analysis", "PARTIAL · EQUITY SNAPSHOT"),
+        Triple("Anomaly Detector", "Market and runtime anomaly screening", "NOT CONNECTED"),
+        Triple("Intelligence Supervisor", "Orchestration, audit and fail-closed coordination", "CONNECTED · WORKER")
     )
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         CardPanel {
-            StatusLine("●", "ORCHESTRATOR · NOT CONNECTED", Color(0xFFE7B65E))
+            StatusLine("●", "DETERMINISTIC ANALYSIS PIPELINE · BACKEND", Green)
             Text("Multi-agent coordination", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text("This screen shows the intended agent topology. It does not claim agents are running or communicating until the backend is connected.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+            Text("Live status describes backend analysis components and scheduled research jobs, not independent autonomous LLM agents. The multi-agent message bus and model-policy runtime are not connected.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MetricCard("Agents", "15", "Specified roles · not running", Modifier.weight(1f))
-                MetricCard("Message bus", "OFFLINE", "No live messages", Modifier.weight(1f))
+                MetricCard("Analysis modules", "CONNECTED", "Worker-backed evidence path", Modifier.weight(1f))
+                MetricCard("Agent message bus", "OFFLINE", "No autonomous messages", Modifier.weight(1f))
             }
         }
         SectionTitle("INTENDED AGENT NETWORK")
@@ -1745,14 +1800,14 @@ private fun AgentNetworkScreen() {
             NetworkArrow("Only approved paper intents reach the simulator")
             AgentFlowNode("Paper Simulator / Ledger", "Simulated fills and reconciliation", Modifier.fillMaxWidth())
             Spacer(Modifier.height(4.dp))
-            Text("Illustrative architecture only. Arrows describe the planned data flow; no agents or message bus are connected in this build.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+            Text("The deterministic research and risk path exists separately. GAT/PPO nodes show planned offline research stages; no neural model or autonomous agent message bus is connected.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
         }
         SectionTitle("SPECIALIST ROLE STATUS")
         agents.forEach { (name, description, status) ->
             CardPanel {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    Tag(status, if (status.startsWith("READY")) Green else Color(0xFFE7B65E))
+                    Tag(status, if (status.startsWith("CONNECTED") || status.startsWith("SCHEDULED") || status.startsWith("IMPLEMENTED") || status == "BACKEND AUTHORITY") Green else Color(0xFFE7B65E))
                 }
                 Text(description, color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
             }

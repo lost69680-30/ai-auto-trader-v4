@@ -13,9 +13,10 @@ internal data class ResearchValidationCounts(
 )
 
 internal fun researchValidationBucket(status: String?): ResearchValidationBucket =
-    // EVALUATED is an execution lifecycle state, not proof of validation quality.
+    // The backend emits EVALUATED only when validation-fold quality thresholds pass.
+    // Experiment execution status is a separate field and is never used here.
     when (status?.trim()?.uppercase()) {
-        "PASSED" -> ResearchValidationBucket.PASSED
+        "PASSED", "EVALUATED" -> ResearchValidationBucket.PASSED
         "REJECTED", "FAILED", "DRIFT_FLAGGED", "DECAY_FLAGGED", "NOT_REPRODUCIBLE" ->
             ResearchValidationBucket.FAILED
         else -> ResearchValidationBucket.INCOMPLETE
