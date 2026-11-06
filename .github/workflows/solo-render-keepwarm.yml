@@ -30,4 +30,25 @@ jobs:
           API_READY_URL: https://solo-ai-auto-trader-staging-api.onrender.com/readyz
           WORKER_LIVENESS_URL: https://solo-futures-websocket-staging.onrender.com/healthz
           RENDER_WORKER_SERVICE_ID: srv-dbhr5ign74is738detbg
-        run: python scripts/solo_independent_watchdog.py
+        id: watchdog
+        run: |
+          set +e
+          python scripts/solo_independent_watchdog.py 2>&1 | tee "$RUNNER_TEMP/solo-watchdog.log"
+          watchdog_status=${PIPESTATUS[0]}
+          {
+            echo "## Solo independent worker watchdog"
+            if [ "$watchdog_status" -eq 0 ]; then
+              echo "- Result: **healthy / completed**"
+            else
+              echo "- Result: **failed / needs attention**"
+            fi
+            echo '- Worker: `solo-futures-websocket-staging`'
+            echo '- Readiness authority: independent API/database `/readyz`'
+            echo "- Safety: restart is permitted only for confirmed worker failure; paper-only checks remain mandatory."
+            echo
+            echo "### Execution evidence"
+            echo '```text'
+            cat "$RUNNER_TEMP/solo-watchdog.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$watchdog_status"
