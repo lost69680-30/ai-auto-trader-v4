@@ -288,6 +288,89 @@ class PaperServiceAnalysisHandler:
         return (isinstance(value, (int, float)) and not isinstance(value, bool)
                 and math.isfinite(value))
 
+    def process_validated_handoff(
+        self, *, candidate: object, handoff: object, tick: MarketTick,
+        contract: Contract, now: datetime,
+    ):
+        """Route a revalidated opportunity through the existing paper signal cycle."""
+        if not self._aware(now):
+            raise ValueError("opportunity handoff clock must be timezone-aware")
+        now = now.astimezone(timezone.utc)
+        symbol = getattr(candidate, "symbol", None)
+        if not isinstance(symbol, str) or symbol not in self._policy:
+            raise ValueError("opportunity symbol is not in the configured paper allowlist")
+        if not self._valid_contract(contract) or contract.symbol != symbol:
+            raise ValueError("opportunity contract filters are invalid or mismatched")
+        if not isinstance(tick, MarketTick) or tick.symbol != symbol:
+            raise ValueError("opportunity market tick is invalid or mismatched")
+        if getattr(candidate, "orders_authorized", True) is not False:
+            raise ValueError("research candidate cannot authorize orders")
+        if getattr(handoff, "orders_authorized", True) is not False:
+            raise ValueError("signal handoff cannot authorize orders")
+
+        position_rows = tuple(self._ledger.positions)
+        day_start = datetime.combine(now.date(), datetime.min.time(), tzinfo=timezone.utc).timestamp()
+        realized_today = sum(
+            float(position.realized_pnl or 0.0)
+            for position in position_rows
+            if position.status == "CLOSED" and position.closed_at is not None
+            and position.closed_at >= day_start
+        )
+        open_rows = tuple(self._ledger.open_positions)
+        open_unrealized = sum(
+            position.unrealized_pnl - position.opening_fee for position in open_rows
+        )
+        realized_all = sum(
+            float(position.realized_pnl or 0.0)
+            for position in position_rows if position.status == "CLOSED"
+        )
+        equity = self._config.simulated_equity + realized_all + open_unrealized
+        daily_pnl = realized_today + open_unrealized
+        if not math.isfinite(equity) or equity <= 0:
+            raise ValueError("simulated equity exhausted or invalid")
+
+        exposure = sum(position.mark_price * position.quantity for position in open_rows)
+        gross_cap = min(
+            self._config.max_gross_exposure or self._config.simulated_equity,
+            self._config.simulated_equity * 1.0,
+        )
+        remaining_exposure = gross_cap - exposure
+        same_asset_exposure = sum(
+            position.mark_price * position.quantity
+            for position in open_rows if position.symbol.upper() == symbol.upper()
+        )
+        remaining_asset_allocation = self._config.simulated_equity * 0.10 - same_asset_exposure
+        if not math.isfinite(remaining_exposure) or remaining_exposure <= 0:
+            raise ValueError("gross exposure cap is exhausted; no additional position is allowed")
+        if not math.isfinite(remaining_asset_allocation) or remaining_asset_allocation <= 0:
+            raise ValueError("single-asset allocation cap is exhausted; no additional position is allowed")
+
+        configured_limits = self._config.limits
+        effective_limits = RiskLimits(
+            max_position_notional=min(
+                configured_limits.max_position_notional,
+                remaining_exposure,
+                remaining_asset_allocation,
+            ),
+            max_daily_loss=configured_limits.max_daily_loss,
+            max_open_positions=configured_limits.max_open_positions,
+            max_risk_per_trade=configured_limits.max_risk_per_trade,
+            max_signal_age_seconds=configured_limits.max_signal_age_seconds,
+            max_drawdown_pct=configured_limits.max_drawdown_pct,
+            max_mark_age_seconds=configured_limits.max_mark_age_seconds,
+        )
+        request = build_paper_orchestration_request(
+            candidate=candidate, handoff=handoff, tick=tick, now=now,
+            equity=equity, risk_fraction=self._config.risk_fraction,
+            quantity_step=float(contract.quantity_step),
+            min_quantity=float(contract.min_quantity),
+            limits=effective_limits, daily_pnl=daily_pnl,
+            open_positions=len(open_rows),
+            max_tick_age_seconds=min(10.0, self._config.max_market_age_seconds),
+            equity_baseline=self._config.simulated_equity,
+        )
+        return self._cycle.process(handoff, request, tick, now=now)
+
     def _sync_funding_events(self, *, now: datetime) -> FundingSyncReport:
         """Reconcile public historical funding into paper positions, never live accounts.
 
@@ -698,12 +781,14 @@ class PaperServiceApplication:
 
     def __init__(self, *, config: PaperServiceConfig, worker: MarketDataWorker,
                  ledger: SQLitePaperLedger, protection: PaperProtectionEngine,
-                 runtime: PaperRuntime[PaperServiceAnalysisResult]) -> None:
+                 runtime: PaperRuntime[PaperServiceAnalysisResult],
+                 analysis_handler: PaperServiceAnalysisHandler | None = None) -> None:
         self.config = config
         self.worker = worker
         self.ledger = ledger
         self.protection = protection
         self.runtime = runtime
+        self._analysis_handler = analysis_handler
         self._closed = False
 
     @classmethod
@@ -765,7 +850,10 @@ class PaperServiceApplication:
                 fee_rate=config.fee_rate, slippage_bps=config.slippage_bps,
                 max_market_age_seconds=config.max_market_age_seconds,
             )
-            return cls(config=config, worker=worker, ledger=ledger, protection=protection, runtime=runtime)
+            return cls(
+                config=config, worker=worker, ledger=ledger, protection=protection,
+                runtime=runtime, analysis_handler=handler,
+            )
         except Exception:
             ledger.close()
             raise
@@ -780,6 +868,19 @@ class PaperServiceApplication:
         # data only; this application has no credentials or exchange-order client.
         source = BinanceUsdMFuturesAdapter(testnet=testnet)
         return cls.create(source=source, config=config, clock=clock)
+
+    def process_validated_handoff(
+        self, *, candidate: object, handoff: object, tick: MarketTick,
+        contract: Contract, now: datetime,
+    ):
+        """Use the same configured Risk Guardian and paper ledger as normal analysis."""
+        if self._closed:
+            raise RuntimeError("paper service application is closed")
+        if self._analysis_handler is None:
+            raise RuntimeError("validated paper handoff handler is unavailable")
+        return self._analysis_handler.process_validated_handoff(
+            candidate=candidate, handoff=handoff, tick=tick, contract=contract, now=now,
+        )
 
     def process_poll(self, poll: MarketPollResult, *, now: float) -> PaperRuntimeReport[PaperServiceAnalysisResult]:
         if self._closed:
