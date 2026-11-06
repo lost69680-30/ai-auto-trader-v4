@@ -5,6 +5,8 @@ import pytest
 
 from backend import strategy_research_runtime
 from backend.dataset_lineage import DatasetProvenance
+from backend.market_data_lineage import MarketDataIdentity, build_market_data_manifest
+from backend.strategy_research import Candle
 
 
 NOW = datetime(2026, 11, 6, 5, 0, tzinfo=timezone.utc)
@@ -96,6 +98,19 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     assert summary["orders_authorized"] is False
     assert calls[0][0:2] == ("BTCUSDT", 3000)
     experiment, key = memory.items[0]
+    canonical_candles = tuple(Candle(
+        symbol="BTCUSDT", timestamp=row.open_time,
+        open=row.open, high=row.high, low=row.low, close=row.close, volume=row.volume,
+    ) for row in rows)
+    expected_manifest = build_market_data_manifest(
+        canonical_candles,
+        MarketDataIdentity(
+            venue="BINANCE_USDM_TESTNET", market_type="FUTURES",
+            symbol="BTCUSDT", interval="1m", source_id="binance-public-testnet",
+        ),
+    )
+    assert experiment.assumptions["market_data_manifest"] == expected_manifest.to_dict()
+    assert experiment.source_provenance_id != ""
     assert experiment.orders_authorized is False
     assert experiment.status == "EVALUATED"
     assert experiment.assumptions["dataset_manifest"]["market_type"] == "FUTURES"
@@ -172,3 +187,38 @@ def test_research_memory_write_failure_propagates_for_scheduler_retry(monkeypatc
             "scope": "strategy_research", "market_type": "FUTURES",
             "venue": "BINANCE_USDM_TESTNET",
         }, "job-write-failure")
+
+
+
+def test_research_handler_rejects_evaluator_provenance_for_wrong_symbol(monkeypatch):
+    rows = candle_rows()
+    archive = FakeArchive(rows)
+    memory = FakeMemory()
+    wrong_provenance = DatasetProvenance(
+        provider="binance-public-testnet", venue="BINANCE_USDM_TESTNET",
+        symbol="ETHUSDT", timeframe="1m",
+        window_start=rows[0].open_time, window_end=rows[-1].open_time,
+        candle_count=len(rows), data_sha256="c" * 64,
+    )
+    strategy = SimpleNamespace(
+        net_pnl=0.0, trade_count=0, win_rate_pct=0.0,
+        max_drawdown_pct=0.0, total_costs=0.0,
+    )
+    window = SimpleNamespace(
+        name="fold", start_index=2000, end_index=2500,
+        strategy=strategy, buy_hold_return_pct=0.0,
+    )
+    result = SimpleNamespace(
+        dataset_provenance=wrong_provenance, folds=(window,), holdout=window,
+        warnings=(), orders_authorized=False,
+    )
+    monkeypatch.setattr(strategy_research_runtime, "evaluate_walk_forward", lambda *args, **kwargs: result)
+    handler = strategy_research_runtime.build_strategy_research_handler(
+        archive, memory, symbols=("BTCUSDT",), clock=lambda: NOW,
+    )
+    with pytest.raises(RuntimeError, match="no symbols were evaluated"):
+        handler({
+            "scope": "strategy_research", "market_type": "FUTURES",
+            "venue": "BINANCE_USDM_TESTNET",
+        }, "wrong-symbol-provenance")
+    assert memory.items == []
