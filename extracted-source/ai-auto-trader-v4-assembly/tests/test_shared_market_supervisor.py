@@ -253,3 +253,31 @@ def test_supervisor_rejects_unknown_mode():
 
     with pytest.raises(ValueError, match="PAPER_MARKET_SUPERVISOR_MODE"):
         configured_supervisor_modules("both-ish", {}, {})
+
+
+def test_worker_only_health_server_exposes_read_only_healthz():
+    import json
+    from urllib.error import HTTPError
+    from urllib.request import urlopen
+
+    from backend.shared_market_supervisor import start_worker_health_server
+
+    server = start_worker_health_server(0, host="127.0.0.1")
+    try:
+        with urlopen(f"http://127.0.0.1:{server.server_port}/healthz", timeout=2) as response:
+            body = json.loads(response.read())
+            assert response.status == 200
+            assert body == {
+                "status": "ok",
+                "mode": "PAPER_ONLY",
+                "orders_authorized": False,
+            }
+        try:
+            urlopen(f"http://127.0.0.1:{server.server_port}/readyz", timeout=2)
+        except HTTPError as error:
+            assert error.code == 404
+        else:
+            raise AssertionError("unexpected readiness route on worker health endpoint")
+    finally:
+        server.shutdown()
+        server.server_close()
