@@ -30,6 +30,47 @@ def _finite(value: Any, field: str) -> float:
     return float(value)
 
 
+def _safe_worker_diagnostics(details: Any) -> dict[str, Any]:
+    """Return bounded operational fields without leaking raw exception messages or credentials."""
+    if not isinstance(details, dict):
+        return {}
+    safe: dict[str, Any] = {}
+    for field in (
+        "process_id", "process_started_at", "last_cycle_started_at",
+        "last_cycle_at", "cycle_duration_seconds", "analysis_status",
+        "analysis_error",
+    ):
+        value = details.get(field)
+        if field == "process_id":
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                safe[field] = value
+        elif field == "cycle_duration_seconds":
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0:
+                safe[field] = float(value)
+        elif isinstance(value, str):
+            safe[field] = value[:160]
+    if details.get("orders_authorized") is False:
+        safe["orders_authorized"] = False
+    scheduler = details.get("scheduled_jobs")
+    if isinstance(scheduler, dict):
+        safe_scheduler: dict[str, Any] = {}
+        for field in (
+            "status", "last_poll_started_at", "last_poll_at",
+            "last_dispatch_status", "jobs_enqueued",
+        ):
+            value = scheduler.get(field)
+            if field == "jobs_enqueued":
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    safe_scheduler[field] = value
+            elif isinstance(value, str):
+                safe_scheduler[field] = value[:160]
+        raw_error = scheduler.get("last_error")
+        if isinstance(raw_error, str) and raw_error:
+            safe_scheduler["last_error_type"] = raw_error.partition(":")[0][:80]
+        safe["scheduled_jobs"] = safe_scheduler
+    return safe
+
+
 class PostgresMarketFeedStore:
     """Persist validated poll results and expose them only while worker/data are fresh.
 
@@ -441,16 +482,27 @@ class PostgresMarketFeedStore:
         now = datetime.now(timezone.utc)
         if hb is None:
             return {"status": "STARTING", "reason": "no worker heartbeat", "checked_at": None,
-                    "age_seconds": None, "worker_status": "MISSING", "orders_authorized": False}
+                    "age_seconds": None, "worker_status": "MISSING", "details": {},
+                    "orders_authorized": False}
         age = (now - hb["heartbeat_at"]).total_seconds()
-        if age < 0 or age > self.max_age_seconds or hb["lease_expires_at"] <= now or hb["status"] in {"STOPPED", "ERROR"}:
+        lease_expired = hb["lease_expires_at"] <= now
+        heartbeat_stale = age < 0 or age > self.max_age_seconds
+        explicitly_stopped = hb["status"] in {"STOPPED", "ERROR"}
+        details = hb.get("details") or {}
+        diagnostics = _safe_worker_diagnostics(details)
+        if heartbeat_stale or lease_expired or explicitly_stopped:
+            reported_status = hb["status"]
             return {"status": "STALE", "reason": "market worker heartbeat is stale or stopped",
                     "checked_at": hb["heartbeat_at"].timestamp(), "age_seconds": age,
-                    "worker_status": hb["status"], "orders_authorized": False}
+                    "worker_status": reported_status if explicitly_stopped else "STALE",
+                    "last_reported_worker_status": reported_status,
+                    "lease_expired": lease_expired, "details": diagnostics,
+                    "orders_authorized": False}
         if hb["status"] == "STARTING":
             return {"status": "STARTING", "reason": "worker has not published its first validated market poll",
                     "checked_at": hb["heartbeat_at"].timestamp(), "age_seconds": age,
-                    "worker_status": hb["status"], "orders_authorized": False}
+                    "worker_status": hb["status"], "lease_expired": False,
+                    "details": diagnostics, "orders_authorized": False}
         if not rows or any(
             (now - datetime.fromisoformat(row["checked_at"])).total_seconds() < -1.0
             or (now - datetime.fromisoformat(row["checked_at"])).total_seconds() > self.max_age_seconds
@@ -458,12 +510,14 @@ class PostgresMarketFeedStore:
         ):
             return {"status": "STALE", "reason": "market snapshots are missing or stale",
                     "checked_at": hb["heartbeat_at"].timestamp(), "age_seconds": age,
-                    "worker_status": hb["status"], "orders_authorized": False}
+                    "worker_status": hb["status"], "lease_expired": False,
+                    "details": diagnostics, "orders_authorized": False}
         healthy = sum(1 for row in rows if row["status"] == "HEALTHY")
         feed_status = "HEALTHY" if healthy == len(rows) else ("DEGRADED" if healthy else "OFFLINE")
         return {"status": feed_status, "reason": None if feed_status == "HEALTHY" else "one or more symbols are unhealthy",
                 "checked_at": hb["heartbeat_at"].timestamp(), "age_seconds": age,
-                "worker_status": hb["status"], "orders_authorized": False}
+                "worker_status": hb["status"], "lease_expired": False,
+                "details": diagnostics, "orders_authorized": False}
 
     def analysis_status(self) -> dict[str, Any]:
         hb, _rows = self._read()
