@@ -383,6 +383,14 @@ def build_strategy_research_handler(
                         "walk_forward": fingerprint_material["walk_forward"],
                         "backtest": fingerprint_material["backtest"],
                         "selection_policy": "four pre-registered fixed-rule families; validation folds only; untouched holdout excluded; no automatic promotion",
+                        "cost_sensitivity": {
+                            "multipliers": [1.0, 1.5, 2.0],
+                            "cost_basis": "all recorded per-trade estimated costs are multiplied uniformly",
+                            "equity_floor": 0.0,
+                            "validation_folds_only": True,
+                            "untouched_holdout_used": False,
+                            "orders_authorized": False,
+                        },
                         "orders_authorized": False,
                     }
                     outcomes = {
