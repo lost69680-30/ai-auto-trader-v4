@@ -7,7 +7,7 @@ class ResearchValidationQualityTest {
     @Test
     fun acceptedValidationCountsAsPassed() {
         assertEquals(ResearchValidationBucket.PASSED, researchValidationBucket("PASSED"))
-        assertEquals(ResearchValidationBucket.PASSED, researchValidationBucket("EVALUATED"))
+        assertEquals(ResearchValidationBucket.INCOMPLETE, researchValidationBucket("EVALUATED"))
     }
 
     @Test
@@ -29,9 +29,9 @@ class ResearchValidationQualityTest {
     @Test
     fun summarySeparatesPassFailAndIncompleteQuality() {
         assertEquals(
-            ResearchValidationCounts(passed = 1, failed = 2, incomplete = 2),
+            ResearchValidationCounts(passed = 1, failed = 2, incomplete = 3),
             summarizeResearchValidationQuality(
-                listOf("PASSED", "REJECTED", "FAILED", "INSUFFICIENT_DATA", null)
+                listOf("PASSED", "REJECTED", "FAILED", "INSUFFICIENT_DATA", "EVALUATED", null)
             ),
         )
     }
