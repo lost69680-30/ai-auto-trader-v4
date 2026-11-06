@@ -236,6 +236,7 @@ def main() -> None:
                         except Exception:
                             # A transient PostgreSQL read failure is not proof that the
                             # worker is dead. The API readiness check remains fail-closed.
+                            state["healthy_since"] = None
                             logger.exception("worker heartbeat health check unavailable; preserving worker process")
                         else:
                             restart_required = worker_heartbeat_requires_restart(
