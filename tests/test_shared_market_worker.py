@@ -176,7 +176,7 @@ def test_opportunity_reassessment_handler_rejects_cross_venue_job_payload():
 
 def test_futures_reassessment_handler_hands_off_triggers_and_reconciles_ledger(monkeypatch):
     from types import SimpleNamespace
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     from backend.opportunity_coordinator import OpportunityCoordinator
     from backend.shared_market_worker import opportunity_reassessment_handler
