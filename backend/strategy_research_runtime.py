@@ -297,12 +297,6 @@ def build_strategy_research_handler(
                         failure_reasons=(),
                         orders_authorized=False,
                     )
-                    memory.append(
-                        experiment,
-                        idempotency_key=f"solo-research:{fingerprint}",
-                    )
-                    evaluated.append(f"{candidate_id}:{symbol}")
-                    evaluated_symbols.add(symbol)
                 except (ValueError, TypeError) as exc:
                     skipped.append({
                         "symbol": symbol,
@@ -310,10 +304,20 @@ def build_strategy_research_handler(
                         "reason": f"{type(exc).__name__}: {str(exc)}"[:180],
                     })
                     logger.warning(
-                        "strategy research candidate skipped symbol=%s candidate=%s reason=%s orders_authorized=False",
-                        symbol, candidate_id, type(exc).__name__,
+                        "strategy research candidate skipped symbol=%s candidate=%s reason=%s detail=%s orders_authorized=False",
+                        symbol, candidate_id, type(exc).__name__, str(exc)[:120],
                     )
                     continue
+
+                # Persistence is deliberately outside the candidate-validation catch:
+                # any database error, including ValueError/TypeError, must fail the job
+                # so the durable scheduler retries instead of recording a false success.
+                memory.append(
+                    experiment,
+                    idempotency_key=f"solo-research:{fingerprint}",
+                )
+                evaluated.append(f"{candidate_id}:{symbol}")
+                evaluated_symbols.add(symbol)
 
         if not evaluated:
             raise RuntimeError("strategy research completed; no candidates were evaluated")
