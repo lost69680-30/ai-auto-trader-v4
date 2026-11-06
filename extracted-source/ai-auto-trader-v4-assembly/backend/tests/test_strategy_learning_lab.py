@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from backend.strategy_research_memory import StrategyResearchExperiment
+from backend.market_data_lineage import MarketDataManifest
 from backend.strategy_learning_lab import (
     IndependentLearningEvaluation,
     ResearchLearningProposal,
@@ -12,6 +13,21 @@ from backend.strategy_learning_lab import (
 )
 
 NOW = datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc)
+
+
+def manifest(*, start=None, end=None, source_id="learning-source", digest="a" * 64):
+    return MarketDataManifest(
+        venue="BINANCE_USDM_TESTNET",
+        market_type="FUTURES",
+        symbol="BTCUSDT",
+        interval="1m",
+        start_timestamp=start or NOW - timedelta(days=90),
+        end_timestamp=end or NOW - timedelta(days=1),
+        row_count=100,
+        source_id=source_id,
+        sha256=digest,
+        orders_authorized=False,
+    )
 
 
 def experiment(*, status="EVALUATED", holdout_used=False, nested_holdout_used=False):
@@ -24,7 +40,7 @@ def experiment(*, status="EVALUATED", holdout_used=False, nested_holdout_used=Fa
         dataset_start=NOW - timedelta(days=90),
         dataset_end=NOW - timedelta(days=1),
         configuration_version="wf-v1",
-        assumptions={"fee_bps_per_side": 4, "orders_authorized": False},
+        assumptions={"fee_bps_per_side": 4, "orders_authorized": False, "market_data_manifest": manifest().to_dict()},
         outcomes={
             "validation_folds": [
                 {"strategy_net_return_pct": 2.0, "buy_hold_return_pct": 1.0,
@@ -113,6 +129,7 @@ def test_learning_proposal_requires_independent_evaluation_and_never_promotes():
         baseline_net_return_pct=3.0,
         candidate_max_drawdown_pct=5.0,
         baseline_max_drawdown_pct=5.5,
+        market_data_manifests=(manifest(start=NOW, end=NOW + timedelta(hours=1), source_id="holdout-source", digest="b" * 64),),
         orders_authorized=False,
     )
 
@@ -133,6 +150,7 @@ def test_learning_comparison_rejects_reused_or_insufficient_evaluation_data():
         baseline_net_return_pct=3.0,
         candidate_max_drawdown_pct=4.0,
         baseline_max_drawdown_pct=5.0,
+        market_data_manifests=(manifest(),),
         orders_authorized=False,
     )
     with pytest.raises(ValueError, match="independent"):
@@ -145,6 +163,7 @@ def test_learning_comparison_rejects_reused_or_insufficient_evaluation_data():
         baseline_net_return_pct=3.0,
         candidate_max_drawdown_pct=4.0,
         baseline_max_drawdown_pct=5.0,
+        market_data_manifests=(manifest(start=NOW, end=NOW + timedelta(hours=1), source_id="small-holdout", digest="c" * 64),),
         orders_authorized=False,
     )
     report = compare_learning_proposal(candidate, snapshot, insufficient, minimum_sample_size=30)
@@ -181,3 +200,48 @@ def test_learning_dataset_rows_and_proposal_weights_are_immutable():
         candidate.weights["momentum"] = 99.0
 
     assert snapshot.validation_rows[0]["strategy_net_return_pct"] == original_value
+
+
+def test_learning_comparison_rejects_overlapping_windows_even_with_a_new_fingerprint():
+    snapshot = build_research_dataset([experiment()])
+    candidate = proposal(snapshot)
+    overlapping = IndependentLearningEvaluation(
+        evaluation_dataset_fingerprint="different-fingerprint",
+        sample_size=100,
+        candidate_net_return_pct=4.0,
+        baseline_net_return_pct=3.0,
+        candidate_max_drawdown_pct=5.0,
+        baseline_max_drawdown_pct=5.5,
+        market_data_manifests=(
+            manifest(
+                start=NOW - timedelta(days=2),
+                end=NOW - timedelta(hours=1),
+                source_id="renamed-independent-source",
+                digest="d" * 64,
+            ),
+        ),
+        orders_authorized=False,
+    )
+    with pytest.raises(ValueError, match="overlap"):
+        compare_learning_proposal(candidate, snapshot, overlapping)
+
+
+def test_learning_dataset_rejects_legacy_experiment_without_canonical_manifest():
+    item = experiment()
+    item = StrategyResearchExperiment(
+        experiment_id=item.experiment_id,
+        candidate_id=item.candidate_id,
+        candidate_fingerprint=item.candidate_fingerprint,
+        source_provenance_id=item.source_provenance_id,
+        experiment_version=item.experiment_version,
+        dataset_start=item.dataset_start,
+        dataset_end=item.dataset_end,
+        configuration_version=item.configuration_version,
+        assumptions={"fee_bps_per_side": 4, "orders_authorized": False},
+        outcomes=item.outcomes,
+        status=item.status,
+        failure_reasons=item.failure_reasons,
+        orders_authorized=False,
+    )
+    with pytest.raises(ValueError, match="market_data_manifest"):
+        build_research_dataset([item])
