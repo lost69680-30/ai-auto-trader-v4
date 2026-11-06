@@ -309,6 +309,38 @@ def acquire_worker_lease_when_available(store, stop: threading.Event, *, retry_s
     return False
 
 
+def configure_strategy_research_schedule(
+    scheduler: DurableJobScheduler,
+    *,
+    enabled: bool,
+    interval_seconds: int = 21600,
+    now: datetime | None = None,
+) -> bool:
+    """Register the paper-only research job only after an explicit staging opt-in."""
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled must be an explicit boolean")
+    if not enabled:
+        return False
+    if (
+        isinstance(interval_seconds, bool)
+        or not isinstance(interval_seconds, int)
+        or not 3600 <= interval_seconds <= 86400
+    ):
+        raise ValueError("interval_seconds must be between 3600 and 86400")
+    first_run = (now or datetime.now(timezone.utc)) + timedelta(seconds=60)
+    scheduler.register_interval(
+        "strategy_research_evaluation",
+        interval_seconds=interval_seconds,
+        first_run_at=first_run,
+        payload={
+            "scope": "strategy_research",
+            "market_type": "FUTURES",
+            "venue": "BINANCE_USDM_TESTNET",
+        },
+    )
+    return True
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     dsn = os.environ.get("PAPER_DATABASE_URL", "").strip()
@@ -348,7 +380,18 @@ def main() -> None:
             payload={"scope": "market_feed"},
         )
         intelligence_enabled = _env_bool("PAPER_MARKET_INTELLIGENCE_ENABLED", default=False)
+        strategy_research_enabled = _env_bool("PAPER_STRATEGY_RESEARCH_ENABLED", default=False)
         paper_handoff_enabled = _env_bool("PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED", default=False)
+        research_interval = (
+            _bounded_env_int(
+                "PAPER_STRATEGY_RESEARCH_INTERVAL_SECONDS", 21600,
+                minimum=3600, maximum=86400,
+            ) if strategy_research_enabled else 21600
+        )
+        configure_strategy_research_schedule(
+            scheduler, enabled=strategy_research_enabled,
+            interval_seconds=research_interval,
+        )
         if intelligence_enabled:
             intelligence_interval = _bounded_env_int(
                 "PAPER_MARKET_INTELLIGENCE_INTERVAL_SECONDS", 1800,
@@ -394,6 +437,28 @@ def main() -> None:
             raise SystemExit("shared historical archive requires PAPER_CANDLE_INTERVAL=1m")
         archive = PostgresCandleArchive(dsn)
         intelligence_handlers = {"market_feed_health_audit": market_feed_health_audit(store)}
+        if strategy_research_enabled:
+            from backend.strategy_research_memory import PostgresStrategyResearchMemory
+            from backend.strategy_research_runtime import build_strategy_research_handler
+
+            research_candle_limit = _bounded_env_int(
+                "PAPER_STRATEGY_RESEARCH_CANDLES", 3000,
+                minimum=3000, maximum=100000,
+            )
+            research_memory = PostgresStrategyResearchMemory(dsn)
+            intelligence_handlers["strategy_research_evaluation"] = build_strategy_research_handler(
+                archive, research_memory,
+                symbols=app.config.symbols_list,
+                candles_per_symbol=research_candle_limit,
+                venue="BINANCE_USDM_TESTNET",
+                market_type="FUTURES",
+            )
+            logger.info(
+                "paper-only walk-forward research schedule enabled interval_seconds=%d candles_per_symbol=%d orders_authorized=False",
+                research_interval, research_candle_limit,
+            )
+        else:
+            logger.info("paper-only walk-forward research schedule disabled by default orders_authorized=False")
         if intelligence_enabled:
             from backend.continuous_opportunity_search import continuous_opportunity_search
 

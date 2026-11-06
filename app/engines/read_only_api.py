@@ -191,6 +191,7 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                account_status: Callable[[], dict] | None = None,
                analysis_status: Callable[[], dict] | None = None,
                market_intelligence: Callable[[], dict] | None = None,
+               research_experiments: Callable[[], list[dict]] | None = None,
                opportunity_registry=None):
     """Create WSGI app. A strong API token is mandatory; no permissive defaults."""
     if not isinstance(token, str) or len(token) < 32:
@@ -421,6 +422,34 @@ def create_app(*, database_path: str, token: str, market_status: Callable[[], di
                         "status": "UNAVAILABLE", "items": [],
                         "reason": "market intelligence unavailable",
                         "orders_authorized": False,
+                    }), "503 Service Unavailable"
+
+            elif method == "GET" and path == "/api/v1/research/experiments":
+                try:
+                    if research_experiments is None:
+                        raise RuntimeError("strategy research memory is not configured")
+                    items = research_experiments()
+                    if (
+                        not isinstance(items, list)
+                        or len(items) > 100
+                        or any(
+                            not isinstance(item, dict)
+                            or item.get("orders_authorized") is not False
+                            for item in items
+                        )
+                    ):
+                        raise ValueError("research memory returned invalid or unsafe records")
+                    body, status = _json_bytes({
+                        "status": "HEALTHY" if items else "EMPTY",
+                        "items": items,
+                        "orders_authorized": False,
+                        "mode": "PAPER_ONLY",
+                    }), "200 OK"
+                except Exception:
+                    body, status = _json_bytes({
+                        "status": "UNAVAILABLE", "items": [],
+                        "reason": "strategy research memory unavailable",
+                        "orders_authorized": False, "mode": "PAPER_ONLY",
                     }), "503 Service Unavailable"
 
             elif path == "/api/v1/opportunities":
@@ -936,9 +965,29 @@ def main() -> None:
     else:
         logging.info("API-only role enabled; no local market poller or analysis worker will be started")
     opportunity_registry = None
+    research_experiments = None
     if os.environ.get("PAPER_DATABASE_URL", "").strip():
         from backend.opportunity_store import PostgresOpportunityStore
+        from backend.strategy_research_memory import PostgresStrategyResearchMemory
         opportunity_registry = PostgresOpportunityStore(os.environ["PAPER_DATABASE_URL"])
+        research_memory = PostgresStrategyResearchMemory(os.environ["PAPER_DATABASE_URL"])
+
+        def research_experiments() -> list[dict]:
+            return [{
+                "experiment_id": item.experiment_id,
+                "candidate_id": item.candidate_id,
+                "candidate_fingerprint": item.candidate_fingerprint,
+                "source_provenance_id": item.source_provenance_id,
+                "experiment_version": item.experiment_version,
+                "dataset_start": _api_value(item.dataset_start),
+                "dataset_end": _api_value(item.dataset_end),
+                "configuration_version": item.configuration_version,
+                "assumptions": dict(item.assumptions),
+                "outcomes": dict(item.outcomes),
+                "status": item.status,
+                "failure_reasons": list(item.failure_reasons),
+                "orders_authorized": False,
+            } for item in research_memory.list_recent(limit=20)]
 
     try:
         http_app = create_app(database_path=database, token=token,
@@ -948,6 +997,7 @@ def main() -> None:
                               account_status=binance_testnet_account.account_summary,
                               analysis_status=(cache.analysis_status if hasattr(cache, "analysis_status") else analysis_health.status),
                               market_intelligence=(cache.market_intelligence if hasattr(cache, "market_intelligence") else None),
+                              research_experiments=research_experiments,
                               opportunity_registry=opportunity_registry)
         if enable_websocket:
             if len(token) < 32:
