@@ -216,3 +216,38 @@ def test_camel_case_risk_and_order_fields_are_rejected():
 
     assert run.status == "FAILED"
     assert run.messages[0].error_code == "ValueError"
+
+
+def test_nested_specialist_evidence_is_immutable_and_json_safe():
+    from backend.research_agent_protocol import ResearchAgentInput
+
+    captured = {"indicator": {"ema20": 100.0}, "conflicts": ["1h"]}
+    run = execute_specialist_agents(
+        _snapshot(),
+        {"technical_analyst": lambda snapshot: captured},
+        required_roles=("technical_analyst",),
+        as_of=NOW,
+        max_age_seconds=60,
+    )
+    captured["indicator"]["ema20"] = -1.0
+    captured["conflicts"].append("4h")
+
+    payload = run.messages[0].payload
+    assert payload["indicator"]["ema20"] == 100.0
+    assert payload["conflicts"] == ("1h",)
+    with pytest.raises(TypeError):
+        payload["indicator"]["ema20"] = 999.0
+
+
+def test_specialist_run_cannot_be_constructed_complete_with_missing_role():
+    from backend.research_agent_protocol import ResearchAgentRun
+
+    run = execute_specialist_agents(
+        _snapshot(),
+        {"technical_analyst": lambda snapshot: {"ema20": 100.0}},
+        required_roles=("technical_analyst", "regime_analyst"),
+        as_of=NOW,
+        max_age_seconds=60,
+    )
+    assert run.status == "INCOMPLETE"
+    assert run.missing_roles == ("regime_analyst",)
