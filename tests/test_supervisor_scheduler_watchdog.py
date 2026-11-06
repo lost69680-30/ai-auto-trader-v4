@@ -89,3 +89,35 @@ def test_shared_market_status_exposes_diagnostic_details_to_supervisor_without_c
     assert result["orders_authorized"] is False
     assert "dsn" not in result
     assert "password" not in str(result).lower()
+
+
+def test_scheduled_job_runner_publishes_progress_before_dispatch_and_after_completion():
+    import threading
+
+    from backend.shared_market_worker import run_scheduled_jobs
+
+    stop = threading.Event()
+    health = {}
+
+    class Scheduler:
+        def enqueue_due(self):
+            return 1
+
+    class Dispatcher:
+        last_run_status = "FAILED"
+        last_error = "TemporarySourceFailure"
+
+        def run_once(self):
+            assert health.get("last_poll_started_at")
+            stop.set()
+            return False
+
+    run_scheduled_jobs(
+        stop, Scheduler(), Dispatcher(), poll_interval=1,
+        health=health,
+    )
+
+    assert health["status"] == "DEGRADED"
+    assert health["last_poll_started_at"]
+    assert health["last_poll_at"]
+    assert health["last_error"] == "TemporarySourceFailure"
