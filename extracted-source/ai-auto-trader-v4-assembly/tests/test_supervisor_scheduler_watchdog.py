@@ -137,3 +137,24 @@ def test_scheduler_watchdog_threshold_is_bounded_and_defaults_to_fifteen_minutes
             configured_scheduler_stale_seconds({
                 "PAPER_SUPERVISOR_SCHEDULER_STALE_SECONDS": invalid
             })
+
+
+def test_supervisor_does_not_restart_a_running_worker_for_stale_market_snapshots():
+    now = datetime.now(timezone.utc)
+    status = {
+        "status": "STALE",
+        "worker_status": "RUNNING",
+        "lease_expired": False,
+        "age_seconds": 5,
+        "details": {
+            "scheduled_jobs": {
+                "last_poll_started_at": (now - timedelta(seconds=10)).isoformat(),
+                "last_poll_at": (now - timedelta(seconds=5)).isoformat(),
+            }
+        },
+    }
+
+    assert worker_heartbeat_requires_restart(
+        status, uptime_seconds=600, startup_grace_seconds=30,
+        scheduler_stale_seconds=900, now=now,
+    ) is False
