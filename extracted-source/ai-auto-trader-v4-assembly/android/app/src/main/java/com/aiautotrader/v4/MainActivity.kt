@@ -327,6 +327,7 @@ private data class StrategyResearchExperimentItem(
     val experimentId: String,
     val symbol: String,
     val status: String,
+    val validationQualityStatus: String,
     val datasetStart: String,
     val datasetEnd: String,
     val foldCount: Int,
@@ -1169,12 +1170,16 @@ private fun fetchStrategyResearchExperiments(token: String): StrategyResearchFet
                 return StrategyResearchFetchResult("UNSAFE RESPONSE", "A research record did not explicitly disable order authorization.", emptyList(), false)
             }
             val outcomes = row.optJSONObject("outcomes") ?: JSONObject()
+            val validationQuality = outcomes.optJSONObject("validation_quality")
+            val validationQualityStatus = validationQuality?.optString("status")
+                ?.takeIf { it.isNotBlank() && it != "null" } ?: "MISSING"
             val holdout = outcomes.optJSONObject("holdout") ?: JSONObject()
             val netPnl = holdout.optDouble("net_pnl", Double.NaN)
             items += StrategyResearchExperimentItem(
                 experimentId = row.optString("experiment_id", ""),
                 symbol = row.optString("candidate_id", "").substringAfterLast(":"),
                 status = row.optString("status", "UNKNOWN"),
+                validationQualityStatus = validationQualityStatus,
                 datasetStart = row.optString("dataset_start", ""),
                 datasetEnd = row.optString("dataset_end", ""),
                 foldCount = outcomes.optJSONArray("folds")?.length() ?: 0,
@@ -1521,13 +1526,7 @@ private fun TraderApp() {
 @Composable
 private fun ResearchScreen() {
     val items = BackendSession.strategyResearchItems.value
-    val evaluatedCount = items.count { it.status.equals("EVALUATED", ignoreCase = true) }
-    val failedCount = items.count {
-        it.status.equals("FAILED", ignoreCase = true) ||
-            it.status.equals("ERROR", ignoreCase = true) ||
-            it.status.equals("REJECTED", ignoreCase = true)
-    }
-    val incompleteCount = items.size - evaluatedCount - failedCount
+    val validationCounts = summarizeResearchValidationQuality(items.map { it.validationQualityStatus })
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp),
@@ -1548,9 +1547,9 @@ private fun ResearchScreen() {
             }
             Text(BackendSession.strategyResearchMessage.value, color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ResearchCount("Evaluated", evaluatedCount, Gold, Modifier.weight(1f))
-                ResearchCount("Failed", failedCount, Red, Modifier.weight(1f))
-                ResearchCount("Incomplete", incompleteCount, Muted, Modifier.weight(1f))
+                ResearchCount("Passed", validationCounts.passed, Green, Modifier.weight(1f))
+                ResearchCount("Failed", validationCounts.failed, Red, Modifier.weight(1f))
+                ResearchCount("Incomplete", validationCounts.incomplete, Muted, Modifier.weight(1f))
             }
             Text(
                 "Historical diagnostics only — not forecasts, recommendations, or proof of profitability. Holdout data is not used for selection.",
@@ -1570,8 +1569,13 @@ private fun ResearchScreen() {
                 CardPanel {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text(displaySymbol(item.symbol), color = White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        Tag(item.status, if (item.status.equals("EVALUATED", ignoreCase = true)) Gold else Muted)
+                        Tag(item.validationQualityStatus, when (researchValidationBucket(item.validationQualityStatus)) {
+                            ResearchValidationBucket.PASSED -> Green
+                            ResearchValidationBucket.FAILED -> Red
+                            ResearchValidationBucket.INCOMPLETE -> Muted
+                        })
                     }
+                    IndicatorRow("Execution status", item.status)
                     IndicatorRow("Validation folds", item.foldCount.toString())
                     if (item.holdoutTradeCount > 0) {
                         IndicatorRow("Holdout trades", item.holdoutTradeCount.toString())
@@ -1580,8 +1584,8 @@ private fun ResearchScreen() {
                             item.holdoutNetPnl?.let { String.format(Locale.US, "%.4f", it) } ?: "Unavailable"
                         )
                     } else {
-                        IndicatorRow("Holdout trades", "None recorded")
-                        IndicatorRow("Holdout performance", "Not demonstrated")
+                        IndicatorRow("Holdout trades", "0 recorded")
+                        IndicatorRow("Holdout performance", "Not demonstrated · zero trades")
                     }
                     IndicatorRow("Dataset start", item.datasetStart)
                     IndicatorRow("Dataset end", item.datasetEnd)
