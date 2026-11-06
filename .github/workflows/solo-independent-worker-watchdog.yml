@@ -36,11 +36,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Check worker liveness and recover service if unreachable
+      - name: Check the independent API readiness view and recover a stale worker
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          WORKER_HEALTH_URL: https://solo-futures-websocket-staging.onrender.com/healthz
-          RENDER_SERVICE_ID: srv-dbhr5ign74is738detbg
+          API_READY_URL: https://solo-ai-auto-trader-staging-api.onrender.com/readyz
+          RENDER_WORKER_SERVICE_ID: srv-dbhr5ign74is738detbg
         run: |
           python - <<'PY'
           import json
@@ -50,42 +50,56 @@ jobs:
           import urllib.error
           import urllib.request
 
-          health_url = os.environ["WORKER_HEALTH_URL"]
-          service_id = os.environ["RENDER_SERVICE_ID"]
+          ready_url = os.environ["API_READY_URL"]
+          service_id = os.environ["RENDER_WORKER_SERVICE_ID"]
           api_key = os.environ.get("RENDER_API_KEY", "").strip()
+          confirmed_worker_failures = {"STALE", "STOPPED", "ERROR", "MISSING"}
 
-          def healthy():
+          def probe():
               request = urllib.request.Request(
-                  health_url,
+                  ready_url,
                   headers={"Accept": "application/json", "Cache-Control": "no-cache"},
                   method="GET",
               )
               try:
-                  with urllib.request.urlopen(request, timeout=90) as response:
-                      if response.status != 200:
-                          return False, f"HTTP {response.status}"
-                      payload = json.loads(response.read(4096).decode("utf-8"))
+                  response = urllib.request.urlopen(request, timeout=45)
+              except urllib.error.HTTPError as exc:
+                  response = exc
               except Exception as exc:
-                  return False, type(exc).__name__
-              valid = (
-                  isinstance(payload, dict)
-                  and payload.get("status") == "ok"
-                  and payload.get("mode") == "PAPER_ONLY"
-                  and payload.get("orders_authorized") is False
-              )
-              return valid, "valid paper-only liveness response" if valid else "invalid or unsafe health payload"
+                  return "indeterminate", None, type(exc).__name__
 
-          ok, reason = healthy()
-          if ok:
-              print("Worker service liveness is healthy; no recovery action needed.")
+              try:
+                  payload = json.loads(response.read(4096).decode("utf-8"))
+              except Exception:
+                  return "indeterminate", None, "invalid readiness response"
+              finally:
+                  response.close()
+
+              if not isinstance(payload, dict) or payload.get("orders_authorized") is not False:
+                  return "indeterminate", None, "readiness response failed paper-only safety validation"
+
+              worker_status = payload.get("worker_status")
+              if payload.get("status") == "ready" and worker_status == "RUNNING":
+                  return "healthy", worker_status, "worker lease and market readiness are healthy"
+              if worker_status in confirmed_worker_failures:
+                  return "worker_failed", worker_status, "API reports a stale or stopped worker heartbeat"
+              return "indeterminate", worker_status, "API is reachable but worker failure is not confirmed"
+
+          state, worker_status, reason = probe()
+          if state == "healthy":
+              print("Independent readiness probe confirms healthy paper-only worker; no restart needed.")
               sys.exit(0)
 
-          print(f"Worker health probe failed: {reason}")
-          if not api_key:
-              print("::error::RENDER_API_KEY is not configured; independent restart is unavailable.")
+          print(f"Readiness probe: state={state}, worker_status={worker_status}, reason={reason}")
+          if state != "worker_failed":
+              print("::error::Worker failure is not confirmed; refusing an unsafe or unnecessary restart.")
               sys.exit(1)
 
-          # One restart request per run; never loop restart calls or touch trading APIs.
+          if not api_key:
+              print("::error::RENDER_API_KEY is not configured; worker failure detected but restart is unavailable.")
+              sys.exit(1)
+
+          # One restart request per run, and only after the separate API reports a stale worker lease.
           restart_url = f"https://api.render.com/v1/services/{service_id}/restart"
           request = urllib.request.Request(
               restart_url,
@@ -105,15 +119,15 @@ jobs:
           except Exception as exc:
               raise SystemExit(f"Render restart request failed: {type(exc).__name__}") from None
 
-          print("Render accepted one worker-service restart request; verifying recovery.")
-          for attempt in range(1, 4):
+          print("Render accepted one worker-service restart request; verifying database-backed recovery.")
+          for attempt in range(1, 7):
               time.sleep(20)
-              ok, reason = healthy()
-              if ok:
-                  print(f"Worker liveness recovered after restart (check {attempt}/3).")
+              state, worker_status, reason = probe()
+              if state == "healthy":
+                  print(f"Worker lease and market readiness recovered (check {attempt}/6).")
                   sys.exit(0)
-              print(f"Recovery check {attempt}/3 not healthy: {reason}")
+              print(f"Recovery check {attempt}/6: state={state}, worker_status={worker_status}, reason={reason}")
 
-          print("::error::Worker service did not recover within the verification window.")
+          print("::error::Worker did not return to healthy readiness within the verification window.")
           sys.exit(1)
           PY
