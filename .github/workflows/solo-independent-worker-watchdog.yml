@@ -1,6 +1,10 @@
 name: Solo Independent Worker Watchdog
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/solo-independent-worker-watchdog.yml"
+      - "docs/SOLO_INDEPENDENT_WORKER_WATCHDOG.md"
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
@@ -13,6 +17,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate-workflow:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate GitHub Actions workflow syntax
+        uses: rhysd/actionlint@v1.7.7
+
   monitor-and-recover:
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -93,7 +105,7 @@ jobs:
               if ok:
                   print(f"Worker liveness recovered after restart (check {attempt}/3).")
                   sys.exit(0)
-              print(f"Recovery check {attempt}/6 not healthy: {reason}")
+              print(f"Recovery check {attempt}/3 not healthy: {reason}")
 
           print("::error::Worker service did not recover within the verification window.")
           sys.exit(1)
