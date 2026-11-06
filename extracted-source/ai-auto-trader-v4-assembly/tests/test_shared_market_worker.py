@@ -645,7 +645,7 @@ def test_worker_stops_waiting_for_lease_when_shutdown_requested():
 
 
 def test_strategy_research_schedule_is_opt_in_and_read_only():
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     class Scheduler:
         def __init__(self):
