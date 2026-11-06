@@ -7,8 +7,7 @@ on:
       - "scripts/solo_independent_watchdog.py"
       - "tests/test_solo_independent_watchdog.py"
       - "docs/SOLO_INDEPENDENT_WORKER_WATCHDOG.md"
-  schedule:
-    - cron: "*/10 * * * *"
+      - ".github/workflows/solo-render-keepwarm.yml"
   workflow_dispatch:
 
 permissions:
@@ -32,7 +31,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_solo_independent_watchdog.py' -v
 
   monitor-and-recover:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
