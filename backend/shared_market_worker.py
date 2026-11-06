@@ -42,7 +42,7 @@ def create_candle_archive(dsn: str, *, enabled: bool):
 
 def run_scheduled_jobs(
     stop: threading.Event, scheduler: DurableJobScheduler,
-    dispatcher: AnalysisJobDispatcher, *, poll_interval: float = 5.0,
+    dispatcher: AnalysisJobDispatcher, *, poll_interval: float = 1.0,
     health: dict | None = None, health_lock=None,
 ) -> None:
     """Run durable analysis jobs off the market-feed thread and publish progress."""
