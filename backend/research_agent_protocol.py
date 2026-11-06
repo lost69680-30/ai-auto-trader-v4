@@ -34,23 +34,11 @@ _SPECIALIST_ROLES = frozenset({
 })
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _FORBIDDEN_PAYLOAD_KEYS = frozenset({
-    "order",
-    "order_id",
-    "order_payload",
-    "submit_order",
-    "place_order",
-    "execution",
-    "paper_intent",
-    "risk_limit",
-    "risk_limits",
-    "risk_settings",
-    "leverage",
-    "position_size",
-    "quantity",
-    "notional",
-    "capital_allocation",
-    "emergency_stop",
-    "orders_authorized",
+    "order", "orders", "orderid", "orderpayload", "submitorder", "placeorder",
+    "execution", "executionmode", "paperintent", "risk", "risklimit", "risklimits",
+    "risksettings", "riskfraction", "riskbudget", "leverage", "positionsize",
+    "position", "quantity", "notional", "capitalallocation", "allocation",
+    "emergencystop", "ordersauthorized", "stoploss", "takeprofit", "margin",
 })
 
 
@@ -84,7 +72,7 @@ def _validate_payload(value: object) -> Mapping[str, Any]:
             for key, child in item.items():
                 if not isinstance(key, str) or not key.strip():
                     raise ValueError("specialist payload keys must be non-empty strings")
-                normalized = key.strip().lower()
+                normalized = re.sub(r"[^a-z0-9]", "", key.strip().lower())
                 if normalized in _FORBIDDEN_PAYLOAD_KEYS:
                     raise ValueError("specialist payload cannot contain risk or execution controls")
                 inspect_keys(child)
@@ -142,6 +130,19 @@ class ResearchAgentInput:
 
 
 @dataclass(frozen=True, slots=True)
+class SpecialistOutput:
+    """Explicit evidence output from a deterministic specialist handler."""
+
+    status: str
+    payload: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        if self.status not in {"COMPLETE", "INCOMPLETE"}:
+            raise ValueError("specialist output status must be COMPLETE or INCOMPLETE")
+        object.__setattr__(self, "payload", _validate_payload(self.payload))
+
+
+@dataclass(frozen=True, slots=True)
 class AgentEvidenceMessage:
     message_id: str
     agent_id: str
@@ -187,6 +188,8 @@ class AgentEvidenceMessage:
 class ResearchAgentRun:
     status: str
     symbol: str
+    market_type: str
+    venue: str
     data_fingerprint: str
     required_roles: tuple[str, ...]
     missing_roles: tuple[str, ...]
@@ -206,8 +209,16 @@ class ResearchAgentRun:
             raise ValueError("specialist message IDs must be unique")
         if len(self.messages) != len({message.role for message in self.messages}):
             raise ValueError("specialist roles may produce only one message per run")
+        _text(self.symbol, "run symbol", 40)
+        _text(self.venue, "run venue", 100)
+        if self.market_type not in {"SPOT", "FUTURES"}:
+            raise ValueError("run market_type is invalid")
+        if not isinstance(self.data_fingerprint, str) or not _SHA256.fullmatch(self.data_fingerprint):
+            raise ValueError("run data fingerprint is invalid")
         if any(
             message.symbol != self.symbol
+            or message.market_type != self.market_type
+            or message.venue != self.venue
             or message.data_fingerprint != self.data_fingerprint
             or message.orders_authorized is not False
             for message in self.messages
@@ -215,6 +226,16 @@ class ResearchAgentRun:
             raise ValueError("specialist messages do not share the run's paper-only market snapshot")
         if not set(self.missing_roles).issubset(set(self.required_roles)):
             raise ValueError("missing specialist roles must belong to the required role set")
+        failed = any(message.status == "FAILED" for message in self.messages)
+        incomplete = bool(self.missing_roles) or any(
+            message.status == "INCOMPLETE" for message in self.messages
+        )
+        if (self.status == "FAILED") != failed:
+            raise ValueError("research agent run FAILED status must match specialist failures")
+        if self.status == "COMPLETE" and incomplete:
+            raise ValueError("research agent run cannot be COMPLETE with missing or incomplete specialists")
+        if self.status == "INCOMPLETE" and (failed or not incomplete):
+            raise ValueError("research agent run INCOMPLETE status must match incomplete specialist evidence")
         if self.orders_authorized is not False:
             raise ValueError("orders_authorized must be false")
 
@@ -268,7 +289,13 @@ def execute_specialist_agents(
         ).hexdigest()
         agent_id = f"specialist:{role}"
         try:
-            payload = normalized_handlers[role](snapshot)
+            output = normalized_handlers[role](snapshot)
+            if isinstance(output, SpecialistOutput):
+                output_status = output.status
+                output_payload = output.payload
+            else:
+                output_status = "COMPLETE"
+                output_payload = output
             message = AgentEvidenceMessage(
                 message_id=message_id,
                 agent_id=agent_id,
@@ -279,8 +306,8 @@ def execute_specialist_agents(
                 data_fingerprint=snapshot.data_fingerprint,
                 observed_at=now,
                 expires_at=expiry,
-                status="COMPLETE",
-                payload=payload,
+                status=output_status,
+                payload=output_payload,
                 orders_authorized=False,
             )
         except Exception as exc:
@@ -312,6 +339,8 @@ def execute_specialist_agents(
     return ResearchAgentRun(
         status=status,
         symbol=snapshot.symbol,
+        market_type=snapshot.market_type,
+        venue=snapshot.venue,
         data_fingerprint=snapshot.data_fingerprint,
         required_roles=tuple(sorted(roles)),
         missing_roles=missing,
