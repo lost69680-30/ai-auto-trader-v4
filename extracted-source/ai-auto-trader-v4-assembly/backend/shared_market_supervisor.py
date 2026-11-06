@@ -275,9 +275,6 @@ def main() -> None:
                                         state["restart_delay"] = 1.0
                                 else:
                                     state["healthy_since"] = None
-                        except Exception:
-                            state["healthy_since"] = None
-                            logger.exception("worker heartbeat health check unavailable; preserving worker process")
                     elif name == "api" and now - state["started_at"] >= restart_stable_seconds:
                         state["restart_delay"] = 1.0
                     continue
