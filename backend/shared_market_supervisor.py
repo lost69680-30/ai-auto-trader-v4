@@ -161,8 +161,7 @@ def worker_heartbeat_requires_restart(
         return False
     worker_status = status.get("worker_status")
     if (
-        status.get("status") == "STALE"
-        or worker_status in {"STALE", "STOPPED", "ERROR", "MISSING"}
+        worker_status in {"STALE", "STOPPED", "ERROR", "MISSING"}
         or status.get("lease_expired") is True
     ):
         return True
