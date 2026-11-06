@@ -20,6 +20,19 @@ from backend.shared_market_store import PostgresMarketFeedStore
 logger = logging.getLogger(__name__)
 
 
+def _env_bool(name: str, *, default: bool = False) -> bool:
+    """Parse an opt-in feature flag; missing values stay disabled by default."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value")
+
+
 def run_scheduled_jobs(stop: threading.Event, scheduler: DurableJobScheduler,
                        dispatcher: AnalysisJobDispatcher, *, poll_interval: float = 1.0) -> None:
     """Run durable analysis jobs off the market-feed polling thread."""
@@ -141,10 +154,16 @@ def main() -> None:
         snapshot_interval = max(60, int(os.environ.get("PAPER_EQUITY_SNAPSHOT_INTERVAL_SECONDS", "300")))
         snapshot_max_mark_age = min(30.0, max(1.0, float(os.environ.get("PAPER_EQUITY_MAX_MARK_AGE_SECONDS", "30"))))
         testnet = str(os.environ.get("PAPER_MARKET_TESTNET", "true")).strip().lower() in {"1", "true", "yes"}
-        if not testnet:
-            raise SystemExit("shared historical archive is Testnet-only; refusing production market data")
-        if app.config.candle_interval != "1m":
-            raise SystemExit("shared historical archive requires PAPER_CANDLE_INTERVAL=1m")
+        archive_enabled = _env_bool("PAPER_CANDLE_ARCHIVE_ENABLED", default=False)
+        if archive_enabled:
+            if not testnet:
+                raise SystemExit("historical candle archive is Testnet-only; refusing production market data")
+            if app.config.candle_interval != "1m":
+                raise SystemExit("historical candle archive requires PAPER_CANDLE_INTERVAL=1m")
+                logger.warning("permanent candle archive explicitly enabled; PAPER_CANDLE_ARCHIVE_ENABLED=true")
+        else:
+            archive = None
+            logger.info("stateless candle mode enabled; raw candles are fetched on demand and are not persisted")
         snapshot_runner = threading.Thread(
             target=run_equity_snapshot_scheduler,
             args=(stop, app.ledger),
@@ -176,9 +195,11 @@ def main() -> None:
             owner=os.environ.get("PAPER_ANALYSIS_DISPATCHER_ID", f"{worker_id[:110]}-analysis"),
             handlers=intelligence_handlers,
         )
-        archive_lookback_days = int(os.environ.get("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS", "30"))
-        if not 1 <= archive_lookback_days <= 365:
-            raise SystemExit("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS must be between 1 and 365")
+        archive_lookback_days = 30
+        if archive_enabled:
+            archive_lookback_days = int(os.environ.get("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS", "30"))
+            if not 1 <= archive_lookback_days <= 365:
+                raise SystemExit("PAPER_MARKET_ARCHIVE_LOOKBACK_DAYS must be between 1 and 365")
 
         job_runner = threading.Thread(
             target=run_scheduled_jobs,
@@ -191,22 +212,25 @@ def main() -> None:
         while not stop.is_set():
             try:
                 backfill_clock = datetime.now(timezone.utc)
-                backfilled_count = 0
-                for symbol in app.config.symbols_list:
-                    backfilled_count += backfill_symbol_history(
-                        archive, app.worker.source, symbol=symbol, market_type="FUTURES",
-                        testnet=testnet, now=backfill_clock, page_size=1000, max_pages=3,
-                    )
-                archive_caught_up = archive_is_caught_up(
-                    archive, symbols=app.config.symbols_list, market_type="FUTURES",
-                    now=backfill_clock,
-                )
-                poll = app.worker.poll_once()
-                store.publish(poll)
-                archived_count = backfilled_count
+                archived_count = 0
+                archive_caught_up = None
                 older_history_count = 0
                 older_history_errors = []
-                if archive_caught_up:
+                if archive is not None:
+                    backfilled_count = 0
+                    for symbol in app.config.symbols_list:
+                        backfilled_count += backfill_symbol_history(
+                            archive, app.worker.source, symbol=symbol, market_type="FUTURES",
+                            testnet=testnet, now=backfill_clock, page_size=1000, max_pages=3,
+                        )
+                    archive_caught_up = archive_is_caught_up(
+                        archive, symbols=app.config.symbols_list, market_type="FUTURES",
+                        now=backfill_clock,
+                    )
+                    archived_count = backfilled_count
+                poll = app.worker.poll_once()
+                store.publish(poll)
+                if archive is not None and archive_caught_up:
                     for symbol in app.config.symbols_list:
                         try:
                             older_history_count += backfill_older_symbol_history(
@@ -246,6 +270,7 @@ def main() -> None:
                         "unhealthy_symbols": list(report.unhealthy_symbols),
                         "archived_new_candles": archived_count,
                         "historical_archive_caught_up": archive_caught_up,
+                        "candle_archive_enabled": archive is not None,
                         "historical_archive_lookback_days": archive_lookback_days,
                         "historical_archive_older_candles": older_history_count,
                         "historical_archive_backfill_errors": older_history_errors,
