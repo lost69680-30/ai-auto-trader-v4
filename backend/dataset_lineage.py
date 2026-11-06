@@ -89,15 +89,17 @@ def assert_independent_dataset(candidate: DatasetProvenance, reference: DatasetP
         raise ValueError("both datasets must include validated DatasetProvenance")
     if candidate.data_sha256 == reference.data_sha256:
         raise ValueError("dataset content is reused; relabeling metadata does not create independence")
+    # Provider/source identifiers are provenance labels, not an independence
+    # boundary. A source relabel must never make overlapping candles independent.
     same_scope = (
-        candidate.provider.casefold(), candidate.venue.casefold(),
-        candidate.symbol.casefold(), candidate.timeframe.casefold(),
+        candidate.venue.casefold(), candidate.symbol.casefold(),
+        candidate.timeframe.casefold(),
     ) == (
-        reference.provider.casefold(), reference.venue.casefold(),
-        reference.symbol.casefold(), reference.timeframe.casefold(),
+        reference.venue.casefold(), reference.symbol.casefold(),
+        reference.timeframe.casefold(),
     )
     if same_scope and not (
         candidate.window_end < reference.window_start
         or reference.window_end < candidate.window_start
     ):
-        raise ValueError("dataset windows overlap for the same provider, venue, symbol, and timeframe")
+        raise ValueError("dataset windows overlap for the same venue, symbol, and timeframe")
