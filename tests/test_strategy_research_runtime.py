@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from backend import strategy_research_runtime
-from backend.dataset_lineage import DatasetProvenance
+from backend.dataset_lineage import DatasetProvenance, candle_dataset_sha256
 from backend.market_data_lineage import MarketDataIdentity, build_market_data_manifest
 from backend.strategy_research import Candle
 
@@ -55,11 +55,15 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     rows = candle_rows()
     archive = FakeArchive(rows)
     memory = FakeMemory()
+    canonical_candles = tuple(Candle(
+        symbol="BTCUSDT", timestamp=row.open_time,
+        open=row.open, high=row.high, low=row.low, close=row.close, volume=row.volume,
+    ) for row in rows)
     provenance = DatasetProvenance(
         provider="binance-public-testnet", venue="BINANCE_USDM_TESTNET",
         symbol="BTCUSDT", timeframe="1m",
         window_start=rows[0].open_time, window_end=rows[-1].open_time,
-        candle_count=len(rows), data_sha256="a" * 64,
+        candle_count=len(rows), data_sha256=candle_dataset_sha256(canonical_candles),
     )
     strategy = SimpleNamespace(
         net_pnl=1.25, trade_count=4, win_rate_pct=50.0,
@@ -98,10 +102,6 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     assert summary["orders_authorized"] is False
     assert calls[0][0:2] == ("BTCUSDT", 3000)
     experiment, key = memory.items[0]
-    canonical_candles = tuple(Candle(
-        symbol="BTCUSDT", timestamp=row.open_time,
-        open=row.open, high=row.high, low=row.low, close=row.close, volume=row.volume,
-    ) for row in rows)
     expected_manifest = build_market_data_manifest(
         canonical_candles,
         MarketDataIdentity(
@@ -152,11 +152,15 @@ def test_research_handler_skips_symbols_without_sufficient_archive_history(monke
 def test_research_memory_write_failure_propagates_for_scheduler_retry(monkeypatch):
     rows = candle_rows()
     archive = FakeArchive(rows)
+    canonical_candles = tuple(Candle(
+        symbol="BTCUSDT", timestamp=row.open_time,
+        open=row.open, high=row.high, low=row.low, close=row.close, volume=row.volume,
+    ) for row in rows)
     provenance = DatasetProvenance(
         provider="binance-public-testnet", venue="BINANCE_USDM_TESTNET",
         symbol="BTCUSDT", timeframe="1m",
         window_start=rows[0].open_time, window_end=rows[-1].open_time,
-        candle_count=len(rows), data_sha256="b" * 64,
+        candle_count=len(rows), data_sha256=candle_dataset_sha256(canonical_candles),
     )
     strategy = SimpleNamespace(
         net_pnl=0.0, trade_count=0, win_rate_pct=0.0,
