@@ -173,7 +173,7 @@ def test_run_rejects_message_from_a_different_venue_or_market_type():
         max_age_seconds=60,
     )
     mismatched = replace(run.messages[0], venue="OTHER_TESTNET")
-    with pytest.raises(ValueError, match="same run"):
+    with pytest.raises(ValueError, match="market snapshot"):
         ResearchAgentRun(
             status="COMPLETE",
             symbol=run.symbol,
