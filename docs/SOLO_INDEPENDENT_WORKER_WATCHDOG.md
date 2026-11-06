@@ -2,39 +2,49 @@
 
 ## What this adds
 
-A GitHub-hosted scheduled monitor probes the Render worker service every ten minutes. It is outside the Render worker process and host. It validates the worker's minimal public `/healthz` response and, if the service is unreachable or the response is invalid, sends one restart request to the exact Render worker service. It then verifies recovery with bounded retries.
+A GitHub-hosted scheduled monitor runs every ten minutes, outside the Render API and worker services. It calls the separate staging API's public `/readyz` endpoint, which reads the shared PostgreSQL worker heartbeat and validated market-feed readiness.
 
-The monitor is deliberately limited to service-level liveness. The in-service supervisor remains responsible for child-process exits, PostgreSQL lease expiry, and scheduler-progress stalls. The public worker `/healthz` route is a liveness probe, not proof that market data or the scheduler is healthy.
+The monitor distinguishes a confirmed worker-process/lease failure from ordinary data-feed degradation:
+- `status=ready`, `worker_status=RUNNING`, and `orders_authorized=false`: healthy; no restart.
+- `worker_status` is `STALE`, `STOPPED`, `ERROR`, or `MISSING`: confirmed worker heartbeat failure; one worker-service restart may be requested.
+- API unreachable, invalid response, `UNKNOWN`, or worker still `RUNNING` but readiness is degraded: fail closed and do not restart the worker. This avoids restarting a healthy process for a market-data outage or an API/network problem.
+
+After a restart request, the monitor polls the independent readiness endpoint and succeeds only when the worker lease and market readiness return to healthy.
+
+The in-service supervisor remains responsible for worker child-process exits and scheduler-progress stalls. The external monitor is an independent service-level recovery layer; it does not replace the internal watchdog.
 
 ## One-time GitHub setup
 
 Add this repository Actions secret:
 
-- `RENDER_API_KEY`: a Render API key with access to the Solo workspace. Create it in Render account settings and store it only in GitHub Actions secrets. Never commit it or put it in Android/app configuration.
+- `RENDER_API_KEY`: a Render API key with permission to restart the Solo staging worker service. Store it only in GitHub Actions secrets. Never commit it or put it in Android/app configuration.
 
-The workflow is pinned to the current staging worker:
-- Service: `solo-futures-websocket-staging`
-- Service ID: `srv-dbhr5ign74is738detbg`
-- Health URL: `https://solo-futures-websocket-staging.onrender.com/healthz`
+Pinned staging targets:
+- Independent readiness API: `https://solo-ai-auto-trader-staging-api.onrender.com/readyz`
+- API Render service: `solo-ai-auto-trader-staging-api`
+- Worker Render service: `solo-futures-websocket-staging`
+- Worker service ID: `srv-dbhr5ign74is738detbg`
 
-If the secret is missing, the workflow can detect the outage but cannot restart the service; it fails with a clear error.
+The readiness API is on a separate Render service and reads the shared worker heartbeat. If the API cannot be reached, the workflow reports failure but deliberately does not restart the worker because worker failure cannot be confirmed.
 
 ## Recovery and safety limits
 
+- Scheduled interval: every ten minutes; GitHub Actions may delay scheduled runs.
 - At most one Render restart request is issued per workflow run.
-- After a restart request, the workflow polls for a valid liveness response for up to about five minutes.
+- Recovery is verified through the separate API's database-backed `/readyz` endpoint.
 - No database writes, market-data mutations, exchange credentials, order endpoints, or trading permissions are used.
-- The worker must continue to report `mode=PAPER_ONLY` and `orders_authorized=false`; otherwise the probe is treated as invalid.
-- No restart is triggered merely because market data is stale. The in-service watchdog owns worker-heartbeat and scheduler-progress recovery.
-- GitHub Actions scheduled runs can be delayed or unavailable. This is independent of the Render worker process, but it is not a guaranteed real-time 24/7 monitoring SLA.
-- Render Free may sleep or take time to wake. The probe has a bounded 90-second timeout; a successful liveness response after cold start avoids a restart.
+- The readiness payload must explicitly report `orders_authorized=false`.
+- A stale market feed with a still-running worker does not trigger a restart.
+- No Emergency Stop state is cleared or modified.
+- This is independent of the Render worker process/host, but it is not a guaranteed real-time uptime SLA and depends on GitHub Actions and the separate API service being reachable.
 
 ## Acceptance still required
 
 After merging and adding `RENDER_API_KEY`, run the workflow manually once. Confirm:
-1. the workflow reads a valid `PAPER_ONLY` / `orders_authorized=false` health response;
-2. no restart occurs during healthy operation;
-3. recovery is verified after a controlled staging outage/restart test;
-4. the worker's database lease, scheduler progress, and all market symbols are healthy after recovery.
+1. healthy `/readyz` returns without a restart;
+2. a stale worker lease triggers exactly one restart request;
+3. the workflow verifies worker recovery through `/readyz`;
+4. a stale market feed with a running worker does not cause a restart;
+5. the worker's lease, scheduler progress, and configured market symbols are healthy after recovery.
 
 Do not call the system fully independently monitored until these staging checks pass.
