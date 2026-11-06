@@ -191,7 +191,8 @@ def main() -> None:
                             worker_status = market_store.status()
                         except Exception:
                             # A transient PostgreSQL read failure is not proof that the
-                            # worker is dead. The API readiness check remains fail-closed.
+                            # worker is dead. Do not restart or reset backoff without evidence.
+                            state["healthy_since"] = None
                             logger.exception("worker heartbeat health check unavailable; preserving worker process")
                         else:
                             restart_required = worker_heartbeat_requires_restart(
