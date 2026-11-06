@@ -56,6 +56,24 @@ def configured_child_shutdown_grace(environ: Mapping[str, str]) -> float:
     return max(15.0, float(environ.get("PAPER_SUPERVISOR_CHILD_SHUTDOWN_GRACE_SECONDS", "25")))
 
 
+
+def configured_supervisor_modules(
+    mode: str,
+    worker_env: dict[str, str],
+    api_env: dict[str, str],
+) -> dict[str, tuple[str, dict[str, str]]]:
+    """Select which supervised process roles this Render service owns."""
+    normalized = str(mode).strip().lower()
+    if normalized not in {"all", "worker", "api"}:
+        raise ValueError("PAPER_MARKET_SUPERVISOR_MODE must be all, worker, or api")
+    modules = {}
+    if normalized in {"all", "worker"}:
+        modules["worker"] = ("backend.shared_market_worker", worker_env)
+    if normalized in {"all", "api"}:
+        modules["api"] = ("app.engines.read_only_api", api_env)
+    return modules
+
+
 def worker_heartbeat_requires_restart(
     status: Any, *, uptime_seconds: float, startup_grace_seconds: float = 180.0
 ) -> bool:
@@ -83,8 +101,10 @@ def main() -> None:
     startup_grace = max(30.0, float(os.environ.get("PAPER_SUPERVISOR_WORKER_STARTUP_GRACE_SECONDS", "180")))
     health_check_interval = max(2.0, float(os.environ.get("PAPER_SUPERVISOR_WORKER_HEALTH_CHECK_SECONDS", "5")))
     database_url = os.environ.get("PAPER_DATABASE_URL", "").strip()
+    mode = os.environ.get("PAPER_MARKET_SUPERVISOR_MODE", "all")
+    modules = configured_supervisor_modules(mode, worker_env, api_env)
     market_store = None
-    if database_url:
+    if "worker" in modules and database_url:
         from backend.shared_market_store import PostgresMarketFeedStore
 
         market_store = PostgresMarketFeedStore(
@@ -93,13 +113,9 @@ def main() -> None:
             max_age_seconds=max_market_age,
             lease_seconds=max(90.0, float(os.environ.get("PAPER_MARKET_WORKER_LEASE_SECONDS", "90"))),
         )
-    if market_store is None:
+    if "worker" in modules and market_store is None:
         logger.warning("worker heartbeat monitor disabled because PAPER_DATABASE_URL is missing; worker will fail closed and process-exit supervision remains active")
     last_worker_health_check = 0.0
-    modules = {
-        "worker": ("backend.shared_market_worker", worker_env),
-        "api": ("app.engines.read_only_api", api_env),
-    }
     children: dict[str, dict[str, Any]] = {}
     stopping = False
 
@@ -120,8 +136,8 @@ def main() -> None:
         }
 
     try:
-        start_child("worker")
-        start_child("api")
+        for child_name in modules:
+            start_child(child_name)
         while not stopping:
             now = time.monotonic()
             for name, state in list(children.items()):
