@@ -325,3 +325,74 @@ def test_stateless_history_loader_rejects_missing_minute_candles():
         fetch_stateless_closed_candles(
             Source(), symbol="BTCUSDT", count=30, now=NOW,
         )
+
+
+def test_stateless_research_handler_evaluates_and_persists_without_archive(monkeypatch):
+    from backend.strategy_research_runtime import build_strategy_research_handler
+
+    archived = candle_rows(count=3000)
+    market_rows = tuple(SimpleNamespace(
+        symbol="BTCUSDT", open_time=row.open_time, close_time=row.close_time,
+        open=row.open, high=row.high, low=row.low, close=row.close, volume=row.volume,
+        is_closed=True,
+    ) for row in archived)
+
+    class Source:
+        def __init__(self):
+            self.requests = []
+
+        def fetch_klines(self, symbol, *, interval, limit, end_time_ms, now):
+            self.requests.append((symbol, interval, limit))
+            eligible = [
+                row for row in market_rows
+                if int(row.open_time.timestamp() * 1000) <= end_time_ms
+                and row.close_time < now
+            ]
+            return tuple(eligible[-limit:])
+
+    source = Source()
+    memory = FakeMemory()
+    candles = tuple(Candle(
+        symbol="BTCUSDT", timestamp=row.open_time,
+        open=row.open, high=row.high, low=row.low, close=row.close, volume=row.volume,
+    ) for row in archived)
+    provenance = DatasetProvenance(
+        provider="binance-public-testnet", venue="BINANCE_USDM_TESTNET",
+        symbol="BTCUSDT", timeframe="1m",
+        window_start=archived[0].open_time, window_end=archived[-1].open_time,
+        candle_count=len(candles), data_sha256=candle_dataset_sha256(candles),
+    )
+    strategy = SimpleNamespace(
+        initial_equity=1000.0, net_pnl=0.0, trade_count=0,
+        win_rate_pct=0.0, max_drawdown_pct=0.0, total_costs=0.0,
+        orders_authorized=False,
+    )
+    regime = SimpleNamespace(
+        trend_state="RANGE", volatility_state="LOW",
+        trend_return_pct=0.0, realized_volatility_pct=0.0,
+        observations=499, methodology="stateless source test",
+        orders_authorized=False,
+    )
+    window = SimpleNamespace(
+        name="fold", start_index=2000, end_index=2500,
+        strategy=strategy, market_regime=regime, buy_hold_return_pct=0.0,
+    )
+    result = WalkForwardResult(
+        symbol="BTCUSDT", dataset_provenance=provenance, folds=(window,),
+        holdout=window, warnings=(), orders_authorized=False,
+    )
+    monkeypatch.setattr(strategy_research_runtime, "evaluate_walk_forward", lambda *args, **kwargs: result)
+
+    handler = build_strategy_research_handler(
+        None, memory, source=source, symbols=("BTCUSDT",), clock=lambda: NOW,
+    )
+    summary = handler({
+        "scope": "strategy_research", "market_type": "FUTURES",
+        "venue": "BINANCE_USDM_TESTNET",
+    }, "stateless-research-1")
+
+    assert summary["evaluated"] == 1
+    assert summary["candidate_evaluations"] == 4
+    assert len(memory.items) == 4
+    assert len(source.requests) == 2
+    assert all(item[0].orders_authorized is False for item in memory.items)
