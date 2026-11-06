@@ -35,7 +35,7 @@ jobs:
               Path(".github/workflows/solo-independent-worker-watchdog.yml").read_text(),
               Loader=yaml.BaseLoader,
           )
-          shell = workflow["jobs"]["monitor-and-recover"]["steps"][0]["run"]
+          shell = next(step["run"] for step in workflow["jobs"]["monitor-and-recover"]["steps"] if "run" in step)
           marker = "python - <<'PY'\n"
           start = shell.index(marker) + len(marker)
           end = shell.rfind("\nPY")
