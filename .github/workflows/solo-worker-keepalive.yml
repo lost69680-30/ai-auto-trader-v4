@@ -1,0 +1,38 @@
+name: Keep Solo paper worker awake on Render Free
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solo-worker-keepalive
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    name: Ping worker liveness endpoint
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Keep worker service active and verify paper-only mode
+        env:
+          WORKER_URL: https://solo-futures-websocket-staging.onrender.com
+        run: |
+          set -euo pipefail
+          curl --silent --show-error --fail \
+            --retry 8 --retry-delay 8 --retry-all-errors --max-time 20 \
+            "$WORKER_URL/healthz" --output health.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          body = json.loads(Path("health.json").read_text())
+          assert body.get("status") == "ok", body
+          assert body.get("mode") == "PAPER_ONLY", body
+          assert body.get("orders_authorized") is False, body
+          print("PASS: Solo worker is reachable and remains PAPER_ONLY.")
+          PY
