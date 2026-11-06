@@ -6,6 +6,7 @@ import pytest
 from backend import strategy_research_runtime
 from backend.dataset_lineage import DatasetProvenance, candle_dataset_sha256
 from backend.market_data_lineage import MarketDataIdentity, build_market_data_manifest
+from backend.strategy_learning_lab import build_research_dataset
 from backend.strategy_research import Candle
 from backend.walk_forward import WalkForwardResult
 
