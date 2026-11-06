@@ -57,7 +57,7 @@ def _safe_startup_error(exc: Exception) -> str:
     return f"{type(exc).__name__}: {message}"
 
 
-def ping_worker_health_endpoint(url: str, *, timeout_seconds: float = 5.0, opener=None) -> bool:
+def ping_worker_health_endpoint(url: str, *, timeout_seconds: float = 60.0, opener=None) -> bool:
     """Wake/check the separate worker using only its unauthenticated paper-only liveness route."""
     from urllib.parse import urlsplit
     from urllib.request import Request, urlopen
