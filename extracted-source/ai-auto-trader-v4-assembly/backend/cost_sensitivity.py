@@ -71,6 +71,7 @@ def _fold_cost_stress(fold, multiplier: float) -> tuple[tuple[float, float, floa
     costs_total = 0.0
     net_total = 0.0
     winners = 0
+    executed_trades = 0
     for trade in backtest.trades:
         if trade.symbol != backtest.symbol or trade.direction not in {"LONG", "SHORT"}:
             raise ValueError("validation trade identity is invalid")
@@ -99,6 +100,9 @@ def _fold_cost_stress(fold, multiplier: float) -> tuple[tuple[float, float, floa
             maximum_drawdown = max(maximum_drawdown, (peak - equity) / peak * 100.0)
         if equity <= 0:
             break
+    base_drawdown = _finite(backtest.max_drawdown_pct, "base drawdown")
+    if not 0.0 <= base_drawdown <= 100.0:
+        raise ValueError("base drawdown must be between 0 and 100 percent")
     if not all(math.isfinite(value) for value in (gross_total, costs_total, net_total, maximum_drawdown)):
         raise ValueError("validation fold aggregate metrics are non-finite")
     net_return_pct = net_total / initial_equity * 100.0
@@ -108,7 +112,7 @@ def _fold_cost_stress(fold, multiplier: float) -> tuple[tuple[float, float, floa
         net_total,
         winners,
         executed_trades,
-        max(maximum_drawdown, _finite(backtest.max_drawdown_pct, "base drawdown")),
+        max(maximum_drawdown, base_drawdown),
     ), net_return_pct, benchmark
 
 
