@@ -642,3 +642,41 @@ def test_worker_stops_waiting_for_lease_when_shutdown_requested():
     assert shared_market_worker.acquire_worker_lease_when_available(
         Store(), Stop(), retry_seconds=0.25,
     ) is False
+
+
+def test_strategy_research_schedule_is_opt_in_and_read_only():
+    from datetime import datetime, timezone
+
+    class Scheduler:
+        def __init__(self):
+            self.calls = []
+
+        def register_interval(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+
+    now = datetime(2026, 11, 6, 5, 0, tzinfo=timezone.utc)
+    scheduler = Scheduler()
+    assert shared_market_worker.configure_strategy_research_schedule(
+        scheduler, enabled=False, now=now,
+    ) is False
+    assert scheduler.calls == []
+
+    assert shared_market_worker.configure_strategy_research_schedule(
+        scheduler, enabled=True, interval_seconds=21600, now=now,
+    ) is True
+    args, kwargs = scheduler.calls[0]
+    assert args == ("strategy_research_evaluation",)
+    assert kwargs["interval_seconds"] == 21600
+    assert kwargs["first_run_at"] == now + timedelta(seconds=60)
+    assert kwargs["payload"] == {
+        "scope": "strategy_research",
+        "market_type": "FUTURES",
+        "venue": "BINANCE_USDM_TESTNET",
+    }
+
+
+def test_strategy_research_schedule_rejects_unbounded_intervals():
+    with pytest.raises(ValueError, match="interval_seconds"):
+        shared_market_worker.configure_strategy_research_schedule(
+            object(), enabled=True, interval_seconds=60,
+        )
