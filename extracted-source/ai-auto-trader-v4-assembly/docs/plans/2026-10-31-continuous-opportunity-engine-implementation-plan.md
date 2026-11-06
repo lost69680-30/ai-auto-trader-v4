@@ -70,7 +70,7 @@ All new paths below are proposed; preserve the assembly's existing package and t
   - `release_claim(opportunity_id, *, owner, now) -> bool`
 - Consume the existing PostgreSQL DSN and SSL helper pattern from `backend/shared_market_store.py`; no new database provider or connection secret.
 
-- [ ] **Step 1: Add focused failing repository and migration tests**
+- [x] **Step 1: Add focused failing repository and migration tests**
 
 Test schema constraints and repository behavior using the existing `PAPER_TEST_DATABASE_URL` convention:
 1. A new opportunity and its initial event persist and are readable after a new store instance is created.
@@ -82,7 +82,7 @@ Test schema constraints and repository behavior using the existing `PAPER_TEST_D
 7. Database failure, missing migration, malformed JSON, or `orders_authorized=true` fails closed.
 8. Existing ledger, market feed, candle archive, scheduled-job and intelligence-report tables remain intact after migration.
 
-- [ ] **Step 2: Verify the expected failures**
+- [x] **Step 2: Verify the expected failures**
 
 Run from `extracted-source/ai-auto-trader-v4-assembly`:
 
@@ -92,7 +92,7 @@ pytest -q tests/test_opportunity_store.py
 
 Expected: the focused tests fail because the migration, records and repository do not yet exist.
 
-- [ ] **Step 3: Implement additive PostgreSQL schema and repository**
+- [x] **Step 3: Implement additive PostgreSQL schema and repository**
 
 Create separate relational records for opportunities, strategy assessments, evidence references, watch conditions, append-only opportunity events and opportunity claims. Use foreign keys and indexes for active-state lookup, symbol/timeframe lookup, expiry processing, event history and idempotency lookup. Keep compact evidence references to existing snapshot/candle/archive identifiers; do not copy full candle histories into each opportunity.
 
@@ -102,7 +102,7 @@ Implement transitions in a database transaction using row locking or a compare-a
 
 The state transition validator must encode the design's allowed lifecycle and terminal states. It must reject direct transitions to `PAPER_OPEN` from search, assessment, waiting or trigger code. The later risk-approved integration must use a distinct recorded-intent state/event if the paper ledger only accepts an intent; it may transition to `PAPER_OPEN` only if the existing paper ledger confirms the simulated position is actually open. Final state mapping is gated by product decision 6 below.
 
-- [ ] **Step 4: Verify the focused pass**
+- [x] **Step 4: Verify the focused pass**
 
 Run:
 
@@ -112,7 +112,7 @@ pytest -q tests/test_opportunity_store.py
 
 Expected: all repository and migration tests pass against a migrated test PostgreSQL database; tests requiring an unavailable database are explicitly skipped with the existing documented reason, not reported as passed.
 
-- [ ] **Step 5: Run affected integration checks**
+- [x] **Step 5: Run affected integration checks**
 
 Run:
 
@@ -122,7 +122,7 @@ pytest -q tests/test_shared_market_data_store.py tests/test_analysis_job_dispatc
 
 Expected: existing shared market-data and scheduled-job behavior remains green; the new migration does not remove or weaken existing tables, leases or safety constraints.
 
-- [ ] **Step 6: Commit the passing deliverable**
+- [x] **Step 6: Commit the passing deliverable**
 
 ```bash
 git add supabase/migrations/20261031170000_create_opportunity_registry.sql extracted-source/ai-auto-trader-v4-assembly/backend/opportunity_store.py extracted-source/ai-auto-trader-v4-assembly/tests/test_opportunity_store.py extracted-source/ai-auto-trader-v4-assembly/tests/test_shared_market_data_store.py
@@ -143,7 +143,7 @@ git commit -m "feat: add durable opportunity registry"
 - `MultiStrategyAssessmentEngine(profiles, assessors).assess(candidate, evidence, *, now) -> tuple[StrategyAssessmentRecord, ...]`.
 - `assessors` is an explicit registry keyed by strategy ID; a missing or failed assessor yields a recorded `REQUEST_MORE_EVIDENCE` or `NO_TRADE` result, never an implicit approval.
 
-- [ ] **Step 1: Add failing tests for strategy independence and authority boundaries**
+- [x] **Step 1: Add failing tests for strategy independence and authority boundaries**
 
 Cover:
 1. Each of the five strategy IDs receives its own assessment record and version.
@@ -155,7 +155,7 @@ Cover:
 7. Scores include `NOT_CALIBRATED` until an independently verified calibration artifact is supplied.
 8. Every assessment explicitly has `orders_authorized=false`.
 
-- [ ] **Step 2: Verify the expected failures**
+- [x] **Step 2: Verify the expected failures**
 
 Run:
 
@@ -165,7 +165,7 @@ pytest -q tests/test_strategy_assessment_engine.py
 
 Expected: collection fails until the new strategy profile and assessment interfaces are defined.
 
-- [ ] **Step 3: Implement the assessment registry and five isolated profiles**
+- [x] **Step 3: Implement the assessment registry and five isolated profiles**
 
 Implement the five explicit strategy identities: scalping, day trading, swing trading, position trading and long-term analysis. Reuse existing market assessment and research outputs as evidence; do not relabel a single existing consensus score as five independent assessments. Each profile must evaluate its own configured evidence/timeframes and emit its own decision, reasons, uncertainty, version, evidence references, costs where available, trigger/invalidation proposal where justified, expiry policy reference and calibration label.
 
@@ -173,7 +173,7 @@ Keep the assessment engine pure with respect to persistence, exchange access, ac
 
 Do not implement a profitability model or claim statistical calibration. Do not permit the long-term profile to create a watch condition eligible for the paper path.
 
-- [ ] **Step 4: Verify the focused pass**
+- [x] **Step 4: Verify the focused pass**
 
 Run:
 
@@ -183,7 +183,7 @@ pytest -q tests/test_strategy_assessment_engine.py backend/tests/test_opportunit
 
 Expected: new per-strategy tests pass and existing research/market-assessment behavior remains unchanged.
 
-- [ ] **Step 5: Run affected integration checks**
+- [x] **Step 5: Run affected integration checks**
 
 Run:
 
@@ -193,7 +193,7 @@ pytest -q tests/test_market_intelligence_scan.py tests/test_complete_analysis_pi
 
 Expected: existing scan and research-to-signal boundaries remain intact; the new strategy engine does not create signals or paper intents.
 
-- [ ] **Step 6: Commit the passing deliverable**
+- [x] **Step 6: Commit the passing deliverable**
 
 ```bash
 git add extracted-source/ai-auto-trader-v4-assembly/backend/strategy_assessment_engine.py extracted-source/ai-auto-trader-v4-assembly/backend/strategy_profiles.py extracted-source/ai-auto-trader-v4-assembly/tests/test_strategy_assessment_engine.py
@@ -213,7 +213,7 @@ git commit -m "feat: add independent strategy assessments"
 - `ContinuousOpportunitySearch(store, source, strategy_engine, config).scan(*, now, scan_id) -> SearchRunResult`.
 - `SearchRunResult`: scan ID, started/completed timestamps, coverage counts, per-symbol quality status, candidate IDs, skipped symbols/reasons and `orders_authorized=false`.
 
-- [ ] **Step 1: Add failing tests for scan coverage and quality gates**
+- [x] **Step 1: Add failing tests for scan coverage and quality gates**
 
 Cover:
 1. Only configured and enabled Testnet instruments are scanned.
@@ -225,7 +225,7 @@ Cover:
 7. A repeated scan ID/idempotency key does not create duplicate opportunities or assessments.
 8. All results remain research-only and have `orders_authorized=false`.
 
-- [ ] **Step 2: Verify the expected failures**
+- [x] **Step 2: Verify the expected failures**
 
 Run:
 
@@ -235,13 +235,13 @@ pytest -q tests/test_continuous_opportunity_search.py
 
 Expected: the new scan interface is absent and focused tests fail at import/collection.
 
-- [ ] **Step 3: Implement the search handler**
+- [x] **Step 3: Implement the search handler**
 
-Build a bounded scan over the configured allowlist using the worker's existing public Testnet source and the same market-data quality rules used by the shared feed and market assessment. Reuse the existing concurrent timeframe-fetch pattern rather than creating another polling loop. Record run coverage and quality outcomes even when a symbol is skipped. Pass immutable evidence references to Task 2 and persist candidate/assessment outputs through Task 1.
+Build a bounded scan over the configured allowlist using the worker's existing public Testnet source and the same market-data quality rules used by the shared feed and market assessment. Reuse the existing concurrent timeframe-fetch pattern rather than creating another polling loop. Record run coverage and quality outcomes even when a symbol is skipped. Pass immutable evidence references to Task 2 and persist the five independent strategy assessments inside the existing durable market-intelligence report. Do not create registry opportunities in this task: the exact setup identity must include an explicit strategy-approved trigger/price plan, which is established at the Task 4 coordinator boundary. This avoids creating duplicate or misleading waiting records from a scan-only heuristic.
 
 A scan must not synthesize entry/stop/target prices or create signals. It must not assume Spot or Forex is configured. Repeated scan delivery must be safe under at-least-once scheduled-job execution.
 
-- [ ] **Step 4: Verify the focused pass**
+- [x] **Step 4: Verify the focused pass**
 
 Run:
 
@@ -251,7 +251,7 @@ pytest -q tests/test_continuous_opportunity_search.py
 
 Expected: configured-universe, quality-gate, partial-failure, bounded-concurrency and idempotency tests pass.
 
-- [ ] **Step 5: Run affected integration checks**
+- [x] **Step 5: Run affected integration checks**
 
 Run:
 
@@ -261,7 +261,7 @@ pytest -q tests/test_market_intelligence_scan.py tests/test_shared_market_data_s
 
 Expected: the existing scheduled intelligence scan and shared snapshot store remain green with no competing market feed.
 
-- [ ] **Step 6: Commit the passing deliverable**
+- [x] **Step 6: Commit the passing deliverable**
 
 ```bash
 git add extracted-source/ai-auto-trader-v4-assembly/backend/continuous_opportunity_search.py extracted-source/ai-auto-trader-v4-assembly/tests/test_continuous_opportunity_search.py extracted-source/ai-auto-trader-v4-assembly/backend/market_intelligence_scan.py
@@ -270,76 +270,37 @@ git commit -m "feat: add continuous opportunity search"
 
 ## Task 4: Implement the durable multi-opportunity waiting coordinator
 
-**Files:**
-- Create: `extracted-source/ai-auto-trader-v4-assembly/backend/opportunity_coordinator.py` (proposed).
-- Test: `extracted-source/ai-auto-trader-v4-assembly/tests/test_opportunity_coordinator.py` (proposed).
-- Reuse: Task 1's `PostgresOpportunityStore` and the deterministic trigger comparisons in `backend/signal_watcher.py`.
+**Status:** Complete and CI verified on the feature branch.
 
-**Interfaces:**
+**Implemented files:**
+- `extracted-source/ai-auto-trader-v4-assembly/backend/opportunity_coordinator.py`
+- `extracted-source/ai-auto-trader-v4-assembly/tests/test_opportunity_coordinator.py`
+- Reuses Task 1's `PostgresOpportunityStore` and deterministic trigger comparisons from `backend/signal_watcher.py`.
+
+**Verified interfaces:**
 - `OpportunityCoordinator(store, trigger_evaluator, config)`.
-- `register_assessed_opportunity(assessment, *, now) -> OpportunityRecord`.
-- `reassess_due(*, now, limit) -> CoordinatorRunResult`.
-- `evaluate_market_update(symbol, market_update, *, now) -> tuple[TransitionResult, ...]`.
-- `cancel(opportunity_id, *, reason, actor, now) -> TransitionResult`.
-- `triggered_opportunity(opportunity_id) -> OpportunityRecord | None` for the later fresh-validation consumer.
+- `register_assessed_opportunity(assessment, *, now)`.
+- `reassess_due(*, now, limit)`.
+- `evaluate_market_update(symbol, market_update, *, now)`.
+- `cancel(opportunity_id, *, reason, actor, now)`.
+- `triggered_opportunity(opportunity_id)`.
 
-- [ ] **Step 1: Add failing lifecycle, concurrency and recovery tests**
+**Completed behavior and tests:**
+- [x] Multiple symbols and multiple independent setups for one symbol can wait simultaneously.
+- [x] Idempotent setup identity prevents duplicates while distinct triggers remain separate.
+- [x] Each market update evaluates relevant watches independently.
+- [x] Trigger, invalidation and expiry are mutually consistent, terminal and audited.
+- [x] Stale market updates cannot trigger an opportunity.
+- [x] Concurrent workers cannot claim the same due opportunity simultaneously; expired leases can be reclaimed.
+- [x] Reassessment provider failures fail closed and release leases safely.
+- [x] Long-term analysis cannot enter the paper-eligible waiting/trigger lifecycle.
+- [x] Missing evidence, invalid price geometry, non-numeric market ticks and unavailable providers fail closed.
+- [x] Explicit price-plan evidence is persisted independently and idempotently.
+- [x] `PAPER_OPEN` requires a paper-ledger-confirmed position. A risk-approved paper intent is recorded separately as `INTENT_RECORDED`; it is not an open position.
 
-Cover:
-1. Multiple symbols can wait simultaneously.
-2. BTCUSDT can hold separate scalping and swing opportunities, or two distinct setups of one strategy, without overwrite.
-3. One market update evaluates every active watch for that symbol and only the matching opportunity transitions.
-4. Trigger, invalidation and expiry are mutually consistent and produce exactly one terminal transition/event.
-5. A stale market update produces `WAIT_RECHECK` and leaves the opportunity waiting; it never triggers.
-6. Two workers racing the same opportunity cannot both commit the same transition.
-7. A worker crash after claim but before completion is recovered after lease expiry.
-8. Replayed trigger events do not duplicate validation requests or paper intents.
-9. Strategy disagreement is preserved; rejecting one setup does not cancel a different setup.
-10. Long-term analysis may be reassessed and surfaced but never enters the eligible waiting-to-paper path.
-11. Illegal state transitions, missing evidence and uncertain database/portfolio state fail closed with an audit reason.
+**Verification:** The latest full backend CI suite passed **526 tests**; PostgreSQL ledger and opportunity registry integration tests passed, including concurrent claims, lease expiry/reclaim and the ledger-confirmed `PAPER_OPEN` boundary. ASGI and read-only market-data/safety checks passed. Tests ran against disposable GitHub Actions PostgreSQL services; no Supabase migration was applied.
 
-- [ ] **Step 2: Verify the expected failures**
-
-Run:
-
-```bash
-pytest -q tests/test_opportunity_coordinator.py
-```
-
-Expected: tests fail because the durable coordinator and state transition flow are not yet implemented.
-
-- [ ] **Step 3: Implement the lifecycle coordinator**
-
-Use the Task 1 store for all durable state. Treat `backend.signal_watcher.py` as a pure comparison/validation primitive only; do not depend on its in-memory request/status dictionaries for restart recovery. Evaluate durable watch conditions against the latest validated shared snapshot/closed candle, then atomically transition with expected version and event idempotency key.
-
-Support independent watch identity per setup. Keep trigger, invalidation, expiry, rejection, cancellation and blocked outcomes auditable. A trigger enqueues a distinct fresh-validation work item; it must not call the paper ledger or mark the opportunity paper-open. Reassessment must be bounded, lease-owned and safe to retry after worker restart.
-
-- [ ] **Step 4: Verify the focused pass**
-
-Run:
-
-```bash
-pytest -q tests/test_opportunity_coordinator.py
-```
-
-Expected: lifecycle, same-symbol parallel watches, idempotency, concurrent claims, expiry and recovery tests pass against fake clocks and the test PostgreSQL store.
-
-- [ ] **Step 5: Run affected integration checks**
-
-Run:
-
-```bash
-pytest -q backend/tests/test_signal_watcher.py tests/test_opportunity_store.py
-```
-
-Expected: deterministic watcher behavior remains unchanged and coordinator persistence/concurrency remains green.
-
-- [ ] **Step 6: Commit the passing deliverable**
-
-```bash
-git add extracted-source/ai-auto-trader-v4-assembly/backend/opportunity_coordinator.py extracted-source/ai-auto-trader-v4-assembly/tests/test_opportunity_coordinator.py
-git commit -m "feat: add durable multi-opportunity waiting"
-```
+**Boundary:** This coordinator is implemented and tested, but it is not yet activated by the supervised worker or connected to fresh trigger validation, the Risk Guardian and the read-only opportunity API. Those are Task 5.
 
 ## Task 5: Integrate scheduled worker, fresh validation, Risk Manager and read-only API
 
@@ -428,7 +389,7 @@ These are intentionally not silently fixed by the implementation plan. Engineeri
 3. **Opportunity identity/deduplication:** approve the fingerprint boundary. Recommended inputs are market type, symbol, strategy ID/version, direction, timeframe set, trigger definition and evidence/config version; two materially different trigger definitions must never collapse into one record.
 4. **Universe and workload limits:** confirm the maximum enabled instruments, timeframe lookback, scan interval, per-cycle fetch concurrency, active-opportunity cap and reassessment batch size. Existing scan components currently constrain configured policies to 1–20 symbols and fetch concurrency to at most 20; expanding those limits needs separate capacity evidence.
 5. **Price-plan source and eligibility:** confirm which existing price-planning method is permitted to create explicit entry/stop/target values for each strategy. If no valid plan exists, the correct outcome is no trade—not a guessed price.
-6. **Paper position lifecycle mapping:** confirm whether `PAPER_OPEN` means an accepted paper intent or a ledger-confirmed open position. Until this decision is approved, the implementation must persist separate intent-recorded and position-open events and must not label an intent as a filled/open position.
+6. **Paper position lifecycle mapping:** approved — `PAPER_OPEN` means a ledger-confirmed open paper position. A risk-approved intent is recorded separately as `INTENT_RECORDED` and must not be displayed or treated as an open position.
 7. **Notification behavior:** confirm whether users should be notified on every state transition or only on meaningful events such as new waiting opportunity, trigger, invalidation, expiry and Risk Manager block.
 8. **Activation gate:** continuous scanning cannot be claimed operational until an always-on worker host and its recovery behavior are verified. The current Render Free API-only service does not satisfy this requirement. This plan does not authorize a hosting change or deployment.
 
@@ -442,3 +403,29 @@ The feature is not complete when code merely exists. Completion requires:
 - Trigger-to-fresh-validation-to-Risk-Manager-to-paper-ledger behavior is demonstrated with paper-only test data, including all fail-closed cases.
 - Authenticated API responses are verified read-only.
 - Staging deployment and Android phone acceptance are separate later gates and require explicit authorization; neither is part of this plan's execution.
+
+---
+
+## Part 5 implementation record — 2026-11-02
+
+**Repository implementation: completed on the feature branch; not deployed or activated in the running backend.**
+
+- [x] Scheduled market-intelligence scans automatically create/update durable opportunities only from independently eligible, paper-safe strategy assessments and explicit fresh price plans. Long-term remains analysis-only.
+- [x] Stable setup identity, active-opportunity caps, idempotent creation and transactional waiting-plan refresh keep metadata, watch condition, price-plan evidence and audit version consistent.
+- [x] Venue-isolated Spot/Futures reassessment uses fresh read-only prices and the opportunity's own latest closed candle/timeframe; stale or malformed data fails closed.
+- [x] Trigger overshoot is checked against the original trigger buffer; excessive overshoot transitions to audited BLOCKED rather than silently remaining TRIGGERED.
+- [x] Futures trigger processing is now wired into the existing durable reassessment job. It reloads the opportunity, revalidates fresh market data and all five independent strategy assessments, runs the existing signal-handoff validation, then calls the existing PaperServiceApplication adapter into PaperSignalCycle, TradingOrchestrator and Risk Guardian. Spot remains research-only because no isolated Spot paper runtime is enabled.
+- [x] Paper-intent evidence/state is written only after the existing ledger confirms the deterministic proposal. A later ledger reconciliation moves to PAPER_OPEN only when a matching simulated position is confirmed. Uncertain ledger state does not trigger a duplicate handoff.
+- [x] Authenticated opportunity GET/list/detail/event/assessment/evidence API routes remain read-only.
+- [x] Added regression coverage for the worker's scheduled Futures handoff and ledger reconciliation. Existing paper-cycle/orchestrator/service tests cover risk veto, Emergency Stop, daily-loss, missing equity, stale marks, duplicate proposals and restart behavior.
+- [x] Root backend/shared_market_worker.py deployment mirror synchronized with the tested assembly copy.
+
+**Verification on exact feature-branch commit 4ac54fe98a8a13490789abca0d1ce943613d24f5:**
+- Durable PostgreSQL ledger/opportunity integration workflow: passed; complete backend suite 555 passed.
+- Second durable paper-ledger workflow: passed; complete backend suite 555 passed.
+- ASGI runtime workflow: passed.
+- Step 3 market-data/analysis safety and source-parity workflow: passed.
+- Disposable GitHub Actions PostgreSQL service applied the schema migrations successfully. The user's Supabase database was not migrated.
+- No live orders, deployment, PR merge, secrets changes, hosting changes or billing changes.
+
+**Remaining activation gates (not Part 5 code defects):** PR #74 remains draft/open and unmerged. The running Render backend has not been updated; the durable worker is not yet verified on an always-on host; no production/Supabase migration, staging activation or Android phone acceptance was performed. These require a separate explicit approval and deployment/hosting decision. Migration rollback was not run against the user's database.
