@@ -171,7 +171,7 @@ def test_supervisor_restarts_live_worker_after_stale_heartbeat(monkeypatch):
 
         def status(self):
             if clock["now"] >= 30:
-                return {"status": "STALE", "worker_status": "RUNNING", "age_seconds": 120}
+                return {"status": "STALE", "worker_status": "STALE", "lease_expired": True, "age_seconds": 120}
             return {"status": "HEALTHY", "worker_status": "RUNNING", "age_seconds": 1}
 
     class FakeProcess:
