@@ -22,7 +22,7 @@ If the secret is missing, the workflow can detect the outage but cannot restart 
 ## Recovery and safety limits
 
 - At most one Render restart request is issued per workflow run.
-- After a restart request, the workflow polls for a valid liveness response for up to two minutes.
+- After a restart request, the workflow polls for a valid liveness response for up to about five minutes.
 - No database writes, market-data mutations, exchange credentials, order endpoints, or trading permissions are used.
 - The worker must continue to report `mode=PAPER_ONLY` and `orders_authorized=false`; otherwise the probe is treated as invalid.
 - No restart is triggered merely because market data is stale. The in-service watchdog owns worker-heartbeat and scheduler-progress recovery.
