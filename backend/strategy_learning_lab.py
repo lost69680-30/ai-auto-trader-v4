@@ -14,6 +14,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from backend.strategy_research_memory import StrategyResearchExperiment
+from backend.market_data_lineage import MarketDataManifest, assert_independent_market_data
 
 
 _AGENT_KINDS = {"PPO", "RL", "GAT", "SPECIALIST"}
@@ -56,6 +57,7 @@ class ResearchDatasetSnapshot:
     dataset_fingerprint: str
     source_experiment_ids: tuple[str, ...]
     validation_rows: tuple[Mapping[str, Any], ...]
+    market_data_manifests: tuple[MarketDataManifest, ...]
     orders_authorized: bool = False
 
     def __post_init__(self) -> None:
@@ -66,6 +68,12 @@ class ResearchDatasetSnapshot:
             raise ValueError("source experiment IDs must be unique")
         if not isinstance(self.validation_rows, tuple) or not self.validation_rows:
             raise ValueError("validation_rows must be a non-empty tuple")
+        if (
+            not isinstance(self.market_data_manifests, tuple)
+            or not self.market_data_manifests
+            or any(not isinstance(item, MarketDataManifest) or item.orders_authorized is not False for item in self.market_data_manifests)
+        ):
+            raise ValueError("canonical paper-only market-data manifests are required")
         allowed_ids = set(self.source_experiment_ids)
         for row in self.validation_rows:
             if not isinstance(row, Mapping) or row.get("experiment_id") not in allowed_ids:
@@ -131,6 +139,7 @@ class IndependentLearningEvaluation:
     baseline_net_return_pct: float
     candidate_max_drawdown_pct: float
     baseline_max_drawdown_pct: float
+    market_data_manifests: tuple[MarketDataManifest, ...]
     orders_authorized: bool = False
 
     def __post_init__(self) -> None:
@@ -145,6 +154,12 @@ class IndependentLearningEvaluation:
             raise ValueError("drawdown percentages must be non-negative")
         if self.orders_authorized is not False:
             raise ValueError("orders_authorized must be false")
+        if (
+            not isinstance(self.market_data_manifests, tuple)
+            or not self.market_data_manifests
+            or any(not isinstance(item, MarketDataManifest) or item.orders_authorized is not False for item in self.market_data_manifests)
+        ):
+            raise ValueError("independent evaluation requires canonical paper-only market-data manifests")
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,11 +187,14 @@ def build_research_dataset(
         raise ValueError("at least one validated research experiment is required")
     rows: list[dict[str, Any]] = []
     ids: list[str] = []
+    manifests: list[MarketDataManifest] = []
     for experiment in items:
         if not isinstance(experiment, StrategyResearchExperiment):
             raise ValueError("learning data must come from StrategyResearchExperiment records")
         if experiment.status != "EVALUATED" or experiment.orders_authorized is not False:
             raise ValueError("only evaluated, paper-only experiments may enter learning datasets")
+        manifest = MarketDataManifest.from_mapping(experiment.assumptions.get("market_data_manifest"))
+        manifests.append(manifest)
         outcomes = experiment.outcomes
         holdout = outcomes.get("untouched_holdout")
         if (
@@ -241,6 +259,7 @@ def build_research_dataset(
         dataset_fingerprint=fingerprint,
         source_experiment_ids=ordered_ids,
         validation_rows=tuple(canonical_rows),
+        market_data_manifests=tuple(manifests),
         orders_authorized=False,
     )
 
@@ -282,6 +301,10 @@ def compare_learning_proposal(
         raise ValueError("orders_authorized must be false")
     if independent_evaluation.evaluation_dataset_fingerprint == dataset.dataset_fingerprint:
         raise ValueError("evaluation data must be independent of the learning dataset")
+    assert_independent_market_data(
+        dataset.market_data_manifests,
+        independent_evaluation.market_data_manifests,
+    )
     if isinstance(minimum_sample_size, bool) or not isinstance(minimum_sample_size, int) or minimum_sample_size < 1:
         raise ValueError("minimum_sample_size must be a positive integer")
     if independent_evaluation.sample_size < minimum_sample_size:
