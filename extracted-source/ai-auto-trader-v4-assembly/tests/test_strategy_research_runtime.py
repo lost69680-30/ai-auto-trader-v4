@@ -132,3 +132,43 @@ def test_research_handler_skips_symbols_without_sufficient_archive_history(monke
             "venue": "BINANCE_USDM_TESTNET",
         }, "job-3")
     assert memory.items == []
+
+
+def test_research_memory_write_failure_propagates_for_scheduler_retry(monkeypatch):
+    rows = candle_rows()
+    archive = FakeArchive(rows)
+    provenance = DatasetProvenance(
+        provider="binance-public-testnet", venue="BINANCE_USDM_TESTNET",
+        symbol="BTCUSDT", timeframe="1m",
+        window_start=rows[0].open_time, window_end=rows[-1].open_time,
+        candle_count=len(rows), data_sha256="b" * 64,
+    )
+    strategy = SimpleNamespace(
+        net_pnl=0.0, trade_count=0, win_rate_pct=0.0,
+        max_drawdown_pct=0.0, total_costs=0.0,
+    )
+    window = SimpleNamespace(
+        name="fold", start_index=2000, end_index=2500,
+        strategy=strategy, buy_hold_return_pct=0.0,
+    )
+    result = SimpleNamespace(
+        dataset_provenance=provenance, folds=(window,), holdout=window,
+        warnings=(), orders_authorized=False,
+    )
+
+    class BrokenMemory:
+        def append(self, experiment, *, idempotency_key):
+            raise RuntimeError("database write unavailable")
+
+    monkeypatch.setattr(
+        strategy_research_runtime, "evaluate_walk_forward",
+        lambda *args, **kwargs: result,
+    )
+    handler = strategy_research_runtime.build_strategy_research_handler(
+        archive, BrokenMemory(), symbols=("BTCUSDT",), clock=lambda: NOW,
+    )
+    with pytest.raises(RuntimeError, match="database write unavailable"):
+        handler({
+            "scope": "strategy_research", "market_type": "FUTURES",
+            "venue": "BINANCE_USDM_TESTNET",
+        }, "job-write-failure")
