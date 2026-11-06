@@ -56,6 +56,55 @@ def configured_child_shutdown_grace(environ: Mapping[str, str]) -> float:
     return max(15.0, float(environ.get("PAPER_SUPERVISOR_CHILD_SHUTDOWN_GRACE_SECONDS", "25")))
 
 
+def configured_supervisor_modules(
+    mode: str,
+    worker_env: dict[str, str],
+    api_env: dict[str, str],
+) -> dict[str, tuple[str, dict[str, str]]]:
+    """Select which supervised process roles this Render service owns."""
+    normalized = str(mode).strip().lower()
+    if normalized not in {"all", "worker", "api"}:
+        raise ValueError("PAPER_MARKET_SUPERVISOR_MODE must be all, worker, or api")
+    modules = {}
+    if normalized in {"all", "worker"}:
+        modules["worker"] = ("backend.shared_market_worker", worker_env)
+    if normalized in {"all", "api"}:
+        modules["api"] = ("app.engines.read_only_api", api_env)
+    return modules
+
+
+def start_worker_health_server(port: int, *, host: str = "0.0.0.0"):
+    """Serve a minimal liveness route so Render Free can keep a worker-only service awake."""
+    import json
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path != "/healthz":
+                self.send_error(404)
+                return
+            body = json.dumps({
+                "status": "ok",
+                "mode": "PAPER_ONLY",
+                "orders_authorized": False,
+            }).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            logger.debug("worker health request: " + format, *args)
+
+    server = ThreadingHTTPServer((host, int(port)), HealthHandler)
+    thread = Thread(target=server.serve_forever, name="solo-worker-health", daemon=True)
+    thread.start()
+    logger.info("worker-only health endpoint listening host=%s port=%s", host, server.server_port)
+    return server
+
+
 def worker_heartbeat_requires_restart(
     status: Any, *, uptime_seconds: float, startup_grace_seconds: float = 180.0
 ) -> bool:
@@ -84,8 +133,13 @@ def main() -> None:
     startup_grace = max(30.0, float(os.environ.get("PAPER_SUPERVISOR_WORKER_STARTUP_GRACE_SECONDS", "180")))
     health_check_interval = max(2.0, float(os.environ.get("PAPER_SUPERVISOR_WORKER_HEALTH_CHECK_SECONDS", "5")))
     database_url = os.environ.get("PAPER_DATABASE_URL", "").strip()
+    mode = os.environ.get("PAPER_MARKET_SUPERVISOR_MODE", "all")
+    modules = configured_supervisor_modules(mode, worker_env, api_env)
+    worker_health_server = None
+    if str(mode).strip().lower() == "worker":
+        worker_health_server = start_worker_health_server(int(os.environ["PORT"]))
     market_store = None
-    if database_url:
+    if "worker" in modules and database_url:
         from backend.shared_market_store import PostgresMarketFeedStore
 
         market_store = PostgresMarketFeedStore(
@@ -94,13 +148,9 @@ def main() -> None:
             max_age_seconds=max_market_age,
             lease_seconds=max(90.0, float(os.environ.get("PAPER_MARKET_WORKER_LEASE_SECONDS", "90"))),
         )
-    if market_store is None:
+    if "worker" in modules and market_store is None:
         logger.warning("worker heartbeat monitor disabled because PAPER_DATABASE_URL is missing; worker will fail closed and process-exit supervision remains active")
     last_worker_health_check = 0.0
-    modules = {
-        "worker": ("backend.shared_market_worker", worker_env),
-        "api": ("app.engines.read_only_api", api_env),
-    }
     children: dict[str, dict[str, Any]] = {}
     stopping = False
 
@@ -121,8 +171,8 @@ def main() -> None:
         }
 
     try:
-        start_child("worker")
-        start_child("api")
+        for child_name in modules:
+            start_child(child_name)
         while not stopping:
             now = time.monotonic()
             for name, state in list(children.items()):
@@ -179,6 +229,10 @@ def main() -> None:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait(timeout=5)
+        if worker_health_server is not None:
+            logger.info("stopping worker-only health endpoint")
+            worker_health_server.shutdown()
+            worker_health_server.server_close()
         logger.info("supervisor shutdown complete")
 
 
