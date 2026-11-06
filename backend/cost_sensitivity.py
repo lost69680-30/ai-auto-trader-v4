@@ -36,6 +36,8 @@ class CostStressScenario:
 class CostSensitivityReport:
     symbol: str
     scenarios: tuple[CostStressScenario, ...]
+    status: str = "EVALUATED"
+    reason: str | None = None
     orders_authorized: bool = False
     holdout_used: bool = False
 
@@ -143,6 +145,16 @@ def summarize_validation_cost_sensitivity(
     if any(right <= left for left, right in zip(multipliers, multipliers[1:])):
         raise ValueError("cost multipliers must be strictly increasing")
 
+    if any(not isinstance(getattr(fold, "strategy", None), BacktestResult) for fold in folds):
+        return CostSensitivityReport(
+            symbol=result.symbol,
+            scenarios=(),
+            status="UNAVAILABLE",
+            reason="validation fold trade-level ledger is unavailable; no cost-stress values were inferred",
+            orders_authorized=False,
+            holdout_used=False,
+        )
+
     scenarios: list[CostStressScenario] = []
     for multiplier in multipliers:
         gross_values: list[float] = []
@@ -191,6 +203,8 @@ def summarize_validation_cost_sensitivity(
     return CostSensitivityReport(
         symbol=result.symbol,
         scenarios=tuple(scenarios),
+        status="EVALUATED",
+        reason=None,
         orders_authorized=False,
         holdout_used=False,
     )
