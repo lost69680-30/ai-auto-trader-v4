@@ -42,8 +42,8 @@ jobs:
             else
               echo "- Result: **failed / needs attention**"
             fi
-            echo "- Worker: `solo-futures-websocket-staging`"
-            echo "- Readiness authority: independent API/database `/readyz`"
+            echo '- Worker: `solo-futures-websocket-staging`'
+            echo '- Readiness authority: independent API/database `/readyz`'
             echo "- Safety: restart is permitted only for confirmed worker failure; paper-only checks remain mandatory."
             echo
             echo "### Execution evidence"
