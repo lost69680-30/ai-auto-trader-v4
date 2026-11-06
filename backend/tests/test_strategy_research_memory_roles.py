@@ -51,7 +51,7 @@ def _record(*, experiment_version=1, orders_authorized=False, candidate_fingerpr
         assumptions={
             "fee_bps_per_side": 4.0,
             "slippage_bps_per_side": 2.0,
-            "cost_labels": ("fee", "slippage"),
+            "cost_labels": ["fee", "slippage"],
             "orders_authorized": False,
         },
         outcomes={
