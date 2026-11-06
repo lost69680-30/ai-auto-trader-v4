@@ -30,6 +30,47 @@ def _finite(value: Any, field: str) -> float:
     return float(value)
 
 
+def _safe_worker_diagnostics(details: Any) -> dict[str, Any]:
+    """Return bounded operational fields without leaking raw exception messages or credentials."""
+    if not isinstance(details, dict):
+        return {}
+    safe: dict[str, Any] = {}
+    for field in (
+        "process_id", "process_started_at", "last_cycle_started_at",
+        "last_cycle_at", "cycle_duration_seconds", "analysis_status",
+        "analysis_error",
+    ):
+        value = details.get(field)
+        if field == "process_id":
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                safe[field] = value
+        elif field == "cycle_duration_seconds":
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0:
+                safe[field] = float(value)
+        elif isinstance(value, str):
+            safe[field] = value[:160]
+    if details.get("orders_authorized") is False:
+        safe["orders_authorized"] = False
+    scheduler = details.get("scheduled_jobs")
+    if isinstance(scheduler, dict):
+        safe_scheduler: dict[str, Any] = {}
+        for field in (
+            "status", "last_poll_started_at", "last_poll_at",
+            "last_dispatch_status", "jobs_enqueued",
+        ):
+            value = scheduler.get(field)
+            if field == "jobs_enqueued":
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    safe_scheduler[field] = value
+            elif isinstance(value, str):
+                safe_scheduler[field] = value[:160]
+        raw_error = scheduler.get("last_error")
+        if isinstance(raw_error, str) and raw_error:
+            safe_scheduler["last_error_type"] = raw_error.partition(":")[0][:80]
+        safe["scheduled_jobs"] = safe_scheduler
+    return safe
+
+
 class PostgresMarketFeedStore:
     """Persist validated poll results and expose them only while worker/data are fresh.
 
@@ -448,7 +489,7 @@ class PostgresMarketFeedStore:
         heartbeat_stale = age < 0 or age > self.max_age_seconds
         explicitly_stopped = hb["status"] in {"STOPPED", "ERROR"}
         details = hb.get("details") or {}
-        diagnostics = details if isinstance(details, dict) else {}
+        diagnostics = _safe_worker_diagnostics(details)
         if heartbeat_stale or lease_expired or explicitly_stopped:
             reported_status = hb["status"]
             return {"status": "STALE", "reason": "market worker heartbeat is stale or stopped",
