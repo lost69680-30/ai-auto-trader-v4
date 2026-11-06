@@ -306,6 +306,8 @@ def build_strategy_research_handler(
                     quality = assess_walk_forward_quality(result)
                     cost_sensitivity = summarize_validation_cost_sensitivity(result)
                     cost_sensitivity_summary = {
+                        "status": cost_sensitivity.status,
+                        "reason": cost_sensitivity.reason,
                         "methodology": "recompute chronological validation trades at 1.0x, 1.5x and 2.0x recorded estimated costs; no untouched holdout data is read",
                         "scenarios": [
                             {
