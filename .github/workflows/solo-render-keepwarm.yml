@@ -8,7 +8,7 @@ on:
   schedule:
     # Ten-minute cadence reduces idle spin-down while keeping public Actions usage bounded.
     # GitHub scheduled execution remains best-effort, not an uptime guarantee.
-    - cron: "*/10 * * * *"
+    - cron: "3,13,23,33,43,53 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -23,6 +23,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 7
     steps:
+      - name: Record trigger context
+        run: |
+          echo "event=${GITHUB_EVENT_NAME}"
+          echo "schedule=${{ github.event.schedule }}"
+          echo "utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "run_id=${GITHUB_RUN_ID}"
+
       - name: Wake staging API and verify paper-only readiness
         env:
           SOLO_STAGING_API_ORIGIN: https://solo-ai-auto-trader-staging-api.onrender.com
