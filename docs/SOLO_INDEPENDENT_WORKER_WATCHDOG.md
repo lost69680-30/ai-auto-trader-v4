@@ -27,7 +27,7 @@ If the secret is missing, the workflow can detect the outage but cannot restart 
 - The worker must continue to report `mode=PAPER_ONLY` and `orders_authorized=false`; otherwise the probe is treated as invalid.
 - No restart is triggered merely because market data is stale. The in-service watchdog owns worker-heartbeat and scheduler-progress recovery.
 - GitHub Actions scheduled runs can be delayed or unavailable. This is independent of the Render worker process, but it is not a guaranteed real-time 24/7 monitoring SLA.
-- Render Free may sleep or take time to wake. The probe has a bounded 100-second timeout; a successful liveness response after cold start avoids a restart.
+- Render Free may sleep or take time to wake. The probe has a bounded 90-second timeout; a successful liveness response after cold start avoids a restart.
 
 ## Acceptance still required
 
