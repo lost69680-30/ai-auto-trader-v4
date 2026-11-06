@@ -987,7 +987,7 @@ def main() -> None:
                 "status": item.status,
                 "failure_reasons": list(item.failure_reasons),
                 "orders_authorized": False,
-            } for item in research_memory.list_recent(limit=20)]
+            } for item in research_memory.list_recent(limit=100)]
 
     try:
         http_app = create_app(database_path=database, token=token,
