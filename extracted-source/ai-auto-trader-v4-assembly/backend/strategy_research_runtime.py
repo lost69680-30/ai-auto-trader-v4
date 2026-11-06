@@ -13,7 +13,8 @@ import logging
 from typing import Callable, Iterable
 
 from backend.backtesting import BacktestConfig
-from backend.dataset_lineage import DatasetProvenance
+from backend.dataset_lineage import DatasetProvenance, candle_dataset_sha256
+from backend.market_data_lineage import MarketDataIdentity, build_market_data_manifest
 from backend.strategy_research import Candle
 from backend.strategy_research_memory import (
     PostgresStrategyResearchMemory,
@@ -137,6 +138,13 @@ def build_strategy_research_handler(
                     open=row.open, high=row.high, low=row.low,
                     close=row.close, volume=row.volume,
                 ) for row in rows)
+                canonical_manifest = build_market_data_manifest(
+                    candles,
+                    MarketDataIdentity(
+                        venue=venue, market_type=market_type, symbol=symbol,
+                        interval="1m", source_id=provider,
+                    ),
+                )
                 result = evaluate_walk_forward(
                     symbol, candles,
                     config=wf_config,
@@ -148,6 +156,18 @@ def build_strategy_research_handler(
                 if result.orders_authorized is not False or result.dataset_provenance is None:
                     raise ValueError("walk-forward evaluator returned an unsafe or unproven result")
                 provenance = result.dataset_provenance
+                if (
+                    provenance.provider != provider
+                    or provenance.venue != venue
+                    or provenance.symbol != symbol
+                    or provenance.timeframe != "1m"
+                    or provenance.window_start != canonical_manifest.start_timestamp
+                    or provenance.window_end != canonical_manifest.end_timestamp
+                    or provenance.candle_count != canonical_manifest.row_count
+                    or provenance.data_sha256 != candle_dataset_sha256(candles)
+                ):
+                    raise ValueError("walk-forward provenance does not match the canonical market-data manifest")
+                canonical_manifest_dict = canonical_manifest.to_dict()
                 manifest = {
                     "provider": provider,
                     "source_identifier": provider,
@@ -161,11 +181,12 @@ def build_strategy_research_handler(
                     "row_count": provenance.candle_count,
                     "sha256_ordered_ohlcv": provenance.data_sha256,
                 }
-                source_provenance_id = _canonical_digest(manifest)
+                source_provenance_id = _canonical_digest(canonical_manifest_dict)
                 fingerprint_material = {
                     "research_version": _RESEARCH_VERSION,
                     "symbol": symbol,
                     "dataset_manifest": manifest,
+                    "market_data_manifest": canonical_manifest_dict,
                     "walk_forward": {
                         "train_bars": wf_config.train_bars,
                         "validation_bars": wf_config.validation_bars,
@@ -187,6 +208,7 @@ def build_strategy_research_handler(
                 assumptions = {
                     "research_version": _RESEARCH_VERSION,
                     "dataset_manifest": manifest,
+                    "market_data_manifest": canonical_manifest_dict,
                     "walk_forward": fingerprint_material["walk_forward"],
                     "backtest": fingerprint_material["backtest"],
                     "selection_policy": "fixed settings; no parameter tuning; holdout excluded from selection",
