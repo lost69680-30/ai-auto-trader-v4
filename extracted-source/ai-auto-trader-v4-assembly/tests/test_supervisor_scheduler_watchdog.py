@@ -64,7 +64,18 @@ def test_shared_market_status_exposes_diagnostic_details_to_supervisor_without_c
     now = datetime.now(timezone.utc)
     diagnostic = {
         "process_id": 1234,
-        "scheduled_jobs": {"last_poll_at": now.isoformat()},
+        "scheduled_jobs": {
+            "last_poll_at": now.isoformat(),
+            "last_error": "PrivateFailure: api_token=do-not-expose",
+        },
+        "orders_authorized": False,
+    }
+    expected_diagnostic = {
+        "process_id": 1234,
+        "scheduled_jobs": {
+            "last_poll_at": now.isoformat(),
+            "last_error_type": "PrivateFailure",
+        },
         "orders_authorized": False,
     }
     store = object.__new__(PostgresMarketFeedStore)
@@ -85,7 +96,7 @@ def test_shared_market_status_exposes_diagnostic_details_to_supervisor_without_c
 
     result = store.status()
 
-    assert result["details"] == diagnostic
+    assert result["details"] == expected_diagnostic\n    assert "do-not-expose" not in str(result)
     assert result["orders_authorized"] is False
     assert "dsn" not in result
     assert "password" not in str(result).lower()
