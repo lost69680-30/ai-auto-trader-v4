@@ -227,8 +227,6 @@ def run_scheduled_jobs(
         raise ValueError("poll_interval must be positive")
     if health is not None and not isinstance(health, dict):
         raise ValueError("health must be a dictionary when supplied")
-    scheduler_error = None
-
     def publish_health(**values):
         if health is None:
             return
@@ -239,10 +237,11 @@ def run_scheduled_jobs(
                 health.update(values)
 
     while not stop.is_set():
+        publish_health(last_poll_started_at=datetime.now(timezone.utc).isoformat())
+        scheduler_error = None
         try:
             enqueued = scheduler.enqueue_due()
             dispatcher.run_once()
-            scheduler_error = None
         except Exception as exc:
             scheduler_error = type(exc).__name__
             logger.exception("durable read-only analysis scheduler thread failed")
@@ -250,10 +249,14 @@ def run_scheduled_jobs(
         dispatch_status = getattr(dispatcher, "last_run_status", "IDLE")
         dispatch_error = getattr(dispatcher, "last_error", None)
         degraded = scheduler_error is not None or dispatch_error is not None or dispatch_status == "LEASE_LOST"
+        safe_dispatch_error = (
+            dispatch_error.partition(":")[0][:80]
+            if isinstance(dispatch_error, str) and dispatch_error else None
+        )
         publish_health(
             status="DEGRADED" if degraded else "RUNNING",
             last_poll_at=datetime.now(timezone.utc).isoformat(),
-            last_error=scheduler_error or dispatch_error,
+            last_error=scheduler_error or safe_dispatch_error,
             last_dispatch_status=dispatch_status,
             jobs_enqueued=enqueued,
         )
@@ -375,6 +378,7 @@ def main() -> None:
         lease_seconds=max(90.0, float(os.environ.get("PAPER_MARKET_WORKER_LEASE_SECONDS", "90"))),
     )
     stop = threading.Event()
+    process_started_at = datetime.now(timezone.utc).isoformat()
 
     def request_stop(signum, frame) -> None:
         logger.info("shutdown requested; stopping paper-only market worker")
@@ -569,9 +573,9 @@ def main() -> None:
             minimum=3, maximum=30,
         )
         scheduler_health = {
-            "status": "STARTING", "last_poll_at": None,
-            "last_error": None, "last_dispatch_status": "IDLE",
-            "jobs_enqueued": 0,
+            "status": "STARTING", "last_poll_started_at": None,
+            "last_poll_at": None, "last_error": None,
+            "last_dispatch_status": "IDLE", "jobs_enqueued": 0,
         }
         scheduler_health_lock = threading.Lock()
         job_runner = threading.Thread(
@@ -588,6 +592,8 @@ def main() -> None:
         job_runner.start()
 
         while not stop.is_set():
+            cycle_started_at = datetime.now(timezone.utc).isoformat()
+            cycle_started_monotonic = time.monotonic()
             try:
                 backfill_clock = datetime.now(timezone.utc)
                 archived_count = 0
@@ -664,6 +670,10 @@ def main() -> None:
                 store.heartbeat(
                     heartbeat_status,
                     details={
+                        "process_id": os.getpid(),
+                        "process_started_at": process_started_at,
+                        "last_cycle_started_at": cycle_started_at,
+                        "cycle_duration_seconds": max(0.0, time.monotonic() - cycle_started_monotonic),
                         "analysis_status": cycle_status,
                         "analysis_error": analysis_error,
                         "last_cycle_at": datetime.now(timezone.utc).isoformat(),
@@ -691,6 +701,10 @@ def main() -> None:
                 logger.exception("shared market worker cycle failed; feed remains fail-closed")
                 try:
                     store.heartbeat("DEGRADED", details={
+                        "process_id": os.getpid(),
+                        "process_started_at": process_started_at,
+                        "last_cycle_started_at": cycle_started_at,
+                        "cycle_duration_seconds": max(0.0, time.monotonic() - cycle_started_monotonic),
                         "analysis_status": "ANALYSIS_FAILED:WorkerCycleError",
                         "analysis_error": type(exc).__name__,
                         "last_cycle_at": datetime.now(timezone.utc).isoformat(),
