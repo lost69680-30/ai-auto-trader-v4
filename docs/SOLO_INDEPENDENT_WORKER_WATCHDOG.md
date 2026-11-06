@@ -2,14 +2,14 @@
 
 ## What this adds
 
-A GitHub-hosted scheduled monitor runs every ten minutes, outside the Render API and worker services. It first calls the worker's minimal public `/healthz` endpoint to keep the Render Free web service awake, then calls the separate staging API's public `/readyz` endpoint, which reads the shared PostgreSQL worker heartbeat and validated market-feed readiness.
+A GitHub-hosted scheduled monitor runs every ten minutes, outside the Render API and worker services. It first calls the worker's minimal public `/healthz` endpoint to keep the Render Free web service awake, then calls the separate staging API's public `/readyz` endpoint, which reads the shared PostgreSQL worker heartbeat and validated market-feed readiness. The Python monitor is isolated in `scripts/solo_independent_watchdog.py` and has unit tests for safe restart classification.
 
-The monitor gives a reachable worker 60 seconds to publish a fresh lease after waking, then distinguishes a confirmed worker-process/lease failure from ordinary data-feed degradation:
+The monitor always allows a 60-second cold-start/lease-renewal grace after a stale heartbeat is observed, even if the first liveness request times out, then distinguishes a confirmed worker-process/lease failure from ordinary data-feed degradation.
 - `status=ready`, `worker_status=RUNNING`, and `orders_authorized=false`: healthy; no restart.
 - `worker_status` is `STALE`, `STOPPED`, `ERROR`, or `MISSING`: confirmed worker heartbeat failure; one worker-service restart may be requested.
 - API unreachable, invalid response, `UNKNOWN`, or worker still `RUNNING` but readiness is degraded: fail closed and do not restart the worker. This avoids restarting a healthy process for a market-data outage or an API/network problem.
 
-After a restart request, the monitor polls the independent readiness endpoint and succeeds only when the worker lease and market readiness return to healthy.
+After a restart request, the monitor makes one worker keepalive request and polls the independent readiness endpoint with bounded retries. It succeeds only when the worker lease and market readiness return to healthy.
 
 The in-service supervisor remains responsible for worker child-process exits and scheduler-progress stalls. The external monitor is an independent service-level recovery layer; it does not replace the internal watchdog.
 
@@ -29,7 +29,7 @@ The readiness API is on a separate Render service and reads the shared worker he
 
 ## Recovery and safety limits
 
-- Scheduled interval: every ten minutes; the worker liveness request also acts as a keepalive for Render Free, but GitHub Actions may delay scheduled runs.
+- Scheduled interval: every ten minutes; the worker liveness request also acts as a keepalive for Render Free, but GitHub Actions may delay scheduled runs. The recovery workflow timeout is 12 minutes.
 - At most one Render restart request is issued per workflow run.
 - Recovery is verified through the separate API's database-backed `/readyz` endpoint; the worker `/healthz` endpoint is used only for keepalive/liveness.
 - No database writes, market-data mutations, exchange credentials, order endpoints, or trading permissions are used.
