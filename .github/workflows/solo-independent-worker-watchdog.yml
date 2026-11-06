@@ -36,10 +36,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Check the independent API readiness view and recover a stale worker
+      - name: Keep the worker awake, inspect its database heartbeat, and recover only confirmed failure
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           API_READY_URL: https://solo-ai-auto-trader-staging-api.onrender.com/readyz
+          WORKER_LIVENESS_URL: https://solo-futures-websocket-staging.onrender.com/healthz
           RENDER_WORKER_SERVICE_ID: srv-dbhr5ign74is738detbg
         run: |
           python - <<'PY'
@@ -51,33 +52,48 @@ jobs:
           import urllib.request
 
           ready_url = os.environ["API_READY_URL"]
+          worker_url = os.environ["WORKER_LIVENESS_URL"]
           service_id = os.environ["RENDER_WORKER_SERVICE_ID"]
           api_key = os.environ.get("RENDER_API_KEY", "").strip()
           confirmed_worker_failures = {"STALE", "STOPPED", "ERROR", "MISSING"}
 
-          def probe():
+          def get_json(url, timeout):
               request = urllib.request.Request(
-                  ready_url,
+                  url,
                   headers={"Accept": "application/json", "Cache-Control": "no-cache"},
                   method="GET",
               )
               try:
-                  response = urllib.request.urlopen(request, timeout=45)
+                  response = urllib.request.urlopen(request, timeout=timeout)
               except urllib.error.HTTPError as exc:
                   response = exc
               except Exception as exc:
-                  return "indeterminate", None, type(exc).__name__
-
+                  return None, type(exc).__name__
               try:
-                  payload = json.loads(response.read(4096).decode("utf-8"))
+                  return json.loads(response.read(4096).decode("utf-8")), None
               except Exception:
-                  return "indeterminate", None, "invalid readiness response"
+                  return None, "invalid JSON response"
               finally:
                   response.close()
 
-              if not isinstance(payload, dict) or payload.get("orders_authorized") is not False:
-                  return "indeterminate", None, "readiness response failed paper-only safety validation"
+          def keep_worker_awake():
+              payload, error = get_json(worker_url, 90)
+              valid = (
+                  isinstance(payload, dict)
+                  and payload.get("status") == "ok"
+                  and payload.get("mode") == "PAPER_ONLY"
+                  and payload.get("orders_authorized") is False
+              )
+              if valid:
+                  print("Worker service liveness responded; free-tier service has been contacted.")
+                  return True
+              print(f"Worker liveness probe did not validate: {error or 'invalid or unsafe response'}")
+              return False
 
+          def readiness():
+              payload, error = get_json(ready_url, 45)
+              if not isinstance(payload, dict) or payload.get("orders_authorized") is not False:
+                  return "indeterminate", None, error or "readiness response failed paper-only safety validation"
               worker_status = payload.get("worker_status")
               if payload.get("status") == "ready" and worker_status == "RUNNING":
                   return "healthy", worker_status, "worker lease and market readiness are healthy"
@@ -85,7 +101,10 @@ jobs:
                   return "worker_failed", worker_status, "API reports a stale or stopped worker heartbeat"
               return "indeterminate", worker_status, "API is reachable but worker failure is not confirmed"
 
-          state, worker_status, reason = probe()
+          # Contact the worker's minimal liveness endpoint every ten minutes so its
+          # free-tier web service does not sleep between scheduled heartbeat checks.
+          worker_alive = keep_worker_awake()
+          state, worker_status, reason = readiness()
           if state == "healthy":
               print("Independent readiness probe confirms healthy paper-only worker; no restart needed.")
               sys.exit(0)
@@ -95,11 +114,23 @@ jobs:
               print("::error::Worker failure is not confirmed; refusing an unsafe or unnecessary restart.")
               sys.exit(1)
 
+          # Give a recently awakened free-tier worker time to publish its first lease.
+          if worker_alive:
+              print("Worker process is reachable; allowing 60 seconds for heartbeat renewal before considering restart.")
+              time.sleep(60)
+              state, worker_status, reason = readiness()
+              if state == "healthy":
+                  print("Worker heartbeat recovered during startup grace; no restart needed.")
+                  sys.exit(0)
+              if state != "worker_failed":
+                  print("::error::Worker heartbeat remains indeterminate; refusing restart.")
+                  sys.exit(1)
+
           if not api_key:
               print("::error::RENDER_API_KEY is not configured; worker failure detected but restart is unavailable.")
               sys.exit(1)
 
-          # One restart request per run, and only after the separate API reports a stale worker lease.
+          # One restart request per run, and only after the separate API confirms a stale worker lease.
           restart_url = f"https://api.render.com/v1/services/{service_id}/restart"
           request = urllib.request.Request(
               restart_url,
@@ -122,7 +153,8 @@ jobs:
           print("Render accepted one worker-service restart request; verifying database-backed recovery.")
           for attempt in range(1, 7):
               time.sleep(20)
-              state, worker_status, reason = probe()
+              keep_worker_awake()
+              state, worker_status, reason = readiness()
               if state == "healthy":
                   print(f"Worker lease and market readiness recovered (check {attempt}/6).")
                   sys.exit(0)
