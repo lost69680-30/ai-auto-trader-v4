@@ -143,3 +143,76 @@ def test_agent_supervisor_rejects_unknown_required_roles():
             as_of=NOW,
             max_age_seconds=60,
         )
+
+
+def test_explicit_incomplete_specialist_output_produces_incomplete_run():
+    from backend.research_agent_protocol import SpecialistOutput
+
+    run = execute_specialist_agents(
+        _snapshot(),
+        {"technical_analyst": lambda snapshot: SpecialistOutput("INCOMPLETE", {"rsi14": 54.0})},
+        required_roles=("technical_analyst",),
+        as_of=NOW,
+        max_age_seconds=60,
+    )
+
+    assert run.status == "INCOMPLETE"
+    assert run.messages[0].status == "INCOMPLETE"
+    assert run.orders_authorized is False
+
+
+def test_run_rejects_message_from_a_different_venue_or_market_type():
+    from dataclasses import replace
+    from backend.research_agent_protocol import ResearchAgentRun
+
+    run = execute_specialist_agents(
+        _snapshot(),
+        {"technical_analyst": lambda snapshot: {"ema20": 101.0}},
+        required_roles=("technical_analyst",),
+        as_of=NOW,
+        max_age_seconds=60,
+    )
+    mismatched = replace(run.messages[0], venue="OTHER_TESTNET")
+    with pytest.raises(ValueError, match="same run"):
+        ResearchAgentRun(
+            status="COMPLETE",
+            symbol=run.symbol,
+            market_type=run.market_type,
+            venue=run.venue,
+            data_fingerprint=run.data_fingerprint,
+            required_roles=run.required_roles,
+            missing_roles=(),
+            messages=(mismatched,),
+            orders_authorized=False,
+        )
+
+
+def test_mixed_incomplete_and_failed_specialists_never_report_complete():
+    from backend.research_agent_protocol import SpecialistOutput
+
+    run = execute_specialist_agents(
+        _snapshot(),
+        {
+            "technical_analyst": lambda snapshot: SpecialistOutput("INCOMPLETE", {}),
+            "regime_analyst": lambda snapshot: (_ for _ in ()).throw(RuntimeError("failure")),
+        },
+        required_roles=("technical_analyst", "regime_analyst"),
+        as_of=NOW,
+        max_age_seconds=60,
+    )
+
+    assert run.status == "FAILED"
+    assert {message.status for message in run.messages} == {"FAILED", "INCOMPLETE"}
+
+
+def test_camel_case_risk_and_order_fields_are_rejected():
+    run = execute_specialist_agents(
+        _snapshot(),
+        {"technical_analyst": lambda snapshot: {"ordersAuthorized": True}},
+        required_roles=("technical_analyst",),
+        as_of=NOW,
+        max_age_seconds=60,
+    )
+
+    assert run.status == "FAILED"
+    assert run.messages[0].error_code == "ValueError"
