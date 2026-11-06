@@ -675,7 +675,6 @@ def main() -> None:
                         "cycle_duration_seconds": round(time.monotonic() - cycle_started_monotonic, 3),
                         "analysis_status": cycle_status,
                         "analysis_error": analysis_error,
-                        "last_cycle_at": datetime.now(timezone.utc).isoformat(),
                         "healthy_symbols": list(report.healthy_symbols),
                         "unhealthy_symbols": list(report.unhealthy_symbols),
                         "archived_new_candles": archived_count,
