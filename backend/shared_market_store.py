@@ -38,7 +38,6 @@ def _safe_worker_diagnostics(details: Any) -> dict[str, Any]:
     for field in (
         "process_id", "process_started_at", "last_cycle_started_at",
         "last_cycle_at", "cycle_duration_seconds", "analysis_status",
-        "analysis_error",
     ):
         value = details.get(field)
         if field == "process_id":
@@ -48,7 +47,10 @@ def _safe_worker_diagnostics(details: Any) -> dict[str, Any]:
             if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0:
                 safe[field] = float(value)
         elif isinstance(value, str):
-            safe[field] = value[:160]
+            safe[field] = (value.partition(":")[0][:80] if field == "analysis_status" else value[:160])
+    raw_analysis_error = details.get("analysis_error")
+    if isinstance(raw_analysis_error, str) and raw_analysis_error:
+        safe["analysis_error_type"] = raw_analysis_error.partition(":")[0][:80]
     if details.get("orders_authorized") is False:
         safe["orders_authorized"] = False
     scheduler = details.get("scheduled_jobs")
