@@ -227,11 +227,6 @@ def main() -> None:
                                         state["restart_delay"] = 1.0
                                 else:
                                     state["healthy_since"] = None
-                        except Exception:
-                            # A transient PostgreSQL read failure is not proof that the
-                            # worker is dead. The API readiness check remains fail-closed.
-                            state["healthy_since"] = None
-                            logger.exception("worker heartbeat health check unavailable; preserving worker process")
                     elif name == "api" and now - state["started_at"] >= restart_stable_seconds:
                         state["restart_delay"] = 1.0
                     continue
