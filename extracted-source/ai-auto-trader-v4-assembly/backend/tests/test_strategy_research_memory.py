@@ -75,6 +75,14 @@ def _apply_migration():
         root / "supabase/migrations/20261105173604_harden_strategy_research_trigger_search_path.sql",
     )
     with psycopg.connect(DSN, autocommit=True) as conn:
+        # The disposable integration database mirrors the Supabase client roles
+        # so the migration's explicit privilege revocations are testable.
+        for role_name in ("anon", "authenticated", "service_role"):
+            exists = conn.execute(
+                "SELECT 1 FROM pg_roles WHERE rolname = %s", (role_name,),
+            ).fetchone()
+            if exists is None:
+                conn.execute(f"CREATE ROLE {role_name} NOLOGIN")
         for migration in migrations:
             conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
 
@@ -149,3 +157,40 @@ def test_database_enforces_append_only_research_history():
                    SET status = 'REJECTED' WHERE experiment_id = %s""",
                 (record.experiment_id,),
             )
+
+
+def test_research_memory_is_rls_enabled_and_private_to_backend_owner():
+    import psycopg
+
+    _apply_migration()
+    with psycopg.connect(DSN) as conn:
+        current_user, table_owner, rls_enabled, force_rls = conn.execute(
+            """
+            SELECT current_user,
+                   pg_get_userbyid(c.relowner),
+                   c.relrowsecurity,
+                   c.relforcerowsecurity
+            FROM pg_class AS c
+            JOIN pg_namespace AS n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'paper_ledger'
+              AND c.relname = 'strategy_research_experiments'
+            """
+        ).fetchone()
+        assert current_user == table_owner
+        assert rls_enabled is True
+        assert force_rls is False
+        assert conn.execute(
+            "SELECT has_table_privilege(current_user, 'paper_ledger.strategy_research_experiments', 'SELECT')"
+        ).fetchone()[0] is True
+        assert conn.execute(
+            "SELECT has_table_privilege(current_user, 'paper_ledger.strategy_research_experiments', 'INSERT')"
+        ).fetchone()[0] is True
+        for role_name in ("anon", "authenticated", "service_role"):
+            assert conn.execute(
+                "SELECT has_table_privilege(%s, 'paper_ledger.strategy_research_experiments', 'SELECT')",
+                (role_name,),
+            ).fetchone()[0] is False
+            assert conn.execute(
+                "SELECT has_table_privilege(%s, 'paper_ledger.strategy_research_experiments', 'INSERT')",
+                (role_name,),
+            ).fetchone()[0] is False
