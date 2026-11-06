@@ -8,13 +8,18 @@ class FakeScheduler:
         self.jobs = list(jobs)
         self.completed = []
         self.failed = []
+        self.complete_result = True
 
-    def claim_next(self, *, owner):
-        return self.jobs.pop(0) if self.jobs else None
+    def claim_next(self, *, owner, allowed_job_names=None):
+        if not self.jobs:
+            return None
+        if allowed_job_names is not None and self.jobs[0].get("job_name") not in allowed_job_names:
+            return None
+        return self.jobs.pop(0)
 
     def complete(self, key, *, owner):
         self.completed.append((key, owner))
-        return True
+        return self.complete_result
 
     def fail(self, key, *, owner, error):
         self.failed.append((key, owner, error))
@@ -35,6 +40,8 @@ def test_dispatcher_runs_only_allowlisted_read_only_analysis_handler():
     )
 
     assert dispatcher.run_once() is True
+    assert dispatcher.last_run_status == "SUCCEEDED"
+    assert dispatcher.last_error is None
     assert called == [({"scope": "market_feed"}, "market_feed_health_audit:1")]
     assert scheduler.completed == [("market_feed_health_audit:1", "test-worker")]
     assert scheduler.failed == []
@@ -45,13 +52,22 @@ def test_dispatcher_runs_only_allowlisted_read_only_analysis_handler():
     "paper_order_execution", "unknown_task",
 ])
 def test_dispatcher_rejects_execution_risk_and_unknown_job_types(job_name):
-    scheduler = FakeScheduler([{
+    class UnfilteredScheduler(FakeScheduler):
+        def claim_next(self, *, owner, allowed_job_names=None):
+            return self.jobs.pop(0) if self.jobs else None
+
+    scheduler = UnfilteredScheduler([{
         "idempotency_key": f"{job_name}:1", "job_name": job_name,
         "payload": {}, "orders_authorized": False,
     }])
-    dispatcher = AnalysisJobDispatcher(scheduler, owner="test-worker", handlers={})
+    dispatcher = AnalysisJobDispatcher(
+        scheduler, owner="test-worker",
+        handlers={"market_feed_health_audit": lambda payload, key: None},
+    )
 
     assert dispatcher.run_once() is False
+    assert dispatcher.last_run_status == "FAILED"
+    assert dispatcher.last_error is not None
     assert scheduler.completed == []
     assert len(scheduler.failed) == 1
     assert "not allowlisted" in scheduler.failed[0][2]
@@ -71,6 +87,31 @@ def test_dispatcher_fails_closed_if_job_claim_has_order_authority():
     assert dispatcher.run_once() is False
     assert scheduler.completed == []
     assert len(scheduler.failed) == 1
+
+
+
+def test_dispatcher_reports_idle_when_no_scheduled_job_is_due():
+    dispatcher = AnalysisJobDispatcher(FakeScheduler([]), owner="test-worker")
+    assert dispatcher.run_once() is False
+    assert dispatcher.last_run_status == "IDLE"
+    assert dispatcher.last_error is None
+
+
+def test_dispatcher_reports_lost_lease_after_handler_finishes():
+    scheduler = FakeScheduler([{
+        "idempotency_key": "market_feed_health_audit:3",
+        "job_name": "market_feed_health_audit",
+        "payload": {"scope": "market_feed"},
+        "orders_authorized": False,
+    }])
+    scheduler.complete_result = False
+    dispatcher = AnalysisJobDispatcher(
+        scheduler, owner="test-worker",
+        handlers={"market_feed_health_audit": lambda payload, key: None},
+    )
+    assert dispatcher.run_once() is False
+    assert dispatcher.last_run_status == "LEASE_LOST"
+    assert dispatcher.last_error == "job lease lost before completion"
 
 
 def test_dispatcher_retries_handler_failure_without_completing_job():
@@ -93,3 +134,20 @@ def test_dispatcher_retries_handler_failure_without_completing_job():
     assert scheduler.completed == []
     assert scheduler.failed[0][0:2] == ("market_feed_health_audit:2", "test-worker")
     assert "temporary audit failure" in scheduler.failed[0][2]
+
+def test_dispatcher_does_not_claim_jobs_for_disabled_features():
+    scheduler = FakeScheduler([{
+        "idempotency_key": "market_intelligence_scan:disabled",
+        "job_name": "market_intelligence_scan",
+        "payload": {"scope": "continuous_opportunity_search"},
+        "orders_authorized": False,
+    }])
+    dispatcher = AnalysisJobDispatcher(scheduler, owner="test-worker", handlers={
+        "market_feed_health_audit": lambda payload, key: None,
+    })
+
+    assert dispatcher.run_once() is False
+    assert dispatcher.last_run_status == "IDLE"
+    assert scheduler.jobs[0]["job_name"] == "market_intelligence_scan"
+    assert scheduler.completed == []
+    assert scheduler.failed == []
