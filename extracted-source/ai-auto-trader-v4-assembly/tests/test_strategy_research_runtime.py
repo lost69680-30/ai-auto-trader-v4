@@ -140,9 +140,8 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     assert experiment.outcomes["holdout_used_for_selection"] is False
     assert experiment.outcomes["untouched_holdout"]["used_for_selection"] is False
     assert experiment.outcomes["validation_folds"][0]["market_regime"]["orders_authorized"] is False
-    dataset = build_research_dataset(tuple(experiments))
-    assert dataset.market_data_manifests[0].sha256 == expected_manifest.sha256
-    assert dataset.orders_authorized is False
+    with pytest.raises(ValueError, match="quality-qualified"):
+        build_research_dataset(tuple(experiments))
     assert key.startswith("solo-research:")
 
 

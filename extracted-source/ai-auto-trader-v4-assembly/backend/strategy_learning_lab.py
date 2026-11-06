@@ -206,12 +206,43 @@ def build_research_dataset(
         folds = outcomes.get("validation_folds")
         if not isinstance(folds, list) or not folds:
             raise ValueError("validated experiment must contain out-of-sample validation folds")
+        quality = outcomes.get("validation_quality")
+        if (
+            not isinstance(quality, dict)
+            or quality.get("status") != "EVALUATED"
+            or quality.get("holdout_used") is not False
+            or quality.get("orders_authorized") is not False
+        ):
+            raise ValueError("only quality-qualified validation reports may enter learning datasets")
+        if len(folds) < 4:
+            raise ValueError("learning quality requires at least four out-of-sample validation folds")
+        reported_fold_count = quality.get("fold_count")
+        if isinstance(reported_fold_count, bool) or not isinstance(reported_fold_count, int) or reported_fold_count != len(folds):
+            raise ValueError("learning quality fold count does not match validation evidence")
+        reported_trade_count = quality.get("total_validation_trades")
+        if isinstance(reported_trade_count, bool) or not isinstance(reported_trade_count, int) or reported_trade_count < 30:
+            raise ValueError("learning quality requires at least 30 validation trades")
+        failure_reasons = quality.get("failure_reasons")
+        if not isinstance(failure_reasons, list) or failure_reasons:
+            raise ValueError("learning quality report contains validation failure reasons")
         ids.append(experiment.experiment_id)
+        excess_returns: list[float] = []
+        drawdowns: list[float] = []
+        validation_trade_count = 0
         for index, fold in enumerate(folds):
             if not isinstance(fold, dict):
                 raise ValueError("validation fold evidence is malformed")
             strategy_return = _finite(fold.get("strategy_net_return_pct"), "strategy_net_return_pct")
             benchmark_return = _finite(fold.get("buy_hold_return_pct"), "buy_hold_return_pct")
+            trade_count = fold.get("trade_count")
+            if isinstance(trade_count, bool) or not isinstance(trade_count, int) or trade_count < 0:
+                raise ValueError("validation fold trade count is invalid")
+            max_drawdown = _finite(fold.get("max_drawdown_pct"), "validation fold max_drawdown_pct")
+            if not 0 <= max_drawdown <= 100:
+                raise ValueError("validation fold drawdown is invalid")
+            validation_trade_count += trade_count
+            excess_returns.append(strategy_return - benchmark_return)
+            drawdowns.append(max_drawdown)
             regime = fold.get("market_regime")
             if not isinstance(regime, dict) or regime.get("orders_authorized") is not False:
                 raise ValueError("validation fold market regime evidence is missing or invalid")
@@ -246,6 +277,22 @@ def build_research_dataset(
                 },
             }
             rows.append(row)
+        mean_excess = math.fsum(excess_returns) / len(excess_returns)
+        positive_fold_pct = sum(value > 0 for value in excess_returns) / len(excess_returns) * 100.0
+        maximum_drawdown = max(drawdowns, default=0.0)
+        if validation_trade_count != reported_trade_count:
+            raise ValueError("learning quality trade count does not match validation evidence")
+        reported_mean_excess = _finite(quality.get("mean_excess_return_pct"), "quality mean_excess_return_pct")
+        reported_positive_fold_pct = _finite(quality.get("positive_fold_pct"), "quality positive_fold_pct")
+        reported_maximum_drawdown = _finite(quality.get("maximum_fold_drawdown_pct"), "quality maximum_fold_drawdown_pct")
+        if (
+            not math.isclose(reported_mean_excess, mean_excess, rel_tol=0.0, abs_tol=1e-4)
+            or not math.isclose(reported_positive_fold_pct, positive_fold_pct, rel_tol=0.0, abs_tol=1e-4)
+            or not math.isclose(reported_maximum_drawdown, maximum_drawdown, rel_tol=0.0, abs_tol=1e-4)
+        ):
+            raise ValueError("learning quality metrics do not match validation-fold evidence")
+        if mean_excess <= 0 or positive_fold_pct < 50.0 or maximum_drawdown > 25.0:
+            raise ValueError("validation evidence does not meet learning quality thresholds")
     if len(ids) != len(set(ids)):
         raise ValueError("duplicate experiment IDs are not allowed in a learning dataset")
     ordered_ids = tuple(sorted(ids))
