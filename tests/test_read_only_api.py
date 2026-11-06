@@ -941,3 +941,51 @@ def test_api_token_environment_value_is_trimmed_without_changing_token_contents(
     assert _load_api_token({"PAPER_API_TOKEN": "  " + expected + " \n"}) == expected
     assert _load_api_token({"PAPER_API_TOKEN": expected}) == expected
     assert _load_api_token({"PAPER_API_TOKEN": "   "}) == ""
+
+
+def test_research_experiments_endpoint_is_authenticated_and_paper_only(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(
+        database_path=db,
+        token=TOKEN,
+        research_experiments=lambda: [{
+            "experiment_id": "solo-exp-1",
+            "status": "EVALUATED",
+            "orders_authorized": False,
+        }],
+    )
+    status, _, body = request(app, path="/api/v1/research/experiments")
+    assert status.startswith("401")
+    status, _, body = request(
+        app, path="/api/v1/research/experiments", auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("200")
+    assert body["items"][0]["experiment_id"] == "solo-exp-1"
+    assert body["orders_authorized"] is False
+
+
+def test_research_experiments_endpoint_rejects_unsafe_records_and_missing_provider(tmp_path):
+    db = str(tmp_path / "ledger.sqlite3")
+    with SQLitePaperLedger(db):
+        pass
+    app = create_app(database_path=db, token=TOKEN)
+    status, _, body = request(
+        app, path="/api/v1/research/experiments", auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("503")
+    assert body["orders_authorized"] is False
+
+    app = create_app(
+        database_path=db, token=TOKEN,
+        research_experiments=lambda: [{
+            "experiment_id": "unsafe", "orders_authorized": True,
+        }],
+    )
+    status, _, body = request(
+        app, path="/api/v1/research/experiments", auth="Bearer " + TOKEN,
+    )
+    assert status.startswith("503")
+    assert body["items"] == []
+    assert body["orders_authorized"] is False
