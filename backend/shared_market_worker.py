@@ -233,7 +233,7 @@ def run_scheduled_jobs(
         publish_health(
             status="DEGRADED" if degraded else "RUNNING",
             last_poll_at=datetime.now(timezone.utc).isoformat(),
-            last_error=scheduler_error or dispatch_error,
+            last_error=(scheduler_error or (dispatch_error.partition(":")[0][:80] if isinstance(dispatch_error, str) else None)),
             last_dispatch_status=dispatch_status,
             jobs_enqueued=enqueued,
         )
