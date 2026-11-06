@@ -1248,7 +1248,7 @@ private fun fetchStrategyResearchExperiments(token: String): StrategyResearchFet
         return StrategyResearchFetchResult(
             root.optString("status", "UNKNOWN"),
             if (items.isEmpty()) "No completed research evaluations have been recorded yet."
-            else "Showing ${items.size} recent paper-only walk-forward evaluations.",
+            else "Loaded ${items.size} recent paper-only walk-forward evaluations; showing the latest 20 below.",
             items, true
         )
     } catch (e: Exception) {
@@ -1609,7 +1609,7 @@ private fun ResearchScreen() {
                 ResearchCount("Insufficient", qualityCounts.insufficient, Muted, Modifier.weight(1f))
             }
             Text(
-                "Historical diagnostics only — not forecasts, recommendations, or proof of profitability. Holdout data is not used for selection.",
+                "Historical diagnostics only — not forecasts, recommendations, or proof of profitability. Unverified holdout records never qualify for learning.",
                 color = Muted, fontSize = 10.sp, lineHeight = 14.sp
             )
         }
@@ -1622,7 +1622,7 @@ private fun ResearchScreen() {
                 )
             }
         } else {
-            items.forEach { item ->
+            items.take(20).forEach { item ->
                 val itemCounts = calculateResearchQualityCounts(listOf(item))
                 val qualityLabel = when {
                     itemCounts.qualified == 1 -> "QUALITY PASS"
@@ -1674,7 +1674,7 @@ private fun ResearchScreen() {
                         IndicatorRow("Holdout trades", "None recorded")
                         IndicatorRow("Holdout performance", "Not demonstrated")
                     }
-                    IndicatorRow("Holdout used for selection", if (item.holdoutUsedForSelection) "NO — NOT VERIFIED" else "No")
+                    IndicatorRow("Holdout used for selection", if (item.holdoutUsedForSelection) "Not verified" else "No")
                     IndicatorRow("Dataset start", item.datasetStart)
                     IndicatorRow("Dataset end", item.datasetEnd)
                     Text("Experiment: ${item.experimentId}", color = Muted, fontSize = 9.sp)
