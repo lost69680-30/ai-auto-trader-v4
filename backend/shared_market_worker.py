@@ -282,6 +282,33 @@ def _shutdown_worker(
             app.close()
     return True
 
+def acquire_worker_lease_when_available(store, stop: threading.Event, *, retry_seconds: float = 5.0) -> bool:
+    """Wait for the active worker to release its lease during a rolling deployment.
+
+    Render can briefly run old and new instances together. A valid lease held by
+    the old instance is not a fatal startup error; the new worker waits without
+    polling until it can acquire the lease. Shutdown interrupts the wait.
+    """
+    if (
+        isinstance(retry_seconds, bool)
+        or not isinstance(retry_seconds, (int, float))
+        or not math.isfinite(float(retry_seconds))
+        or retry_seconds <= 0
+    ):
+        raise ValueError("retry_seconds must be a finite positive number")
+    while not stop.is_set():
+        if store.acquire_lease():
+            logger.info("acquired PostgreSQL market-worker lease")
+            return True
+        logger.info(
+            "market-worker lease is held by another instance; waiting %.1f seconds before retry",
+            float(retry_seconds),
+        )
+        if stop.wait(float(retry_seconds)):
+            break
+    return False
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     dsn = os.environ.get("PAPER_DATABASE_URL", "").strip()
@@ -293,17 +320,20 @@ def main() -> None:
         dsn, worker_id=worker_id, max_age_seconds=max_age,
         lease_seconds=max(90.0, float(os.environ.get("PAPER_MARKET_WORKER_LEASE_SECONDS", "90"))),
     )
-    if not store.acquire_lease():
-        raise SystemExit("another market worker owns the active PostgreSQL lease; refusing duplicate polling")
-
-    app = None
-    job_runner = None
     stop = threading.Event()
 
     def request_stop(signum, frame) -> None:
         logger.info("shutdown requested; stopping paper-only market worker")
         stop.set()
 
+    signal.signal(signal.SIGINT, request_stop)
+    signal.signal(signal.SIGTERM, request_stop)
+    if not acquire_worker_lease_when_available(store, stop):
+        logger.info("worker shutdown requested before market lease acquisition; no lease released")
+        return
+
+    app = None
+    job_runner = None
     try:
         # All setup after lease acquisition is covered by finally so a startup failure
         # cannot leave the PostgreSQL worker lease held until its timeout.
@@ -354,8 +384,6 @@ def main() -> None:
                     "venue": "BINANCE_SPOT_TESTNET",
                 },
             )
-        signal.signal(signal.SIGINT, request_stop)
-        signal.signal(signal.SIGTERM, request_stop)
         # Acquire the durable lease before creating the paper runtime: create() performs
         # restart recovery and must never run in a duplicate worker process.
         app = PaperServiceApplication.from_env()
