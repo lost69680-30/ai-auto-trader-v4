@@ -35,9 +35,8 @@ class ResearchValidationQualityTest {
             ),
         )
     }
-}
 
-    
+
     @Test
     fun validationFoldSummaryAggregatesOnlyFiniteNonNegativeEvidence() {
         assertEquals(
@@ -65,3 +64,4 @@ class ResearchValidationQualityTest {
     fun nonFiniteValidationCostsAreRejected() {
         summarizeResearchFolds(listOf(ResearchFoldEvidence(tradeCount = 1, totalCosts = Double.NaN)))
     }
+}
