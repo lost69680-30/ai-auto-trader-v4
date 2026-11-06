@@ -281,3 +281,12 @@ def test_worker_only_health_server_exposes_read_only_healthz():
     finally:
         server.shutdown()
         server.server_close()
+
+def test_worker_heartbeat_requires_restart_for_stale_lease_even_when_process_is_running():
+    from backend.shared_market_supervisor import worker_heartbeat_requires_restart
+
+    assert worker_heartbeat_requires_restart(
+        {"status": "STALE", "worker_status": "RUNNING", "age_seconds": 120},
+        uptime_seconds=300,
+        startup_grace_seconds=30,
+    ) is True
