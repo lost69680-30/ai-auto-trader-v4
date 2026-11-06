@@ -231,6 +231,7 @@ def test_supervisor_shutdown_grace_exceeds_worker_scheduler_grace():
     assert configured_child_shutdown_grace({"PAPER_SUPERVISOR_CHILD_SHUTDOWN_GRACE_SECONDS": "5"}) == 15.0
 
 
+# Snapshot staleness is not equivalent to a dead worker heartbeat.
 def test_supervisor_does_not_restart_running_worker_for_stale_market_snapshots():
     from backend.shared_market_supervisor import worker_heartbeat_requires_restart
 
