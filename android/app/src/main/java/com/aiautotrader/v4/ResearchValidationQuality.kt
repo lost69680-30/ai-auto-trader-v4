@@ -14,7 +14,7 @@ internal data class ResearchValidationCounts(
 
 internal fun researchValidationBucket(status: String?): ResearchValidationBucket =
     when (status?.trim()?.uppercase()) {
-        "PASSED" -> ResearchValidationBucket.PASSED
+        "PASSED", "EVALUATED" -> ResearchValidationBucket.PASSED
         "REJECTED", "FAILED", "DRIFT_FLAGGED", "DECAY_FLAGGED", "NOT_REPRODUCIBLE" ->
             ResearchValidationBucket.FAILED
         else -> ResearchValidationBucket.INCOMPLETE
