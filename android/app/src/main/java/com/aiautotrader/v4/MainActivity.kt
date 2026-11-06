@@ -326,11 +326,18 @@ private data class MarketIntelligenceFetchResult(
 private data class StrategyResearchExperimentItem(
     val experimentId: String,
     val symbol: String,
+    val strategyProfile: String,
     val status: String,
     val validationQualityStatus: String,
     val datasetStart: String,
     val datasetEnd: String,
     val foldCount: Int,
+    val validationTradeCount: Int,
+    val validationTotalCosts: Double?,
+    val meanExcessReturnPct: Double?,
+    val positiveFoldPct: Double?,
+    val maximumFoldDrawdownPct: Double?,
+    val validationFailureReasons: List<String>,
     val holdoutNetPnl: Double?,
     val holdoutTradeCount: Int,
     val ordersAuthorized: Boolean,
@@ -1173,16 +1180,44 @@ private fun fetchStrategyResearchExperiments(token: String): StrategyResearchFet
             val validationQuality = outcomes.optJSONObject("validation_quality")
             val validationQualityStatus = validationQuality?.optString("status")
                 ?.takeIf { it.isNotBlank() && it != "null" } ?: "MISSING"
+            val validationFolds = outcomes.optJSONArray("validation_folds")
+                ?: outcomes.optJSONArray("folds") ?: JSONArray()
+            val foldEvidence = (0 until validationFolds.length()).map { foldIndex ->
+                val fold = validationFolds.optJSONObject(foldIndex)
+                    ?: throw IllegalArgumentException("Research validation fold was malformed")
+                val rawCosts = fold.optDouble("total_costs", Double.NaN)
+                ResearchFoldEvidence(
+                    tradeCount = fold.optInt("trade_count", 0),
+                    totalCosts = rawCosts.takeIf { it.isFinite() },
+                )
+            }
+            val foldSummary = summarizeResearchFolds(foldEvidence)
+            val rawMeanExcess = validationQuality?.optDouble("mean_excess_return_pct", Double.NaN) ?: Double.NaN
+            val rawPositiveFoldPct = validationQuality?.optDouble("positive_fold_pct", Double.NaN) ?: Double.NaN
+            val rawMaximumDrawdown = validationQuality?.optDouble("maximum_fold_drawdown_pct", Double.NaN) ?: Double.NaN
+            val reasonArray = validationQuality?.optJSONArray("failure_reasons") ?: JSONArray()
+            val validationReasons = (0 until reasonArray.length())
+                .mapNotNull { reasonIndex -> reasonArray.optString(reasonIndex).trim().takeIf { it.isNotBlank() && it != "null" } }
+                .distinct()
             val holdout = outcomes.optJSONObject("holdout") ?: JSONObject()
             val netPnl = holdout.optDouble("net_pnl", Double.NaN)
+            val candidateId = row.optString("candidate_id", "")
             items += StrategyResearchExperimentItem(
                 experimentId = row.optString("experiment_id", ""),
-                symbol = row.optString("candidate_id", "").substringAfterLast(":"),
+                symbol = candidateId.substringAfterLast(":"),
+                strategyProfile = candidateId.substringAfter("solo-", "").substringBefore(":").ifBlank { "UNKNOWN" },
                 status = row.optString("status", "UNKNOWN"),
                 validationQualityStatus = validationQualityStatus,
                 datasetStart = row.optString("dataset_start", ""),
                 datasetEnd = row.optString("dataset_end", ""),
-                foldCount = outcomes.optJSONArray("folds")?.length() ?: 0,
+                foldCount = validationFolds.length(),
+                validationTradeCount = validationQuality?.optInt("total_validation_trades", foldSummary.tradeCount)
+                    ?: foldSummary.tradeCount,
+                validationTotalCosts = foldSummary.totalCosts,
+                meanExcessReturnPct = rawMeanExcess.takeIf { it.isFinite() },
+                positiveFoldPct = rawPositiveFoldPct.takeIf { it.isFinite() },
+                maximumFoldDrawdownPct = rawMaximumDrawdown.takeIf { it.isFinite() },
+                validationFailureReasons = validationReasons,
                 holdoutNetPnl = netPnl.takeIf { it.isFinite() },
                 holdoutTradeCount = holdout.optInt("trade_count", 0),
                 ordersAuthorized = false,
@@ -1575,8 +1610,28 @@ private fun ResearchScreen() {
                             ResearchValidationBucket.INCOMPLETE -> Muted
                         })
                     }
+                    IndicatorRow("Strategy profile", item.strategyProfile)
                     IndicatorRow("Execution status", item.status)
                     IndicatorRow("Validation folds", item.foldCount.toString())
+                    IndicatorRow("Validation trades", item.validationTradeCount.toString())
+                    item.meanExcessReturnPct?.let {
+                        IndicatorRow("Mean validation excess return", String.format(Locale.US, "%+.3f%%", it))
+                    } ?: IndicatorRow("Mean validation excess return", "Unavailable")
+                    item.positiveFoldPct?.let {
+                        IndicatorRow("Positive validation folds", String.format(Locale.US, "%.1f%%", it))
+                    } ?: IndicatorRow("Positive validation folds", "Unavailable")
+                    item.maximumFoldDrawdownPct?.let {
+                        IndicatorRow("Maximum validation drawdown", String.format(Locale.US, "%.3f%%", it))
+                    } ?: IndicatorRow("Maximum validation drawdown", "Unavailable")
+                    item.validationTotalCosts?.let {
+                        IndicatorRow("Estimated validation costs", String.format(Locale.US, "%.4f", it))
+                    } ?: IndicatorRow("Estimated validation costs", "Unavailable")
+                    item.validationFailureReasons.take(3).forEach { reason ->
+                        Text("• $reason", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                    }
+                    if (item.validationFailureReasons.isEmpty() && item.validationQualityStatus == "MISSING") {
+                        Text("Validation-quality evidence is missing for this legacy record.", color = Muted, fontSize = 10.sp)
+                    }
                     if (item.holdoutTradeCount > 0) {
                         IndicatorRow("Holdout trades", item.holdoutTradeCount.toString())
                         IndicatorRow(
