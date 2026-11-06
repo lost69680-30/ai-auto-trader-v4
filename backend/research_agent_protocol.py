@@ -162,6 +162,7 @@ class AgentEvidenceMessage:
     payload: Mapping[str, Any]
     error_code: str | None = None
     orders_authorized: bool = False
+    protocol_version: str = "1.0"
 
     def __post_init__(self) -> None:
         _text(self.message_id, "message_id", 128)
@@ -187,6 +188,8 @@ class AgentEvidenceMessage:
             _text(self.error_code, "error_code", 80)
         if self.orders_authorized is not False:
             raise ValueError("orders_authorized must be false")
+        if self.protocol_version != "1.0":
+            raise ValueError("unsupported specialist message protocol version")
 
 
 @dataclass(frozen=True, slots=True)
