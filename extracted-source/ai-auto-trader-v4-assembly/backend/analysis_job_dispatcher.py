@@ -17,7 +17,8 @@ class AnalysisJobDispatcher:
     Queue delivery is at-least-once. Every handler receives the durable
     idempotency key and must use it for any externally visible side effect.
     This dispatcher deliberately has no order, fill, position, or risk-setting
-    handlers and rejects any claimed job that asserts order authority.
+    handlers and rejects any claimed job that asserts order authority. Claims are
+    filtered to registered handlers so disabled-feature jobs remain pending.
     """
 
     def __init__(
@@ -29,6 +30,8 @@ class AnalysisJobDispatcher:
         if not isinstance(self.owner, str) or not self.owner.strip() or len(self.owner) > 120:
             raise ValueError("dispatcher owner must contain 1 to 120 characters")
         self.handlers = dict(handlers or {})
+        self.last_run_status = "IDLE"
+        self.last_error: str | None = None
         if any(not isinstance(name, str) or not callable(handler)
                for name, handler in self.handlers.items()):
             raise ValueError("analysis handlers must map names to callable functions")
@@ -40,8 +43,9 @@ class AnalysisJobDispatcher:
             raise ValueError("execution and risk mutation handlers are forbidden")
 
     def run_once(self) -> bool:
-        job = self.scheduler.claim_next(owner=self.owner)
+        job = self.scheduler.claim_next(owner=self.owner, allowed_job_names=set(self.handlers))
         if job is None:
+            self.last_run_status = "IDLE"
             return False
         key = job.get("idempotency_key")
         name = job.get("job_name")
@@ -58,14 +62,20 @@ class AnalysisJobDispatcher:
             self.handlers[name](payload, key)
         except Exception as exc:
             safe_error = f"{type(exc).__name__}: {str(exc)}"[:240]
+            self.last_run_status = "FAILED"
+            self.last_error = safe_error
             logger.exception("scheduled analysis job rejected or failed job=%s", name)
             if isinstance(key, str) and key:
                 self.scheduler.fail(key, owner=self.owner, error=safe_error)
             return False
 
         if not self.scheduler.complete(key, owner=self.owner):
+            self.last_run_status = "LEASE_LOST"
+            self.last_error = "job lease lost before completion"
             logger.warning("scheduled analysis job lease lost before completion job=%s", name)
             return False
+        self.last_run_status = "SUCCEEDED"
+        self.last_error = None
         logger.info("scheduled read-only analysis job completed job=%s orders_authorized=False", name)
         return True
 

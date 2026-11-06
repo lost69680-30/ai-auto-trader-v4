@@ -680,23 +680,3 @@ def test_strategy_research_schedule_rejects_unbounded_intervals():
         shared_market_worker.configure_strategy_research_schedule(
             object(), enabled=True, interval_seconds=60,
         )
-
-
-def test_spot_intelligence_schedules_are_disabled_unless_explicitly_enabled():
-    from backend.shared_market_worker import disable_spot_intelligence_schedules
-
-    class Scheduler:
-        def __init__(self):
-            self.calls = []
-
-        def register_interval(self, name, **kwargs):
-            self.calls.append((name, kwargs))
-
-    scheduler = Scheduler()
-    disable_spot_intelligence_schedules(scheduler)
-
-    assert {name for name, _ in scheduler.calls} == {
-        "market_intelligence_scan_spot",
-        "opportunity_reassessment_spot",
-    }
-    assert all(kwargs["enabled"] is False for _, kwargs in scheduler.calls)

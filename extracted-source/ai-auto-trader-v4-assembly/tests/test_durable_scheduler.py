@@ -110,3 +110,55 @@ def test_reregistering_schedule_preserves_persisted_next_run_time():
         ).fetchone()[0]
 
     assert after == before
+
+
+def test_reenabling_disabled_schedule_resets_its_next_run_cursor():
+    reset_tables()
+    now = datetime.now(timezone.utc)
+    scheduler = DurableJobScheduler(DSN)
+    scheduler.register_interval(
+        "market_intelligence_scan", interval_seconds=1800,
+        first_run_at=now, payload={"scope": "continuous_opportunity_search"},
+    )
+    scheduler.register_interval(
+        "market_intelligence_scan", interval_seconds=1800,
+        first_run_at=now + timedelta(days=3650),
+        payload={"scope": "disabled"}, enabled=False,
+    )
+    next_run = now + timedelta(seconds=60)
+    scheduler.register_interval(
+        "market_intelligence_scan", interval_seconds=1800,
+        first_run_at=next_run, payload={"scope": "continuous_opportunity_search"},
+        enabled=True,
+    )
+
+    with psycopg.connect(DSN) as conn:
+        enabled, persisted_next_run = conn.execute(
+            "SELECT enabled, next_run_at FROM paper_ledger.scheduled_job_definitions WHERE job_name = %s",
+            ("market_intelligence_scan",),
+        ).fetchone()
+
+    assert enabled is True
+    assert persisted_next_run == next_run
+
+def test_claim_next_only_claims_explicitly_enabled_job_names():
+    reset_tables()
+    now = datetime.now(timezone.utc)
+    scheduler = DurableJobScheduler(DSN, lease_seconds=30)
+    scheduler.register_interval("disabled_market_scan", interval_seconds=3600, first_run_at=now)
+    scheduler.register_interval("market_feed_health_audit", interval_seconds=3600, first_run_at=now)
+    scheduler.enqueue_due(now=now)
+
+    job = scheduler.claim_next(
+        owner="worker-a", now=now,
+        allowed_job_names={"market_feed_health_audit"},
+    )
+
+    assert job is not None
+    assert job["job_name"] == "market_feed_health_audit"
+    with psycopg.connect(DSN) as conn:
+        unclaimed = conn.execute(
+            "SELECT status FROM paper_ledger.scheduled_jobs WHERE job_name = %s",
+            ("disabled_market_scan",),
+        ).fetchone()
+    assert unclaimed == ("PENDING",)
