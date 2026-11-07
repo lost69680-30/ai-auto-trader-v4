@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Set Render worker health check to /readyz
+      - name: Set Render deploy liveness check to /healthz
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_WORKER_SERVICE_ID: srv-dbhr5ign74is738detbg
@@ -32,5 +32,5 @@ jobs:
             --header "Authorization: Bearer ${RENDER_API_KEY}" \
             --header "Accept: application/json" \
             --header "Content-Type: application/json" \
-            --data '{"serviceDetails":{"healthCheckPath":"/readyz"}}')"
-          printf '%s' "$response" | jq -e '.serviceDetails.healthCheckPath == "/readyz"'
+            --data '{"serviceDetails":{"healthCheckPath":"/healthz"}}')"
+          printf '%s' "$response" | jq -e '.serviceDetails.healthCheckPath == "/healthz"'
