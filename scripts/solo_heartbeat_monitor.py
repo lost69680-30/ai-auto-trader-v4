@@ -255,15 +255,6 @@ def worker_wake_required(result: Mapping[str, Any] | None) -> bool:
     )
 
 
-def worker_keepwarm_required(result: Mapping[str, Any] | None) -> bool:
-    """Keep a verified live paper-only process active on Render Free between scheduled checks."""
-    return (
-        isinstance(result, Mapping)
-        and result.get("worker_process_healthy") is True
-        and result.get("orders_authorized") is False
-    )
-
-
 def _request_worker_liveness(*, opener=None, timeout_seconds: float = 45.0) -> dict[str, Any]:
     if (
         isinstance(timeout_seconds, bool)
@@ -317,18 +308,6 @@ def request_worker_wake(
 ) -> dict[str, Any]:
     """Send at most one liveness-only wake request after a confirmed stopped classification."""
     if not worker_wake_required(result):
-        return {"attempted": False, "response_validated": False, "error_type": None}
-    return _request_worker_liveness(opener=opener, timeout_seconds=timeout_seconds)
-
-
-def request_worker_keepwarm(
-    result: Mapping[str, Any] | None,
-    *,
-    opener=None,
-    timeout_seconds: float = 45.0,
-) -> dict[str, Any]:
-    """Send one liveness-only request for a verified live worker to avoid Free-tier idle suspension."""
-    if not worker_keepwarm_required(result):
         return {"attempted": False, "response_validated": False, "error_type": None}
     return _request_worker_liveness(opener=opener, timeout_seconds=timeout_seconds)
 
@@ -455,11 +434,10 @@ def _summary_markdown(result: Mapping[str, Any], worker_id: str) -> str:
         f"- Heartbeat age: `{result.get('heartbeat_age_seconds')}` seconds\n"
         f"- Reasons: {reasons}\n"
         f"- Conditional wake attempted: `{result.get('wake_request_attempted', False)}`\n"
-        f"- Keepwarm request attempted: `{result.get('keepwarm_request_attempted', False)}`\n"
-        f"- Keepwarm response validated: `{result.get('keepwarm_response_validated', False)}`\n"
-        f"- Liveness response validated: `{result.get('wake_response_validated', False) or result.get('keepwarm_response_validated', False)}`\n"
+        f"- Liveness response validated: `{result.get('wake_response_validated', False)}`\n"
+
         f"- Worker/scheduler recovery confirmed: `{result.get('recovery_confirmed', False)}`\n\n"
-        "The database health check is read-only. A single liveness request is sent only after a confirmed stopped-worker classification; feed degradation alone never wakes the service.\n"
+        "The database health check is read-only. A single liveness request is sent only after a confirmed stopped-worker classification; healthy or degraded-but-live workers are never pinged to avoid Free-tier suspension.\n"
     )
 
 
@@ -526,13 +504,6 @@ def main() -> int:
             and recovered.get("orders_authorized") is False
         )
         result = recovered
-    elif worker_keepwarm_required(result):
-        keepwarm = request_worker_keepwarm(result)
-        result["keepwarm_request_attempted"] = keepwarm["attempted"]
-        result["keepwarm_response_validated"] = keepwarm["response_validated"]
-        result["keepwarm_request_error_type"] = keepwarm["error_type"]
-        if not keepwarm["response_validated"]:
-            result.setdefault("reasons", []).append("keepwarm_liveness_response_unverified")
 
     print(json.dumps(result, sort_keys=True, default=str))
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
