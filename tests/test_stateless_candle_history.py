@@ -164,3 +164,17 @@ def test_limit_truncation_does_not_count_intentionally_unreturned_candles_as_mis
     assert result["unreturned_due_to_limit"] == 1
     assert result["upstream_missing_candle_count"] == 0
     assert result["missing_candle_count"] == 0
+
+def test_direct_history_exposes_separate_missing_and_intentionally_omitted_counts():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(0),)
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=4), limit=2,
+        now=BASE + timedelta(minutes=5),
+    )
+
+    assert result["missing_candle_count"] == result["upstream_missing_candle_count"]
+    assert result["unreturned_due_to_limit"] + result["returned_candle_count"] + result["upstream_missing_candle_count"] == result["expected_candle_count"]
