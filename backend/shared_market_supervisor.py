@@ -9,6 +9,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from collections.abc import Mapping
+import threading
 from typing import Any
 
 
@@ -76,27 +77,112 @@ def configured_supervisor_modules(
 
 
 
-def start_worker_health_server(port: int, *, host: str = "0.0.0.0"):
-    """Serve a minimal, unauthenticated liveness route so Render can keep a free worker awake."""
+def worker_readiness_payload(
+    snapshot: Any, *, max_age_seconds: float = 90.0,
+) -> tuple[dict[str, Any], int]:
+    """Build a safe readiness response; unknown, stale, or unsafe state fails closed."""
+    import math
+
+    if (
+        isinstance(max_age_seconds, bool)
+        or not isinstance(max_age_seconds, (int, float))
+        or not math.isfinite(max_age_seconds)
+        or max_age_seconds <= 0
+    ):
+        raise ValueError("max_age_seconds must be a finite positive number")
+
+    state = snapshot if isinstance(snapshot, Mapping) else {}
+    feed_status = state.get("status")
+    worker_status = state.get("worker_status")
+    age = state.get("age_seconds")
+    lease_expired = state.get("lease_expired")
+    process_alive = state.get("process_alive") is True
+    orders_authorized = state.get("orders_authorized", False)
+    if not isinstance(orders_authorized, bool):
+        orders_authorized = None
+
+    age_is_fresh = (
+        isinstance(age, (int, float))
+        and not isinstance(age, bool)
+        and math.isfinite(age)
+        and 0 <= age <= float(max_age_seconds)
+    )
+    ready = (
+        feed_status == "HEALTHY"
+        and worker_status == "RUNNING"
+        and age_is_fresh
+        and lease_expired is False
+        and process_alive
+        and orders_authorized is False
+    )
+    mode = "PAPER_ONLY" if orders_authorized is False else "SAFETY_VIOLATION"
+    payload = {
+        "status": "ready" if ready else "not_ready",
+        "mode": mode,
+        "feed_status": feed_status if isinstance(feed_status, str) else "UNKNOWN",
+        "worker_status": worker_status if isinstance(worker_status, str) else "UNKNOWN",
+        "process_alive": process_alive,
+        "lease_expired": lease_expired if isinstance(lease_expired, bool) else None,
+        "age_seconds": float(age) if age_is_fresh else None,
+        "orders_authorized": orders_authorized,
+    }
+    return payload, 200 if ready else 503
+
+
+def start_worker_health_server(
+    port: int, *, host: str = "0.0.0.0",
+    readiness_provider=None, max_age_seconds: float = 90.0,
+):
+    """Serve separate liveness and data-aware readiness routes for the paper worker."""
     import json
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from threading import Thread
 
     class HealthHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.path != "/healthz":
-                self.send_error(404)
-                return
-            body = json.dumps({
-                "status": "ok",
-                "mode": "PAPER_ONLY",
-                "orders_authorized": False,
-            }).encode("utf-8")
-            self.send_response(200)
+        def _respond(self, payload: dict[str, Any], status_code: int) -> None:
+            body = json.dumps(payload, allow_nan=False).encode("utf-8")
+            self.send_response(status_code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def do_GET(self):
+            path = self.path.partition("?")[0]
+            if path == "/healthz":
+                self._respond({
+                    "status": "ok",
+                    "mode": "PAPER_ONLY",
+                    "orders_authorized": False,
+                }, 200)
+                return
+            if path == "/readyz":
+                if not callable(readiness_provider):
+                    snapshot = None
+                else:
+                    try:
+                        snapshot = readiness_provider()
+                    except Exception as exc:
+                        logger.warning(
+                            "worker readiness snapshot unavailable error_type=%s",
+                            type(exc).__name__,
+                        )
+                        snapshot = None
+                if snapshot is None:
+                    snapshot = {
+                        "status": "UNKNOWN",
+                        "worker_status": "UNKNOWN",
+                        "age_seconds": None,
+                        "lease_expired": None,
+                        "process_alive": False,
+                        "orders_authorized": False,
+                    }
+                payload, status_code = worker_readiness_payload(
+                    snapshot, max_age_seconds=max_age_seconds,
+                )
+                self._respond(payload, status_code)
+                return
+            self.send_error(404)
 
         def log_message(self, format, *args):
             logger.debug("worker health request: " + format, *args)
@@ -184,9 +270,31 @@ def main() -> None:
     database_url = os.environ.get("PAPER_DATABASE_URL", "").strip()
     mode = os.environ.get("PAPER_MARKET_SUPERVISOR_MODE", "all")
     modules = configured_supervisor_modules(mode, worker_env, api_env)
+    worker_readiness_state: dict[str, Any] = {
+        "status": "STARTING",
+        "worker_status": "STARTING",
+        "age_seconds": None,
+        "lease_expired": None,
+        "process_alive": False,
+        "orders_authorized": False,
+    }
+    worker_readiness_lock = threading.Lock()
+
+    def readiness_provider() -> dict[str, Any]:
+        with worker_readiness_lock:
+            return dict(worker_readiness_state)
+
+    def publish_readiness(**values: Any) -> None:
+        with worker_readiness_lock:
+            worker_readiness_state.update(values)
+
     worker_health_server = None
     if str(mode).strip().lower() == "worker":
-        worker_health_server = start_worker_health_server(int(os.environ["PORT"]))
+        worker_health_server = start_worker_health_server(
+            int(os.environ["PORT"]),
+            readiness_provider=readiness_provider,
+            max_age_seconds=max_market_age,
+        )
     market_store = None
     if "worker" in modules and database_url:
         from backend.shared_market_store import PostgresMarketFeedStore
@@ -219,6 +327,12 @@ def main() -> None:
             "restart_delay": restart_delay, "next_start_at": None,
             "healthy_since": None,
         }
+        if name == "worker":
+            publish_readiness(
+                status="STARTING", worker_status="STARTING",
+                age_seconds=None, lease_expired=None,
+                process_alive=True, orders_authorized=False,
+            )
 
     try:
         for child_name in modules:
@@ -228,17 +342,47 @@ def main() -> None:
             for name, state in list(children.items()):
                 proc = state["process"]
                 exit_code = proc.poll()
+                if name == "worker" and exit_code is not None:
+                    publish_readiness(
+                        status="STOPPED", worker_status="STOPPED",
+                        age_seconds=None, lease_expired=True,
+                        process_alive=False, orders_authorized=False,
+                    )
+                elif name == "worker":
+                    publish_readiness(process_alive=True)
                 if exit_code is None:
+                    if name == "worker" and market_store is None:
+                        publish_readiness(
+                            status="UNKNOWN", worker_status="UNKNOWN",
+                            age_seconds=None, lease_expired=None,
+                            process_alive=True, orders_authorized=False,
+                        )
                     if name == "worker" and market_store is not None and now - last_worker_health_check >= health_check_interval:
                         last_worker_health_check = now
                         try:
                             worker_status = market_store.status()
-                        except Exception:
+                        except Exception as exc:
                             # A transient PostgreSQL read failure is not proof that the
-                            # worker is dead. The API readiness check remains fail-closed.
+                            # worker is dead, but external readiness must fail closed.
                             state["healthy_since"] = None
-                            logger.exception("worker heartbeat health check unavailable; preserving worker process")
+                            publish_readiness(
+                                status="UNKNOWN", worker_status="UNKNOWN",
+                                age_seconds=None, lease_expired=None,
+                                process_alive=True, orders_authorized=False,
+                            )
+                            logger.warning(
+                                "worker heartbeat health check unavailable error_type=%s; preserving worker process",
+                                type(exc).__name__,
+                            )
                         else:
+                            publish_readiness(
+                                status=worker_status.get("status"),
+                                worker_status=worker_status.get("worker_status"),
+                                age_seconds=worker_status.get("age_seconds"),
+                                lease_expired=worker_status.get("lease_expired"),
+                                process_alive=True,
+                                orders_authorized=worker_status.get("orders_authorized", False),
+                            )
                             restart_required = worker_heartbeat_requires_restart(
                                 worker_status,
                                 uptime_seconds=now - state["started_at"],
