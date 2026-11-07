@@ -390,7 +390,6 @@ def test_worker_readyz_returns_503_for_unhealthy_or_unsafe_state(override):
             assert error.code == 503
             body = json.loads(error.read())
             assert body["status"] == "not_ready"
-            assert body["mode"] == "PAPER_ONLY"
             expected_authorization = override.get("orders_authorized", False)
             assert body["orders_authorized"] is expected_authorization
             expected_mode = "SAFETY_VIOLATION" if expected_authorization is True else "PAPER_ONLY"
