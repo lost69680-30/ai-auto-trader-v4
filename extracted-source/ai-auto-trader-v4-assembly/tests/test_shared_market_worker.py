@@ -715,3 +715,34 @@ def test_spot_intelligence_schedules_are_disabled_unless_explicitly_enabled():
         "opportunity_reassessment_spot",
     }
     assert all(kwargs["enabled"] is False for _, kwargs in scheduler.calls)
+
+
+def test_scheduler_heartbeat_sanitizes_dispatch_error_before_persisting(monkeypatch):
+    import threading
+
+    from backend.shared_market_worker import run_scheduled_jobs
+
+    stop = threading.Event()
+    health = {}
+
+    class Scheduler:
+        def enqueue_due(self):
+            return 1
+
+    class Dispatcher:
+        last_run_status = "FAILED"
+        last_error = "TemporarySourceFailure: api_token=do-not-expose"
+
+        def run_once(self):
+            assert health.get("last_poll_started_at")
+            stop.set()
+            return False
+
+    run_scheduled_jobs(
+        stop, Scheduler(), Dispatcher(), poll_interval=1,
+        health=health,
+    )
+
+    assert health["status"] == "DEGRADED"
+    assert health["last_error"] == "TemporarySourceFailure"
+    assert "do-not-expose" not in str(health)
