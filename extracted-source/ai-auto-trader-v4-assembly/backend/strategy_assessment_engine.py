@@ -137,7 +137,7 @@ def _indicator_context(candidate: StrategyCandidate) -> dict[str, Any]:
         }
     return {
         "indicator_evidence_status": (
-            "AVAILABLE" if any(item.status == "HEALTHY" for item in candidate.indicator_assessments.values())
+            "AVAILABLE" if any(item.status in {"HEALTHY", "PARTIAL"} for item in candidate.indicator_assessments.values())
             else "UNAVAILABLE"
         ),
         "indicator_assessments": evidence,
