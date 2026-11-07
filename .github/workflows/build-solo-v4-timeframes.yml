@@ -9,6 +9,8 @@ on:
       - ".github/workflows/build-solo-v4-timeframes.yml"
       - "android/app/src/main/AndroidManifest.xml"
       - "android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt"
+      - "android/app/src/main/java/com/aiautotrader/v4/ResearchCostSensitivity.kt"
+      - "android/app/src/test/java/com/aiautotrader/v4/ResearchCostSensitivityTest.kt"
       - "android/app/src/main/java/com/aiautotrader/v4/TradingViewCandlestickChart.kt"
       - "android/app/src/main/res/drawable/ic_solo_logo.xml"
       - "android/app/src/test/**"
@@ -90,6 +92,8 @@ jobs:
           cmp tests/test_risk_guardian_malformed_inputs.py extracted-source/ai-auto-trader-v4-assembly/tests/test_risk_guardian_malformed_inputs.py
           cmp tests/test_orchestrator.py extracted-source/ai-auto-trader-v4-assembly/tests/test_orchestrator.py
           cmp android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/MainActivity.kt
+          cmp android/app/src/main/java/com/aiautotrader/v4/ResearchCostSensitivity.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/java/com/aiautotrader/v4/ResearchCostSensitivity.kt
+          cmp android/app/src/test/java/com/aiautotrader/v4/ResearchCostSensitivityTest.kt extracted-source/ai-auto-trader-v4-assembly/android/app/src/test/java/com/aiautotrader/v4/ResearchCostSensitivityTest.kt
           cmp android/app/src/main/AndroidManifest.xml extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/AndroidManifest.xml
           cmp android/app/src/main/res/drawable/ic_solo_logo.xml extracted-source/ai-auto-trader-v4-assembly/android/app/src/main/res/drawable/ic_solo_logo.xml
           cmp android/app/build.gradle.kts extracted-source/ai-auto-trader-v4-assembly/android/app/build.gradle.kts
