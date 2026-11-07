@@ -170,3 +170,51 @@ def test_supervisor_does_not_restart_a_running_worker_for_stale_market_snapshots
         status, uptime_seconds=600, startup_grace_seconds=30,
         scheduler_stale_seconds=900, now=now,
     ) is False
+
+
+def test_strategy_research_history_keeps_four_validation_fold_minimum(monkeypatch):
+    import pytest
+
+    from backend.shared_market_worker import configured_strategy_research_candle_limit
+
+    monkeypatch.delenv("PAPER_STRATEGY_RESEARCH_CANDLES", raising=False)
+    assert configured_strategy_research_candle_limit() == 4500
+
+    monkeypatch.setenv("PAPER_STRATEGY_RESEARCH_CANDLES", "3000")
+    with pytest.raises(ValueError, match="PAPER_STRATEGY_RESEARCH_CANDLES"):
+        configured_strategy_research_candle_limit()
+
+
+def test_degraded_worker_heartbeat_preserves_scheduler_progress_details():
+    import ast
+    from pathlib import Path
+
+    source = (
+        Path(__file__).parents[1] / "backend/shared_market_worker.py"
+    ).read_text(encoding="utf-8")
+    module = ast.parse(source)
+
+    for handler in ast.walk(module):
+        if not isinstance(handler, ast.ExceptHandler):
+            continue
+        for call in ast.walk(handler):
+            if not (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "heartbeat"
+                and call.args
+                and isinstance(call.args[0], ast.Constant)
+                and call.args[0].value == "DEGRADED"
+                and len(call.args) > 1
+                and isinstance(call.args[1], ast.Dict)
+            ):
+                continue
+            keys = {
+                key.value
+                for key in call.args[1].keys
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            }
+            assert "scheduled_jobs" in keys
+            return
+
+    raise AssertionError("degraded worker heartbeat must include scheduled_jobs diagnostics")
