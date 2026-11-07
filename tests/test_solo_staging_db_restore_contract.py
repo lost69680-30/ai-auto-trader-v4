@@ -73,6 +73,14 @@ class StagingDatabaseRestoreContractTests(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, self.workflow)
 
+
+    def test_same_repository_pull_request_runs_the_read_only_disposable_restore(self):
+        self.assertIn("pull_request:", self.workflow)
+        self.assertIn("github.event_name == 'pull_request'", self.workflow)
+        self.assertIn("SOLO_BACKUP_DATABASE_URL", self.workflow)
+        self.assertIn("PGOPTIONS: \"-c default_transaction_read_only=on\"", self.workflow)
+        self.assertIn("POSTGRES_DB: restore_test", self.workflow)
+
     def test_restore_drill_never_uploads_plaintext_or_needs_phone_key(self):
         self.assertNotIn("actions/upload-artifact", self.workflow)
         self.assertNotIn("SOLO_BACKUP_AGE_IDENTITY", self.workflow)
