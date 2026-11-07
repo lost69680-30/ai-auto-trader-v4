@@ -331,3 +331,71 @@ def test_recovery_outcome_message_does_not_claim_no_wake_after_attempt():
         "wake_request_attempted": False,
     }).lower()
     assert "no wake attempted" in not_attempted
+
+def test_healthy_or_degraded_but_live_worker_requires_a_keepwarm_request():
+    from scripts.solo_heartbeat_monitor import worker_keepwarm_required
+
+    healthy = classify_worker_snapshot(healthy_snapshot(), now=NOW)
+    assert worker_keepwarm_required(healthy) is True
+
+    degraded_feed = healthy_snapshot()
+    degraded_feed["feed"]["healthy_rows"] = 7
+    degraded_feed["feed"]["stale_rows"] = 3
+    degraded = classify_worker_snapshot(degraded_feed, now=NOW)
+    assert degraded["worker_process_healthy"] is True
+    assert degraded["market_data_ready"] is False
+    assert worker_keepwarm_required(degraded) is True
+
+    stopped = healthy_snapshot()
+    stopped["status"] = "STOPPED"
+    assert worker_keepwarm_required(classify_worker_snapshot(stopped, now=NOW)) is False
+
+    unsafe = healthy_snapshot()
+    unsafe["orders_authorized"] = True
+    assert worker_keepwarm_required(classify_worker_snapshot(unsafe, now=NOW)) is False
+
+
+def test_healthy_worker_sends_exactly_one_validated_keepwarm_liveness_request():
+    from scripts.solo_heartbeat_monitor import request_worker_keepwarm
+
+    classification = classify_worker_snapshot(healthy_snapshot(), now=NOW)
+    calls = []
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"status":"ok","mode":"PAPER_ONLY","orders_authorized":false}'
+
+    def fake_open(request, timeout):
+        calls.append((request.full_url, request.method, timeout))
+        return FakeResponse()
+
+    result = request_worker_keepwarm(classification, opener=fake_open)
+
+    assert result["attempted"] is True
+    assert result["response_validated"] is True
+    assert result["error_type"] is None
+    assert len(calls) == 1
+    assert calls[0][0] == "https://solo-futures-websocket-staging.onrender.com/healthz"
+    assert calls[0][1] == "GET"
+
+
+def test_keepwarm_never_contacts_render_for_unknown_or_unsafe_state():
+    from scripts.solo_heartbeat_monitor import request_worker_keepwarm
+
+    calls = []
+    opener = lambda *args, **kwargs: calls.append((args, kwargs))
+    unknown = classify_worker_snapshot(None, now=NOW)
+    unsafe = healthy_snapshot()
+    unsafe["orders_authorized"] = True
+
+    assert request_worker_keepwarm(unknown, opener=opener)["attempted"] is False
+    assert request_worker_keepwarm(classify_worker_snapshot(unsafe, now=NOW), opener=opener)["attempted"] is False
+    assert calls == []
