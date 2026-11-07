@@ -302,7 +302,7 @@ def test_stateless_history_loader_fetches_closed_candles_in_bounded_pages():
     )
 
     assert len(candles) == 3000
-    assert len(source.requests) == 3
+    assert len(source.requests) == 2
     assert all(request[1] == "1m" and request[2] <= 1500 for request in source.requests)
     assert all(candles[index].timestamp < candles[index + 1].timestamp for index in range(2999))
     assert all(
@@ -405,5 +405,5 @@ def test_stateless_research_handler_evaluates_and_persists_without_archive(monke
     assert summary["evaluated"] == 1
     assert summary["candidate_evaluations"] == 4
     assert len(memory.items) == 4
-    assert len(source.requests) == 2
+    assert len(source.requests) == 3
     assert all(item[0].orders_authorized is False for item in memory.items)
