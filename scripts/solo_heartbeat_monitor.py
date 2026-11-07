@@ -226,7 +226,7 @@ def classify_worker_snapshot(
         if total_rows <= 0 or healthy_rows != total_rows:
             reasons.append("market_feed_degraded")
 
-    state = "HEALTHY" if scheduler_healthy and market_data_ready else "DEGRADED"
+    state = "HEALTHY" if status == "RUNNING" and scheduler_healthy and market_data_ready else "DEGRADED"
     return {
         "state": state,
         "worker_process_healthy": True,
@@ -250,6 +250,7 @@ def load_worker_snapshot(database_url: str, worker_id: str, max_snapshot_age_sec
         database_url,
         connect_timeout=10,
         options="-c default_transaction_read_only=on",
+        sslmode="require",
     ) as connection:
         with connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute(SNAPSHOT_QUERY, (max_snapshot_age_seconds, worker_id))
@@ -303,13 +304,16 @@ def main() -> int:
         max_heartbeat_age = float(os.environ.get("PAPER_MAX_MARKET_AGE_SECONDS", "90"))
         max_scheduler_age = float(os.environ.get("PAPER_MAX_SCHEDULER_STALE_SECONDS", "900"))
         max_snapshot_age = float(os.environ.get("PAPER_MAX_MARKET_AGE_SECONDS", "90"))
+        raw_symbols = os.environ.get("PAPER_SYMBOLS", "").strip()
+        if not raw_symbols:
+            raw_symbols = ",".join(DEFAULT_SYMBOLS)
         expected_symbols = tuple(
             symbol.strip().upper()
-            for symbol in os.environ.get(
-                "PAPER_SYMBOLS", ",".join(DEFAULT_SYMBOLS)
-            ).split(",")
+            for symbol in raw_symbols.split(",")
             if symbol.strip()
         )
+        if not expected_symbols:
+            raise ValueError("PAPER_SYMBOLS must contain at least one symbol")
         snapshot = load_worker_snapshot(database_url, worker_id, max_snapshot_age)
         result = classify_worker_snapshot(
             snapshot,
