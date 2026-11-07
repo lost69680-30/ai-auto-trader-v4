@@ -1,4 +1,4 @@
-name: Solo staging health and worker recovery check
+name: Manual Solo staging cold-start and readiness check
 
 on:
   workflow_dispatch:
@@ -17,34 +17,35 @@ concurrency:
 
 jobs:
   health:
-    name: Check API liveness and shared-worker readiness
+    name: Manually wake worker and verify independent API readiness
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
-      BASE_URL: https://solo-futures-websocket-staging.onrender.com
+      WORKER_URL: https://solo-futures-websocket-staging.onrender.com
+      API_READY_URL: https://solo-ai-auto-trader-staging-api.onrender.com/readyz
     steps:
-      - name: Check public API liveness
+      - name: Explicitly wake worker for this manual check
         run: |
           set -euo pipefail
-          curl --silent --show-error --fail --retry 8 --retry-delay 10 --retry-all-errors \
-            "$BASE_URL/healthz" --output health.json
+          curl --silent --show-error --fail --retry 8 --retry-delay 8 --retry-all-errors \
+            "$WORKER_URL/healthz" --output worker-health.json
           python - <<'PY'
           import json
           from pathlib import Path
-          body = json.loads(Path("health.json").read_text())
+          body = json.loads(Path("worker-health.json").read_text())
           assert body.get("status") == "ok", body
           assert body.get("mode") == "PAPER_ONLY", body
           assert body.get("orders_authorized") is False, body
-          print("PASS: API liveness is healthy and order authorization is false.")
+          print("PASS: worker liveness responded in PAPER_ONLY mode.")
           PY
 
-      - name: Wait for the independent market worker to become ready
+      - name: Wait for independent API and worker readiness
         run: |
           set -euo pipefail
           ready=false
           for attempt in $(seq 1 18); do
             code="$(curl --silent --show-error --max-time 20 \
-              --output ready.json --write-out '%{http_code}' "$BASE_URL/readyz" || true)"
+              --output ready.json --write-out '%{http_code}' "$API_READY_URL" || true)"
             if [ "$code" = "200" ] && python - <<'PY'
           import json
           from pathlib import Path
@@ -55,14 +56,14 @@ jobs:
           PY
             then
               ready=true
-              echo "PASS: API and shared market worker are ready."
+              echo "PASS: independent API reports a healthy paper-only worker."
               break
             fi
             echo "Worker not ready yet (attempt $attempt/18, HTTP $code); waiting 10 seconds."
             sleep 10
           done
           if [ "$ready" != true ]; then
-            echo "::error::The worker did not become ready within the recovery window."
+            echo "::error::The worker did not become ready within the manual recovery window."
             cat ready.json || true
             exit 1
           fi
