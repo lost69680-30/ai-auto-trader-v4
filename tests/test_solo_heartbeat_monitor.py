@@ -296,3 +296,17 @@ def test_recovery_wait_confirms_worker_and_scheduler_from_read_only_snapshots(mo
     assert result["worker_process_healthy"] is True
     assert result["scheduler_healthy"] is True
     assert result["orders_authorized"] is False
+
+
+def test_scheduled_workflow_uses_existing_read_only_monitor_and_ten_minute_cadence():
+    from pathlib import Path
+
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github/workflows/solo-render-keepwarm.yml"
+    ).read_text(encoding="utf-8")
+
+    assert 'cron: "*/10 * * * *"' in workflow
+    assert "SOLO_BACKUP_DATABASE_URL:" in workflow
+    assert "python scripts/solo_heartbeat_monitor.py" in workflow
+    assert "RENDER_API_KEY" not in workflow
