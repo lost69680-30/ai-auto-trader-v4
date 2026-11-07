@@ -53,6 +53,26 @@ def candle_rows(symbol="BTCUSDT", count=3000):
     ]
 
 
+def test_4500_one_minute_candles_produce_four_disjoint_validation_folds():
+    from backend.walk_forward import evaluate_walk_forward
+
+    rows = candle_rows(count=4500)
+    candles = tuple(Candle(
+        symbol="BTCUSDT", timestamp=row.open_time,
+        open=row.open, high=row.high, low=row.low, close=row.close, volume=row.volume,
+    ) for row in rows)
+    result = evaluate_walk_forward(
+        "BTCUSDT", candles, research_now=NOW,
+    )
+
+    assert len(result.folds) == 4
+    assert [(fold.start_index, fold.end_index) for fold in result.folds] == [
+        (2000, 2500), (2500, 3000), (3000, 3500), (3500, 4000),
+    ]
+    assert (result.holdout.start_index, result.holdout.end_index) == (4000, 4500)
+    assert result.orders_authorized is False
+
+
 def test_research_handler_persists_walk_forward_evidence_without_order_authority(monkeypatch):
     rows = candle_rows(count=4500)
     archive = FakeArchive(rows)
