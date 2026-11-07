@@ -42,7 +42,7 @@ android {
 }
 
 dependencies {
-    implementation("com.tradingview:lightweightcharts:5.2.0")
+    implementation("com.tradingview:lightweightcharts:5.2.1")
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.work:work-runtime-ktx:2.10.0")
