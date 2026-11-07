@@ -310,3 +310,24 @@ def test_scheduled_workflow_uses_existing_read_only_monitor_and_ten_minute_caden
     assert "SOLO_BACKUP_DATABASE_URL:" in workflow
     assert "python scripts/solo_heartbeat_monitor.py" in workflow
     assert "RENDER_API_KEY" not in workflow
+
+def test_recovery_outcome_message_does_not_claim_no_wake_after_attempt():
+    from scripts.solo_heartbeat_monitor import recovery_outcome_message
+
+    assert "recovery confirmed" in recovery_outcome_message({
+        "recovery_confirmed": True,
+        "wake_request_attempted": True,
+        "wake_response_validated": True,
+    }).lower()
+    attempted = recovery_outcome_message({
+        "recovery_confirmed": False,
+        "wake_request_attempted": True,
+        "wake_response_validated": False,
+    }).lower()
+    assert "wake attempted" in attempted
+    assert "not confirmed" in attempted
+    not_attempted = recovery_outcome_message({
+        "recovery_confirmed": False,
+        "wake_request_attempted": False,
+    }).lower()
+    assert "no wake attempted" in not_attempted
