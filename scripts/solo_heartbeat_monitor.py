@@ -345,17 +345,27 @@ def wait_for_worker_recovery(
         "reasons": ["recovery_not_yet_observed"],
     }
     for attempt in range(max_attempts):
-        snapshot = load_worker_snapshot(
-            database_url, worker_id, max_snapshot_age_seconds
-        )
-        latest = classify_worker_snapshot(
-            snapshot,
-            now=now_provider(),
-            max_heartbeat_age_seconds=max_heartbeat_age_seconds,
-            max_scheduler_stale_seconds=max_scheduler_stale_seconds,
-            max_snapshot_age_seconds=max_snapshot_age_seconds,
-            expected_symbols=expected_symbols,
-        )
+        try:
+            snapshot = load_worker_snapshot(
+                database_url, worker_id, max_snapshot_age_seconds
+            )
+            latest = classify_worker_snapshot(
+                snapshot,
+                now=now_provider(),
+                max_heartbeat_age_seconds=max_heartbeat_age_seconds,
+                max_scheduler_stale_seconds=max_scheduler_stale_seconds,
+                max_snapshot_age_seconds=max_snapshot_age_seconds,
+                expected_symbols=expected_symbols,
+            )
+        except Exception as exc:
+            latest = {
+                "state": "UNKNOWN",
+                "worker_process_healthy": False,
+                "scheduler_healthy": False,
+                "market_data_ready": False,
+                "orders_authorized": None,
+                "reasons": [f"read_only_recovery_poll_error_{type(exc).__name__}"],
+            }
         if (
             latest.get("worker_process_healthy") is True
             and latest.get("scheduler_healthy") is True
