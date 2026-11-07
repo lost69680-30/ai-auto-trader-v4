@@ -1,11 +1,11 @@
-name: Solo Independent Worker Watchdog
+name: Solo Independent Worker Heartbeat Monitor
 
 on:
   pull_request:
     paths:
       - ".github/workflows/solo-independent-worker-watchdog.yml"
-      - "scripts/solo_independent_watchdog.py"
-      - "tests/test_solo_independent_watchdog.py"
+      - "scripts/solo_heartbeat_monitor.py"
+      - "tests/test_solo_heartbeat_monitor.py"
       - "docs/SOLO_INDEPENDENT_WORKER_WATCHDOG.md"
       - ".github/workflows/solo-render-keepwarm.yml"
   workflow_dispatch:
@@ -14,32 +14,40 @@ permissions:
   contents: read
 
 concurrency:
-  group: solo-independent-worker-watchdog-${{ github.ref }}
+  group: solo-independent-worker-monitor-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  validate-workflow:
+  validate-monitor:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Validate GitHub Actions workflow syntax
         uses: reviewdog/action-actionlint@v1
-      - name: Compile watchdog and run classification tests
+      - name: Install monitor test dependencies
+        run: python -m pip install pytest
+      - name: Compile monitor and run classification tests
         run: |
-          python -m py_compile scripts/solo_independent_watchdog.py
-          python -m unittest discover -s tests -p 'test_solo_independent_watchdog.py' -v
+          python -m py_compile scripts/solo_heartbeat_monitor.py
+          python -m pytest -q tests/test_solo_heartbeat_monitor.py
 
-  monitor-and-recover:
+  monitor:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Keep worker awake, inspect independent heartbeat, and recover confirmed failure
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install read-only PostgreSQL client
+        run: python -m pip install "psycopg[binary]==3.3.6"
+      - name: Inspect worker heartbeat without waking or restarting it
         env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          API_READY_URL: https://solo-ai-auto-trader-staging-api.onrender.com/readyz
-          WORKER_LIVENESS_URL: https://solo-futures-websocket-staging.onrender.com/healthz
-          RENDER_WORKER_SERVICE_ID: srv-dbhr5ign74is738detbg
-        run: python scripts/solo_independent_watchdog.py
+          SOLO_BACKUP_DATABASE_URL: ${{ secrets.SOLO_BACKUP_DATABASE_URL }}
+          PAPER_WORKER_ID: solo-market-worker
+          PAPER_SYMBOLS: BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,TRXUSDT,LINKUSDT,AVAXUSDT
+          PAPER_MAX_MARKET_AGE_SECONDS: "90"
+          PAPER_MAX_SCHEDULER_STALE_SECONDS: "900"
+        run: python scripts/solo_heartbeat_monitor.py
