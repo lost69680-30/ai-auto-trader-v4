@@ -75,7 +75,7 @@ def test_short_history_reports_unavailable_indicators_without_inventing_values()
     rows = candle_series(count=30)
     result = assess_indicators("BTCUSDT", "1h", rows, now=NOW)
 
-    assert result.status == "HEALTHY"
+    assert result.status == "PARTIAL"
     assert result.ema_20 is not None
     assert result.ema_50 is None
     assert result.rsi_14 is not None
@@ -83,4 +83,36 @@ def test_short_history_reports_unavailable_indicators_without_inventing_values()
     assert result.macd_signal is None
     assert "EMA50" in " ".join(result.reasons)
     assert result.calibration_status == "NOT_CALIBRATED"
+    assert result.orders_authorized is False
+
+
+def test_two_yearly_candles_are_partial_not_fully_healthy_indicator_evidence():
+    rows = []
+    for year, price in ((2024, 100.0), (2025, 110.0)):
+        opened = datetime(year, 1, 1, tzinfo=timezone.utc)
+        closed = datetime(year, 12, 31, 23, 59, 59, 999000, tzinfo=timezone.utc)
+        rows.append(MarketCandle(
+            symbol="BTCUSDT",
+            open_time=opened,
+            close_time=closed,
+            open=price - 1.0,
+            high=price + 2.0,
+            low=price - 2.0,
+            close=price,
+            volume=1000.0,
+            quote_volume=price * 1000.0,
+            trades=100,
+            is_closed=True,
+        ))
+
+    result = assess_indicators(
+        "BTCUSDT", "1Y", rows,
+        now=datetime(2026, 11, 7, 8, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.status == "PARTIAL"
+    assert result.ema_20 is None
+    assert result.ema_50 is None
+    assert result.trend == "INSUFFICIENT_DATA"
+    assert "EMA20 unavailable" in " ".join(result.reasons)
     assert result.orders_authorized is False
