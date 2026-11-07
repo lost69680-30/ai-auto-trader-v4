@@ -361,3 +361,18 @@ def test_live_worker_does_not_send_keepwarm_liveness_request(
     monkeypatch.setattr(monitor, "_request_worker_liveness", forbidden_liveness_request)
 
     assert monitor.main() == expected_exit
+
+
+def test_unknown_database_snapshot_never_sends_liveness_request(monkeypatch):
+    from scripts import solo_heartbeat_monitor as monitor
+
+    monkeypatch.setenv("SOLO_BACKUP_DATABASE_URL", "postgresql://read-only")
+    monkeypatch.setenv("PAPER_WORKER_ID", "solo-market-worker")
+    monkeypatch.setattr(monitor, "load_worker_snapshot", lambda *args: None)
+
+    def forbidden_liveness_request(**kwargs):
+        pytest.fail("unknown worker state must never trigger a liveness request")
+
+    monkeypatch.setattr(monitor, "_request_worker_liveness", forbidden_liveness_request)
+
+    assert monitor.main() == 2
