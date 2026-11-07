@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 from backend.market_assessment import assess_market
 from backend.market_data_adapter import MarketCandle
@@ -16,7 +17,7 @@ def _monthly_series(count=20):
             next_open = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
         else:
             next_open = datetime(year, month + 1, 1, tzinfo=timezone.utc)
-        closed = next_open.replace(microsecond=0) - __import__("datetime").timedelta(milliseconds=1)
+        closed = next_open - timedelta(milliseconds=1)
         price = 100.0 + index
         rows.append(MarketCandle(
             symbol="BTCUSDT",
@@ -62,4 +63,23 @@ def test_monthly_history_rejects_extreme_price_discontinuity_instead_of_reportin
     assert monthly.status == "INVALID_DATA"
     assert monthly.direction == "INSUFFICIENT_DATA"
     assert any("extreme candle price discontinuity" in reason for reason in monthly.reasons)
+    assert result.orders_authorized is False
+
+
+def test_higher_timeframe_candle_inside_conservative_continuity_bound_remains_usable():
+    rows = _monthly_series()
+    previous = rows[-2]
+    latest = rows[-1]
+    rows[-1] = replace(
+        latest,
+        open=previous.close,
+        high=previous.close * 5.9,
+        low=previous.close * 0.99,
+    )
+
+    result = assess_market("BTCUSDT", {"1M": rows}, now=NOW)
+    monthly = next(item for item in result.timeframes if item.timeframe == "1M")
+
+    assert monthly.status == "HEALTHY"
+    assert monthly.direction in {"BULLISH", "BEARISH", "NEUTRAL"}
     assert result.orders_authorized is False
