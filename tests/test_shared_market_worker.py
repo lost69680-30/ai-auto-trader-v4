@@ -38,7 +38,8 @@ def test_scheduled_job_runner_executes_off_feed_loop_and_stops_cleanly():
         def __init__(self):
             self.called = threading.Event()
 
-        def enqueue_due(self):
+        def enqueue_due(self, *, coalesce_missed=False):
+            self.coalesce_missed = coalesce_missed
             self.called.set()
 
     class Dispatcher:
@@ -64,6 +65,7 @@ def test_scheduled_job_runner_executes_off_feed_loop_and_stops_cleanly():
     )
     thread.start()
     assert scheduler.called.wait(1.0)
+    assert scheduler.coalesce_missed is True
     assert dispatcher.called.wait(1.0)
     stop.set()
     thread.join(timeout=1.0)
@@ -82,7 +84,8 @@ def test_scheduled_job_runner_surfaces_database_failure_in_health():
     health_lock = threading.Lock()
 
     class BrokenScheduler:
-        def enqueue_due(self):
+        def enqueue_due(self, *, coalesce_missed=False):
+            assert coalesce_missed is True
             stop.set()
             raise RuntimeError("database unavailable")
 

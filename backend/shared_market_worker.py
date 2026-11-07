@@ -262,7 +262,7 @@ def run_scheduled_jobs(
     while not stop.is_set():
         publish_health(last_poll_started_at=datetime.now(timezone.utc).isoformat())
         try:
-            enqueued = scheduler.enqueue_due()
+            enqueued = scheduler.enqueue_due(coalesce_missed=True)
             dispatcher.run_once()
             scheduler_error = None
         except Exception as exc:
