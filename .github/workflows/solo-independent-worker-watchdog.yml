@@ -8,6 +8,11 @@ on:
       - "tests/test_solo_heartbeat_monitor.py"
       - "docs/SOLO_INDEPENDENT_WORKER_WATCHDOG.md"
       - ".github/workflows/solo-render-keepwarm.yml"
+  push:
+    branches: [fix/solo-readonly-heartbeat-monitor-20261107]
+    paths:
+      - "scripts/solo_heartbeat_monitor.py"
+      - ".github/workflows/solo-independent-worker-watchdog.yml"
   workflow_dispatch:
 
 permissions:
@@ -33,7 +38,7 @@ jobs:
           python -m pytest -q tests/test_solo_heartbeat_monitor.py
 
   monitor:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
