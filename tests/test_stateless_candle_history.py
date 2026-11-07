@@ -73,3 +73,160 @@ def test_raw_candle_archive_is_disabled_by_default(monkeypatch):
 def test_raw_candle_archive_requires_explicit_opt_in(monkeypatch):
     monkeypatch.setenv("PAPER_CANDLE_ARCHIVE_ENABLED", "true")
     assert shared_market_worker._env_bool("PAPER_CANDLE_ARCHIVE_ENABLED", default=False) is True
+
+
+def test_direct_history_reports_missing_trailing_coverage():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(0),)
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=2), limit=10,
+        now=BASE + timedelta(minutes=3),
+    )
+
+    assert result["complete"] is False
+    assert result["truncated"] is False
+    assert result["expected_candle_count"] == 2
+    assert result["returned_candle_count"] == 1
+    assert result["missing_candle_count"] == 1
+    assert result["coverage_start"] == candle(0).open_time.isoformat()
+    assert result["coverage_end"] == candle(0).open_time.isoformat()
+
+
+def test_direct_history_reports_missing_leading_coverage():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(1),)
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=2), limit=10,
+        now=BASE + timedelta(minutes=3),
+    )
+
+    assert result["complete"] is False
+    assert result["missing_candle_count"] == 1
+    assert result["coverage_start"] == candle(1).open_time.isoformat()
+
+
+def test_direct_history_marks_limit_truncation_explicitly():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(0),)
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=2), limit=1,
+        now=BASE + timedelta(minutes=3),
+    )
+
+    assert result["complete"] is False
+    assert result["truncated"] is True
+    assert result["expected_candle_count"] == 2
+    assert result["returned_candle_count"] == 1
+
+def test_direct_history_distinguishes_provider_shortfall_from_limit_truncation():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            # The requested range is longer than the cap, but the provider returns
+            # fewer rows than the cap. This is both capped and upstream-incomplete.
+            return (candle(0),)
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=4), limit=2,
+        now=BASE + timedelta(minutes=5),
+    )
+
+    assert result["truncated"] is True
+    assert result["complete"] is False
+    assert result["coverage_status"] == "TRUNCATED_AND_INCOMPLETE"
+    assert result["unreturned_due_to_limit"] == 2
+    assert result["upstream_missing_candle_count"] == 1
+    assert result["missing_candle_count"] == 1
+
+
+def test_limit_truncation_does_not_count_intentionally_unreturned_candles_as_missing():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(0),)
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=2), limit=1,
+        now=BASE + timedelta(minutes=3),
+    )
+
+    assert result["truncated"] is True
+    assert result["coverage_status"] == "TRUNCATED"
+    assert result["unreturned_due_to_limit"] == 1
+    assert result["upstream_missing_candle_count"] == 0
+    assert result["missing_candle_count"] == 0
+
+def test_direct_history_exposes_separate_missing_and_intentionally_omitted_counts():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(0),)
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=4), limit=2,
+        now=BASE + timedelta(minutes=5),
+    )
+
+    assert result["missing_candle_count"] == result["upstream_missing_candle_count"]
+    assert result["unreturned_due_to_limit"] + result["returned_candle_count"] + result["upstream_missing_candle_count"] == result["expected_candle_count"]
+
+def test_direct_history_excludes_a_candle_not_fully_covered_by_mid_minute_end():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(0), candle(1))
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=2, seconds=30), limit=10,
+        now=BASE + timedelta(minutes=5),
+    )
+
+    assert result["expected_candle_count"] == 2
+    assert result["returned_candle_count"] == 2
+    assert result["complete"] is True
+    assert result["coverage_status"] == "COMPLETE"
+
+
+def test_direct_history_counts_last_closed_candle_at_exact_minute_boundary():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(0), candle(1), candle(2))
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=3), limit=10,
+        now=BASE + timedelta(minutes=3),
+    )
+
+    assert result["expected_candle_count"] == 3
+    assert result["returned_candle_count"] == 3
+    assert result["complete"] is True
+
+
+def test_direct_history_preserves_requested_end_and_reports_effective_end():
+    requested_end = BASE + timedelta(minutes=10)
+
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(0), candle(1), candle(2))
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=requested_end, limit=10,
+        now=BASE + timedelta(minutes=3),
+    )
+
+    assert result["requested_end"] == requested_end.isoformat()
+    assert result["effective_end"] == (BASE + timedelta(minutes=3)).isoformat()
+    assert result["expected_candle_count"] == 3
+    assert result["returned_candle_count"] == 3
+    assert result["complete"] is True
