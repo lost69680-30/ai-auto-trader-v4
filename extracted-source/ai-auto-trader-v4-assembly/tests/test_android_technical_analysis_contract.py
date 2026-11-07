@@ -140,13 +140,21 @@ def test_chart_freshness_is_tracked_for_the_selected_symbol_and_timeframe():
     source = SOURCE.read_text(encoding="utf-8")
     assert "candleHistoryLastSuccessAtBySymbolAndTimeframe" in source
     assert "candleHistoryLastAttemptSucceededBySymbolAndTimeframe" in source
+    assert "candleHistoryCoverageStatusBySymbolAndTimeframe" in source
     assert "candleHistoryLastSuccessAtBySymbolAndTimeframe.value[candleSymbolKey]?.get(timeframe)" in source
     assert "candleHistoryLastAttemptSucceededBySymbolAndTimeframe.value[candleSymbolKey]?.get(timeframe)" in source
+    assert "candleHistoryCoverageStatusBySymbolAndTimeframe.value[candleSymbolKey]?.get(timeframe)" in source
+    assert "root.optJSONObject(\"interval_status\")" in source
+    assert "root.optJSONObject(\"coverage_by_interval\")" in source
+    assert "coverage?.optString(\"coverage_status\")" in source
     assert "CANDLE HISTORY · LAST SUCCESS" in source
     assert "CANDLE HISTORY · REFRESH FAILED" in source
     assert "CANDLE HISTORY · REFRESH FAILED · NO VALID DATA" in source
     assert "CANDLE HISTORY · NOT LOADED" in source
     assert "CANDLE HISTORY · STALE" in source
+    assert "CANDLE HISTORY · INVALID / INCOMPLETE DATA" in source
+    assert "CANDLE HISTORY · LIMITED HISTORY" in source
+    assert "CANDLE HISTORY · INSUFFICIENT HISTORY" in source
     assert "candle history refresh status" in source
 
 
@@ -155,11 +163,17 @@ def test_partial_candle_refresh_updates_only_intervals_with_valid_data():
     refresh = source.split(
         "LaunchedEffect(sessionToken, selectedMarket?.symbol, candleSymbolKey, isForeground)"
     )[1].split("val timeframeSnapshots", 1)[0]
-    assert refresh.index("val history = withContext(Dispatchers.IO)") < refresh.index(
+    assert refresh.index("val fetchResult = withContext(Dispatchers.IO)") < refresh.index(
         "for (interval in supportedTimeframes)"
     )
+    assert "val history = fetchResult.candlesByTimeframe" in refresh
     assert "val intervalCandles = history[interval].orEmpty()" in refresh
-    assert "updatedAttemptStatus[interval] = intervalCandles.isNotEmpty()" in refresh
+    assert "val intervalStatus = fetchResult.intervalStatusByTimeframe[interval] ?: \"UNAVAILABLE\"" in refresh
+    assert "val coverageStatus = fetchResult.coverageStatusByTimeframe[interval] ?: \"UNAVAILABLE\"" in refresh
+    assert "updatedAttemptStatus[interval] = usable" in refresh
+    assert "updatedCoverageStatus[interval] = coverageStatus" in refresh
     assert "updatedSuccessAt[interval] = refreshCompletedAt" in refresh
     assert "candleHistoryLastSuccessAtBySymbolAndTimeframe.value =" in refresh
     assert "candleHistoryLastAttemptSucceededBySymbolAndTimeframe.value =" in refresh
+    assert "candleHistoryCoverageStatusBySymbolAndTimeframe.value =" in refresh
+    assert 'status == "HEALTHY" || status == "INSUFFICIENT_HISTORY"' in refresh
