@@ -58,3 +58,16 @@
 - Do not start a paid plan, trial, migration, or service that can incur charges.
 - Keep all API credentials in backend secrets; never place them in the Android APK, reports, prompts, or logs.
 - Any failed, stale, missing, contradictory, or unverified data/risk check must block paper actions. The AI strategy cannot override the independent risk manager.
+
+
+## Staging worker readiness and market-data integrity — 2026-11-07
+
+This section supersedes older runtime descriptions above where they conflict with the current staging topology.
+
+- Current staging API: API-only Render service, configured to read durable PostgreSQL snapshots from the separate worker. It does not start a market poller or research worker.
+- Current staging worker: separate Render service running the shared market supervisor in worker-only mode. It exposes /healthz for process liveness and /readyz for worker readiness.
+- The worker readiness contract checks worker child process health, fresh PostgreSQL heartbeat, valid lease, scheduler progress and orders_authorized=false. Market-feed degradation is reported separately and must not by itself trigger worker restart.
+- Render worker health-check configuration is being corrected from /healthz to /readyz in PR #191. This source change does not change Render settings or trigger a deployment. The API service is not the target of that worker setting.
+- The worker process supervisor can restart child-process failures but cannot restart a parent service that Render suspends or terminates. Whole-service recovery requires a conditional external monitor: check read-only database heartbeat first; wake only after confirmed STOPPED/STALE/expired-lease/scheduler-stall state; then verify recovery with read-only checks. Never wake repeatedly for feed degradation alone.
+- PR #191 adds a conservative 6x OHLC discontinuity check for higher-timeframe candles and distinguishes PARTIAL from HEALTHY indicator evidence when required values cannot be calculated. These are proposed code/test changes only until reviewed, merged and separately deployed; they are data-integrity checks, not trading signals.
+- All changes remain testnet research / PAPER_ONLY, with orders_authorized=false. No live order capability, risk limit, exchange credential or production setting is changed.
