@@ -209,13 +209,17 @@ def test_degraded_worker_heartbeat_preserves_scheduler_progress_details():
                 and call.args
                 and isinstance(call.args[0], ast.Constant)
                 and call.args[0].value == "DEGRADED"
-                and len(call.args) > 1
-                and isinstance(call.args[1], ast.Dict)
             ):
+                continue
+            details = next(
+                (keyword.value for keyword in call.keywords if keyword.arg == "details"),
+                call.args[1] if len(call.args) > 1 else None,
+            )
+            if not isinstance(details, ast.Dict):
                 continue
             keys = {
                 key.value
-                for key in call.args[1].keys
+                for key in details.keys
                 if isinstance(key, ast.Constant) and isinstance(key.value, str)
             }
             assert "scheduled_jobs" in keys
