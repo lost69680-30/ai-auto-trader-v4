@@ -1026,7 +1026,8 @@ def test_market_candle_api_distinguishes_short_history_from_a_full_limited_windo
     from app.engines.read_only_api import build_market_candle_payload
 
     start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    now = start + timedelta(minutes=100, seconds=1)
+    short_now = start + timedelta(minutes=60, seconds=1)
+    full_now = start + timedelta(minutes=100, seconds=1)
 
     class ShortSource:
         def fetch_klines(self, symbol, *, interval, limit):
@@ -1034,7 +1035,7 @@ def test_market_candle_api_distinguishes_short_history_from_a_full_limited_windo
 
     short = build_market_candle_payload(
         source=ShortSource(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
-        intervals=("1m",), limit=100, now=now,
+        intervals=("1m",), limit=100, now=short_now,
     )
     short_coverage = short["coverage_by_interval"]["1m"]
     assert short["interval_status"]["1m"] == "HEALTHY"
@@ -1048,7 +1049,7 @@ def test_market_candle_api_distinguishes_short_history_from_a_full_limited_windo
 
     full = build_market_candle_payload(
         source=FullSource(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
-        intervals=("1m",), limit=100, now=now,
+        intervals=("1m",), limit=100, now=full_now,
     )
     full_coverage = full["coverage_by_interval"]["1m"]
     assert full["interval_status"]["1m"] == "HEALTHY"
