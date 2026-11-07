@@ -73,3 +73,56 @@ def test_raw_candle_archive_is_disabled_by_default(monkeypatch):
 def test_raw_candle_archive_requires_explicit_opt_in(monkeypatch):
     monkeypatch.setenv("PAPER_CANDLE_ARCHIVE_ENABLED", "true")
     assert shared_market_worker._env_bool("PAPER_CANDLE_ARCHIVE_ENABLED", default=False) is True
+
+
+def test_direct_history_reports_missing_trailing_coverage():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(0),)
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=2), limit=10,
+        now=BASE + timedelta(minutes=3),
+    )
+
+    assert result["complete"] is False
+    assert result["truncated"] is False
+    assert result["expected_candle_count"] == 2
+    assert result["returned_candle_count"] == 1
+    assert result["missing_candle_count"] == 1
+    assert result["coverage_start"] == candle(0).open_time.isoformat()
+    assert result["coverage_end"] == candle(0).open_time.isoformat()
+
+
+def test_direct_history_reports_missing_leading_coverage():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(1),)
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=2), limit=10,
+        now=BASE + timedelta(minutes=3),
+    )
+
+    assert result["complete"] is False
+    assert result["missing_candle_count"] == 1
+    assert result["coverage_start"] == candle(1).open_time.isoformat()
+
+
+def test_direct_history_marks_limit_truncation_explicitly():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(0),)
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=2), limit=1,
+        now=BASE + timedelta(minutes=3),
+    )
+
+    assert result["complete"] is False
+    assert result["truncated"] is True
+    assert result["expected_candle_count"] == 2
+    assert result["returned_candle_count"] == 1
