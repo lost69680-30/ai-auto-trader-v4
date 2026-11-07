@@ -275,9 +275,14 @@ def test_worker_only_health_server_exposes_read_only_healthz():
         try:
             urlopen(f"http://127.0.0.1:{server.server_port}/readyz", timeout=2)
         except HTTPError as error:
-            assert error.code == 404
+            assert error.code == 503
+            readiness = json.loads(error.read())
+            assert readiness["status"] == "not_ready"
+            assert readiness["mode"] == "PAPER_ONLY"
+            assert readiness["worker_status"] == "UNKNOWN"
+            assert readiness["orders_authorized"] is False
         else:
-            raise AssertionError("unexpected readiness route on worker health endpoint")
+            raise AssertionError("readiness without a provider unexpectedly returned 2xx")
     finally:
         server.shutdown()
         server.server_close()
@@ -366,7 +371,10 @@ def test_worker_readyz_returns_503_for_unhealthy_or_unsafe_state(override):
             body = json.loads(error.read())
             assert body["status"] == "not_ready"
             assert body["mode"] == "PAPER_ONLY"
-            assert body["orders_authorized"] is False
+            expected_authorization = override.get("orders_authorized", False)
+            assert body["orders_authorized"] is expected_authorization
+            expected_mode = "SAFETY_VIOLATION" if expected_authorization is True else "PAPER_ONLY"
+            assert body["mode"] == expected_mode
         else:
             raise AssertionError("unhealthy worker readiness unexpectedly returned 2xx")
     finally:
