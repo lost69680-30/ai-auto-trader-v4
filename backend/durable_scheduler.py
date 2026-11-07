@@ -77,10 +77,22 @@ class DurableJobScheduler:
                 (name, interval_seconds, _utc(first_run_at), enabled, body),
             )
 
-    def enqueue_due(self, *, now: datetime | None = None, max_catchup_per_schedule: int = 100) -> int:
+    def enqueue_due(
+        self, *, now: datetime | None = None, max_catchup_per_schedule: int = 100,
+        coalesce_missed: bool = False,
+    ) -> int:
+        """Enqueue due recurring jobs, optionally coalescing missed periodic work.
+
+        Coalescing is appropriate for replaceable market snapshots and periodic
+        audits: after downtime, run the latest due occurrence once and advance
+        the durable cursor to the next future interval instead of replaying stale
+        scans in a burst. The default replay mode preserves existing callers.
+        """
         stamp = _utc(now or datetime.now(timezone.utc))
         if isinstance(max_catchup_per_schedule, bool) or not isinstance(max_catchup_per_schedule, int) or not 1 <= max_catchup_per_schedule <= 1000:
             raise ValueError("max_catchup_per_schedule must be between 1 and 1000")
+        if not isinstance(coalesce_missed, bool):
+            raise ValueError("coalesce_missed must be a boolean")
         inserted = 0
         with self._connect() as conn:
             schedules = conn.execute(
@@ -91,8 +103,11 @@ class DurableJobScheduler:
             ).fetchall()
             for name, interval, next_run, payload in schedules:
                 due = next_run
-                processed = 0
-                while due <= stamp and processed < max_catchup_per_schedule:
+                if coalesce_missed:
+                    elapsed_intervals = max(
+                        0, int((stamp - due).total_seconds() // interval)
+                    )
+                    due = due + timedelta(seconds=elapsed_intervals * interval)
                     key = f"{name}:{due.astimezone(timezone.utc).isoformat()}"
                     result = conn.execute(
                         """INSERT INTO paper_ledger.scheduled_jobs
@@ -104,14 +119,27 @@ class DurableJobScheduler:
                     ).fetchone()
                     inserted += int(result is not None)
                     due += timedelta(seconds=interval)
-                    processed += 1
+                else:
+                    processed = 0
+                    while due <= stamp and processed < max_catchup_per_schedule:
+                        key = f"{name}:{due.astimezone(timezone.utc).isoformat()}"
+                        result = conn.execute(
+                            """INSERT INTO paper_ledger.scheduled_jobs
+                               (idempotency_key, job_name, scheduled_for, status, payload)
+                               VALUES (%s, %s, %s, 'PENDING', %s::jsonb)
+                               ON CONFLICT (idempotency_key) DO NOTHING
+                               RETURNING idempotency_key""",
+                            (key, name, due, json.dumps(payload, separators=(",", ":"), allow_nan=False)),
+                        ).fetchone()
+                        inserted += int(result is not None)
+                        due += timedelta(seconds=interval)
+                        processed += 1
                 conn.execute(
                     """UPDATE paper_ledger.scheduled_job_definitions
                        SET next_run_at = %s, updated_at = now() WHERE job_name = %s""",
                     (due, name),
                 )
         return inserted
-
     def claim_next(
         self, *, owner: str | None = None, now: datetime | None = None,
         max_attempts: int = 5, allowed_job_names: set[str] | None = None,
