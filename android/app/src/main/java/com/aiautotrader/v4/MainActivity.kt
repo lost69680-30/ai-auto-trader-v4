@@ -2437,7 +2437,7 @@ private fun AnalysisScreen() {
             Text("Selected interval: $timeframe · loaded directly from validated, closed backend candles. No missing candles are fabricated.", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             Text(
                 candleHistoryFreshnessLabel,
-                color = if (candleHistoryLastSuccessAt != null && candleHistoryLastAttemptSucceeded != false && (candleHistoryAgeSeconds ?: 0) <= 90) Green else Color(0xFFE7B65E),
+                color = if (candleHistoryCoverageStatus == "COMPLETE_WINDOW" && candleHistoryLastSuccessAt != null && candleHistoryLastAttemptSucceeded == true && (candleHistoryAgeSeconds ?: 0) <= 90) Green else Color(0xFFE7B65E),
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
             )
