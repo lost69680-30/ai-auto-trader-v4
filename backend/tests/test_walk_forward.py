@@ -103,3 +103,15 @@ def test_walk_forward_rejects_candles_after_requested_research_clock():
             config=WalkForwardConfig(train_bars=120, validation_bars=40, holdout_bars=40),
             research_now=NOW,
         )
+
+def test_walk_forward_rejects_external_rule_spec_until_backtest_supports_it():
+    with pytest.raises(ValueError, match="external rule specs are not supported"):
+        evaluate_walk_forward(
+            "BTCUSDT", make_candles(360),
+            config=WalkForwardConfig(
+                train_bars=120, validation_bars=40, holdout_bars=40,
+                step_bars=40, candle_interval_minutes=1,
+            ),
+            research_now=NOW,
+            rule_spec=object(),
+        )
