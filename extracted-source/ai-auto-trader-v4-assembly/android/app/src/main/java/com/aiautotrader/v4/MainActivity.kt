@@ -2240,8 +2240,6 @@ private fun AnalysisScreen() {
         if (isForeground && sessionToken.length >= 32 && selectedMarket != null && candleSymbolKey.isNotBlank()) {
             while (true) {
                 candleHistoryLoading = true
-                BackendSession.candleHistoryLastAttemptSucceededBySymbol.value =
-                    BackendSession.candleHistoryLastAttemptSucceededBySymbol.value + (candleSymbolKey to false)
                 val history = withContext(Dispatchers.IO) {
                     try { fetchCandleHistory(sessionToken, selectedMarket.symbol) } catch (_: Exception) { emptyMap() }
                 }
@@ -2257,6 +2255,9 @@ private fun AnalysisScreen() {
                         BackendSession.candleHistoryLastSuccessAtBySymbol.value + (candleSymbolKey to java.time.Instant.now())
                     BackendSession.candleHistoryLastAttemptSucceededBySymbol.value =
                         BackendSession.candleHistoryLastAttemptSucceededBySymbol.value + (candleSymbolKey to true)
+                } else {
+                    BackendSession.candleHistoryLastAttemptSucceededBySymbol.value =
+                        BackendSession.candleHistoryLastAttemptSucceededBySymbol.value + (candleSymbolKey to false)
                 }
                 candleHistoryLoading = false
                 delay(60_000)
