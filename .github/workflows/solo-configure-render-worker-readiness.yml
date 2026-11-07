@@ -1,0 +1,38 @@
+name: Configure Solo Render worker readiness
+
+on:
+  push:
+    branches: [fix/futures-context-mainline]
+    paths:
+      - ".github/workflows/solo-configure-render-worker-readiness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Set Render worker readiness check to /readyz
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_WORKER_SERVICE_ID: srv-dbhr5ign74is738detbg
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "::error::RENDER_API_KEY GitHub Actions secret is unavailable; Render was not changed."
+            exit 2
+          fi
+          # Render should restart a running worker whose heartbeat, lease, or scheduler readiness fails.
+          # This changes only the staging worker's health-check path; it does not deploy code.
+          response="$(curl --fail-with-body --silent --show-error \
+            --request PATCH \
+            "https://api.render.com/v1/services/${RENDER_WORKER_SERVICE_ID}" \
+            --header "Authorization: Bearer ${RENDER_API_KEY}" \
+            --header "Accept: application/json" \
+            --header "Content-Type: application/json" \
+            --data '{"serviceDetails":{"healthCheckPath":"/readyz"}}')"
+          printf '%s' "$response" | jq -e '.serviceDetails.healthCheckPath == "/readyz"'

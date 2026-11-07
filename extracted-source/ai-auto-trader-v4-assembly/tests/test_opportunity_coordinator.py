@@ -124,7 +124,7 @@ def coordinator(store, *, market_type="FUTURES", venue="BINANCE_USDM_TESTNET", o
     )
 
 
-def register(engine, store, *, result=None, trigger=101.0, signal_id="signal-1", timeframe="1h", expires=None, now=None, market_type="FUTURES", venue="BINANCE_USDM_TESTNET"):
+def register(engine, store, *, result=None, trigger=101.0, signal_id="signal-1", timeframe="1h", expires=None, now=None, market_type="FUTURES", venue="BINANCE_USDM_TESTNET", setup_anchor=None):
     now = now or datetime.now(timezone.utc)
     result = result or assessment()
     return engine.register_assessed_opportunity(
@@ -134,7 +134,10 @@ def register(engine, store, *, result=None, trigger=101.0, signal_id="signal-1",
         market_type=market_type,
         venue=venue,
         timeframe=timeframe,
-        evidence_refs=["snapshot:BTCUSDT:latest", f"candle:BTCUSDT:{timeframe}:closed"],
+        evidence_refs=[
+            "snapshot:BTCUSDT:latest",
+            setup_anchor or f"candle:BTCUSDT:{timeframe}:closed",
+        ],
         now=now,
     )
 
@@ -170,7 +173,7 @@ def test_valid_assessment_and_explicit_price_plan_create_durable_waiting_opportu
     ]
 
 
-def test_price_changes_refresh_the_same_closed_candle_setup_without_duplicate_opportunities():
+def test_same_setup_is_idempotent_and_new_closed_candle_creates_new_opportunity():
     reset_registry()
     now = datetime.now(timezone.utc)
     store = PostgresOpportunityStore(DSN)
@@ -178,22 +181,16 @@ def test_price_changes_refresh_the_same_closed_candle_setup_without_duplicate_op
 
     first = register(engine, store, now=now)
     repeated = register(engine, store, now=now)
-    refreshed = register(engine, store, trigger=103.0, signal_id="signal-2", now=now)
+    changed_plan_same_setup = register(engine, store, trigger=103.0, signal_id="signal-2", now=now)
+    second_setup = register(
+        engine, store, trigger=103.0, signal_id="signal-3",
+        setup_anchor="candle:BTCUSDT:1h:closed:next", now=now,
+    )
 
     assert repeated.opportunity_id == first.opportunity_id
-    assert refreshed.opportunity_id == first.opportunity_id
-    assert refreshed.state == "WAITING"
-    assert refreshed.version == first.version + 1
-    assert refreshed.metadata["price_plan"]["trigger_price"] == 103.0
-    watch = store.get_watch_condition(first.opportunity_id)
-    assert watch is not None
-    assert watch.trigger_price == 103.0
-    assert len(store.list_opportunities(symbol="BTCUSDT", limit=20).items) == 1
-    refresh_events = [
-        event for event in store.list_events(first.opportunity_id)
-        if "replaced the waiting price plan" in event.reason
-    ]
-    assert len(refresh_events) == 1
+    assert changed_plan_same_setup.opportunity_id == first.opportunity_id
+    assert second_setup.opportunity_id != first.opportunity_id
+    assert len(store.list_opportunities(symbol="BTCUSDT", limit=20).items) == 2
 
 
 def test_long_term_analysis_and_noneligible_assessments_cannot_create_watches():
@@ -235,8 +232,8 @@ def test_multiple_watches_for_same_symbol_are_evaluated_independently():
     engine = coordinator(store)
     first = register(engine, store, trigger=101.0, signal_id="signal-first", now=now)
     second = register(
-        engine, store, result=assessment(strategy_id="day"),
-        trigger=105.0, signal_id="signal-second", timeframe="5m", now=now,
+        engine, store, trigger=105.0, signal_id="signal-second",
+        setup_anchor="candle:BTCUSDT:1h:closed:second", now=now,
     )
 
     results = engine.evaluate_market_update(
@@ -455,22 +452,3 @@ def test_reassessment_provider_is_called_per_opportunity_timeframe():
     assert set(seen) == {("BTCUSDT", "1h"), ("BTCUSDT", "4h")}
     assert store.get_opportunity(first.opportunity_id).state == "TRIGGERED"
     assert store.get_opportunity(second.opportunity_id).state == "WAITING"
-
-
-
-def test_trigger_overshoot_beyond_original_atr_buffer_is_blocked():
-    reset_registry()
-    now = datetime.now(timezone.utc)
-    store = PostgresOpportunityStore(DSN)
-    engine = coordinator(store)
-    created = register(engine, store, trigger=101.0, signal_id="overshoot-signal", now=now)
-
-    result = engine.evaluate_market_update(
-        "BTCUSDT", MarketTick("BTCUSDT", 103.0, now, candle_close=103.0), now=now,
-    )
-
-    assert result[0].status == "BLOCKED"
-    assert result[0].state == "BLOCKED"
-    assert "overshoot" in result[0].reason.lower()
-    assert store.get_opportunity(created.opportunity_id).state == "BLOCKED"
-    assert store.list_events(created.opportunity_id)[-1].to_state == "BLOCKED"

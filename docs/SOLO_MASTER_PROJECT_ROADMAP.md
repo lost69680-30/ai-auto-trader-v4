@@ -201,3 +201,45 @@ Part 4 consumes stable backend contracts and proceeds alongside integration. Par
 - Strategy fit scores are heuristic, not calibrated confidence; profitability is unproven.
 - The Market Watcher candidate stream is not yet connected to the Risk Manager or paper execution.
 - No live exchange order authorization is part of this roadmap update.
+
+---
+
+## Current implementation and acceptance addendum — 2026-11-07
+
+This addendum supersedes earlier *current-status* statements above where they conflict with the verified repository state on 2026-11-07. Historical implementation checkpoints are retained for provenance.
+
+### Part 5 — Continuous Opportunity Engine and Indicator Intelligence
+
+- The merged worker mainline contains the durable opportunity registry/coordinator, venue-isolated Spot and Futures Testnet scanning/reassessment, explicit price-plan evidence, fresh timeframe-candle checks, scheduled worker handlers and authenticated GET-only opportunity endpoints.
+- The worker path connects eligible Futures triggers through fresh research validation and the independent Risk Guardian into the existing paper-service/ledger route. Spot remains research-only.
+- Indicator Intelligence calculates EMA20/50, RSI14, MACD, Bollinger Bands, ATR14/ATR%, VWAP and relative volume over validated closed candles. Nexus maintains separate scalping, day, swing, position and long-term assessments without majority-voting away disagreement.
+- Runtime switches for market intelligence, strategy research and paper opportunity handoff are separate and disabled by default. Their implementation in source does not mean they are active on the hosted service.
+- The current $0 Render Free hosting allocation does not guarantee a continuous worker. Do not represent GitHub Actions schedules or external liveness checks as a real-time worker substitute.
+
+### Part 6 — Paper strategy comparison and performance evaluation
+
+- The research runtime uses fixed strategy candidate families, chronological walk-forward evaluation, distinct untouched holdout evidence, market-data lineage and benchmark comparison.
+- Validation-only cost sensitivity uses only validation folds and requires underlying trade-level evidence; absent trade ledgers produce `UNAVAILABLE`, not invented estimates.
+- Evaluation remains research-only. The simulator still has material simplifications in fills, spread/market impact, funding, margin/liquidation and protection. No profitability claim or automatic strategy promotion is justified.
+
+### Part 7 — Specialist and portfolio research
+
+- Deterministic graph preparation and a quality-gated learning dataset/proposal contract have been implemented.
+- The specialist research protocol is a versioned in-process supervisor, not a persistent distributed agent network. Specialist outputs cannot control Risk Guardian or execution.
+- Actual PPO/RL/GAT training, trained inference services, CTDE and distributed MCP/A2A runtime are not active production capabilities. They remain blocked until quality-qualified evidence and independent leakage-safe evaluation support them.
+
+### TradingView and Android integration
+
+- The Android integration branch uses TradingView Lightweight Charts as a renderer for Solo's own validated OHLC data. It does not use TradingView as a market-data/indicator API and must not scrape TradingView content.
+- The Android Lightweight Charts wrapper is updated to 5.2.1 in draft PR #182. Its CI/debug build is not a signed release and does not prove physical-device acceptance.
+- A staging-specific Android build must embed only the staging API base URL, contain no bearer/exchange secrets and install as the `com.aiautotrader.v4.staging` package. The legacy-backend APK workflow is not the staging install candidate.
+
+### Final release and operations still open
+
+1. Verify the current staging-API Android build and install the exact APK on the phone.
+2. Perform physical-device chart rendering/timeframe/freshness/reconnect tests and notification/background-delivery acceptance.
+3. Validate a confirmed failed-worker recovery event, not only the healthy/no-restart watchdog path.
+4. Verify the actual deployed source/worker/API identity and perform the permitted staging paper soak and recovery checks.
+5. Preserve the $0 ceiling; no paid/always-on host, keep-alive workaround, production database change or live order capability is authorized.
+
+**Permanent safety condition:** `PAPER_ONLY`; `orders_authorized=false`; independent Risk Guardian; no live orders; Emergency Stop is never auto-cleared.

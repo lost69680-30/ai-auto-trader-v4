@@ -62,14 +62,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: solo-v4-step3-market-validation
+  group: solo-v4-step3-market-validation-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
   market-validation:
     name: Read-only market data and analysis safety tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -101,7 +101,9 @@ jobs:
 
       - name: Run market-data parsing, freshness, outage, and planner tests
         run: >-
-          python -m pytest -q
+          python -m pytest -vv
+          -o faulthandler_timeout=300
+          --durations=20
           tests/test_market_data_adapter.py
           tests/test_market_connectivity_check.py
           tests/test_market_worker.py

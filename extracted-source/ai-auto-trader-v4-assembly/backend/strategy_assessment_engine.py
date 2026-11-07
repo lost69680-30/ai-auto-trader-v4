@@ -121,6 +121,9 @@ def _indicator_context(candidate: StrategyCandidate) -> dict[str, Any]:
             "macd_line": item.macd_line,
             "macd_signal": item.macd_signal,
             "macd_histogram": item.macd_histogram,
+            "bollinger_mid": item.bollinger_mid,
+            "bollinger_upper": item.bollinger_upper,
+            "bollinger_lower": item.bollinger_lower,
             "atr_14": item.atr_14,
             "atr_percent": item.atr_percent,
             "vwap": item.vwap,
@@ -134,7 +137,7 @@ def _indicator_context(candidate: StrategyCandidate) -> dict[str, Any]:
         }
     return {
         "indicator_evidence_status": (
-            "AVAILABLE" if any(item.status == "HEALTHY" for item in candidate.indicator_assessments.values())
+            "AVAILABLE" if any(item.status in {"HEALTHY", "PARTIAL"} for item in candidate.indicator_assessments.values())
             else "UNAVAILABLE"
         ),
         "indicator_assessments": evidence,

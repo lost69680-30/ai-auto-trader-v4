@@ -247,10 +247,17 @@ def assess_indicators(
     else:
         confluence = "INSUFFICIENT_DATA"
 
+    required_indicators = (
+        ema20, ema50, rsi14, macd_line, macd_signal,
+        bollinger_mid, bollinger_upper, bollinger_lower,
+        atr14, atr_percent, vwap, relative_volume,
+    )
+    evidence_status = "HEALTHY" if all(value is not None for value in required_indicators) else "PARTIAL"
+
     return IndicatorAssessment(
         symbol=symbol,
         timeframe=timeframe,
-        status="HEALTHY",
+        status=evidence_status,
         latest_close_time=timeframe_result.latest_close_time,
         ema_20=ema20,
         ema_50=ema50,

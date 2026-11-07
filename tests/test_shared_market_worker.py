@@ -644,6 +644,18 @@ def test_worker_stops_waiting_for_lease_when_shutdown_requested():
     ) is False
 
 
+def test_research_candle_window_defaults_to_four_validation_folds(monkeypatch):
+    from backend.shared_market_worker import configured_strategy_research_candle_limit
+
+    monkeypatch.delenv("PAPER_STRATEGY_RESEARCH_CANDLES", raising=False)
+    assert configured_strategy_research_candle_limit() == 4500
+    monkeypatch.setenv("PAPER_STRATEGY_RESEARCH_CANDLES", "4500")
+    assert configured_strategy_research_candle_limit() == 4500
+    monkeypatch.setenv("PAPER_STRATEGY_RESEARCH_CANDLES", "3000")
+    with pytest.raises(ValueError, match="4500"):
+        configured_strategy_research_candle_limit()
+
+
 def test_strategy_research_schedule_is_opt_in_and_read_only():
     from datetime import datetime, timedelta, timezone
 

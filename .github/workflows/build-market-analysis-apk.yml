@@ -21,12 +21,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: solo-market-analysis-apk
+  group: solo-staging-market-analysis-apk
   cancel-in-progress: false
 
 jobs:
   build:
-    name: Test and build Android APK from repository source
+    name: Test and build isolated staging APK against the staging paper-ledger API
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -38,6 +38,21 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+
+      - name: Install Android platform and package-inspection tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${ANDROID_HOME:-}" ]]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          elif [[ -n "${ANDROID_SDK_ROOT:-}" ]]; then
+            SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          else
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set project directory
         shell: bash
@@ -67,22 +82,17 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Select backend target for APK
+      - name: Select the fixed staging API target
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            TARGET_BRANCH="${GITHUB_BASE_REF:-}"
-          else
-            TARGET_BRANCH="${GITHUB_REF_NAME:-}"
-          fi
-          if [[ "$TARGET_BRANCH" == "main" ]]; then
-            PAPER_API_BASE_URL="https://ai-auto-trader-v4-backend.onrender.com"
-          else
-            PAPER_API_BASE_URL="https://solo-futures-websocket-staging.onrender.com"
-          fi
+          PAPER_API_BASE_URL="https://solo-ai-auto-trader-staging-api.onrender.com"
+          case "$PAPER_API_BASE_URL" in
+            https://solo-ai-auto-trader-staging-api.onrender.com) ;;
+            *) echo "Unexpected staging API target; refusing APK build." >&2; exit 1 ;;
+          esac
           echo "PAPER_API_BASE_URL=$PAPER_API_BASE_URL" >> "$GITHUB_ENV"
-          echo "APK backend target branch: $TARGET_BRANCH"
+          echo "APK target is the staging API; no bearer or exchange credentials are embedded."
 
       - name: Verify Android source mirrors match
         shell: bash
@@ -98,20 +108,40 @@ jobs:
           for relative in java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt java/com/aiautotrader/v4/MarketWebSocketClientTest.kt; do
             cmp "$ROOT_TEST/$relative" "$EXTRACTED_TEST/$relative" || { echo "Android test-source mirror mismatch: $relative"; exit 1; }
           done
+          cmp "$GITHUB_WORKSPACE/android/app/build.gradle.kts" "$PROJECT_DIR/android/app/build.gradle.kts"
 
-      - name: Run Android unit tests and build APK
+      - name: Run Android unit tests and build staging APK
         shell: bash
         run: |
           set -euo pipefail
-          # Backend URL is public configuration; bearer and exchange tokens are not embedded.
+          # Only the public staging URL is compiled into this APK. No tokens are provided.
           gradle -p "$PROJECT_DIR" :android:app:testDebugUnitTest :android:app:assembleDebug \
             -PpaperApiBaseUrl="$PAPER_API_BASE_URL" \
             --no-daemon --max-workers=2
+          BUILD_CONFIG="$PROJECT_DIR/android/app/build/generated/source/buildConfig/debug/com/aiautotrader/v4/BuildConfig.java"
+          test -s "$BUILD_CONFIG"
+          grep -F 'https://solo-ai-auto-trader-staging-api.onrender.com' "$BUILD_CONFIG"
+          if grep -Fq 'ai-auto-trader-v4-backend.onrender.com' "$BUILD_CONFIG"; then
+            echo "Legacy backend URL found in staging APK configuration; refusing artifact." >&2
+            exit 1
+          fi
 
-      - name: Upload debug APK
+      - name: Verify isolated staging package ID and APK integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort | tail -n 1)"
+          test -x "$AAPT"
+          "$AAPT" dump badging "$APK" | grep -F "package: name='com.aiautotrader.v4.staging'"
+          sha256sum "$APK"
+          ls -lh "$APK"
+
+      - name: Upload staging debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: solo-market-analysis-debug-apk
+          name: solo-staging-market-analysis-debug-apk
           path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14

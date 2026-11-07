@@ -26,6 +26,12 @@ on:
       - "app/engines/read_only_api.py"
       - "backend/binance_spot_testnet_account.py"
       - "backend/timeframe_aggregation.py"
+      - "backend/cost_sensitivity.py"
+      - "backend/strategy_research_runtime.py"
+      - "tests/test_cost_sensitivity.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/cost_sensitivity.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/backend/strategy_research_runtime.py"
+      - "extracted-source/ai-auto-trader-v4-assembly/tests/test_cost_sensitivity.py"
       - "tests/**"
       - "backend/**"
       - "PROJECT_COMPLETENESS_AUDIT.md"
@@ -75,6 +81,13 @@ jobs:
           cmp app/engines/read_only_api.py extracted-source/ai-auto-trader-v4-assembly/app/engines/read_only_api.py
           cmp app/engines/paper_runtime.py extracted-source/ai-auto-trader-v4-assembly/app/engines/paper_runtime.py
           cmp backend/timeframe_aggregation.py extracted-source/ai-auto-trader-v4-assembly/backend/timeframe_aggregation.py
+          cmp backend/cost_sensitivity.py extracted-source/ai-auto-trader-v4-assembly/backend/cost_sensitivity.py
+          cmp backend/strategy_research_runtime.py extracted-source/ai-auto-trader-v4-assembly/backend/strategy_research_runtime.py
+          cmp tests/test_cost_sensitivity.py extracted-source/ai-auto-trader-v4-assembly/tests/test_cost_sensitivity.py
+          cmp tests/test_strategy_research_runtime.py extracted-source/ai-auto-trader-v4-assembly/tests/test_strategy_research_runtime.py
+          cmp backend/cost_sensitivity.py extracted-source/ai-auto-trader-v4-assembly/backend/cost_sensitivity.py
+          cmp backend/strategy_research_runtime.py extracted-source/ai-auto-trader-v4-assembly/backend/strategy_research_runtime.py
+          cmp tests/test_cost_sensitivity.py extracted-source/ai-auto-trader-v4-assembly/tests/test_cost_sensitivity.py
           cmp backend/backtesting.py extracted-source/ai-auto-trader-v4-assembly/backend/backtesting.py
           cmp backend/binance_spot_testnet_account.py extracted-source/ai-auto-trader-v4-assembly/backend/binance_spot_testnet_account.py
           cmp app/core/models.py extracted-source/ai-auto-trader-v4-assembly/app/core/models.py

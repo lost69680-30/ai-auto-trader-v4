@@ -250,6 +250,54 @@ def test_indicator_evidence_is_preserved_when_one_strategy_assessor_fails():
 
     assert result.decision == "REQUEST_MORE_EVIDENCE"
     assert result.payload["indicator_assessments"]["1h"]["rsi_14"] == 72.0
+    assert result.payload["indicator_assessments"]["1h"]["bollinger_mid"] == 100.0
+    assert result.payload["indicator_assessments"]["1h"]["bollinger_upper"] == 105.0
+    assert result.payload["indicator_assessments"]["1h"]["bollinger_lower"] == 95.0
     assert result.payload["indicator_conflicts"] == ["1h"]
     assert result.payload["indicator_evidence_status"] == "AVAILABLE"
+    assert result.payload["orders_authorized"] is False
+
+def test_partial_indicator_evidence_is_preserved_and_not_labeled_unavailable():
+    indicator = IndicatorAssessment(
+        symbol="BTCUSDT",
+        timeframe="1h",
+        status="PARTIAL",
+        latest_close_time=NOW,
+        ema_20=101.0,
+        ema_50=None,
+        rsi_14=72.0,
+        macd_line=1.0,
+        macd_signal=None,
+        macd_histogram=None,
+        bollinger_mid=100.0,
+        bollinger_upper=105.0,
+        bollinger_lower=95.0,
+        atr_14=2.0,
+        atr_percent=2.0,
+        vwap=100.5,
+        relative_volume_20=1.5,
+        trend="INSUFFICIENT_DATA",
+        momentum="BULLISH",
+        confluence="INSUFFICIENT_DATA",
+        reasons=("EMA50 unavailable", "MACD signal unavailable"),
+        calibration_status="NOT_CALIBRATED",
+        orders_authorized=False,
+    )
+    profile = StrategyProfile("scalping", "SCALPING", ("1h",), "1.0.0")
+
+    def fail(candidate, evidence, profile, now):
+        raise RuntimeError("private connector detail")
+
+    result = MultiStrategyAssessmentEngine(
+        profiles=(profile,),
+        assessors={"scalping": fail},
+    ).assess(
+        candidate(indicator_assessments={"1h": indicator}),
+        ["snapshot:BTCUSDT:latest"],
+        now=NOW,
+    )[0]
+
+    assert result.payload["indicator_evidence_status"] == "AVAILABLE"
+    assert result.payload["indicator_assessments"]["1h"]["status"] == "PARTIAL"
+    assert result.payload["indicator_assessments"]["1h"]["ema_50"] is None
     assert result.payload["orders_authorized"] is False
