@@ -250,5 +250,15 @@ def test_scan_rejects_extreme_monthly_discontinuity_and_derived_yearly_evidence(
     assert any("extreme candle price discontinuity" in reason for reason in monthly["reasons"])
     assert market_timeframes["1M"]["status"] == "INVALID_DATA"
     assert market_timeframes["1Y"]["status"] == "INVALID_DATA"
-    assert item["selection"]["eligible_for_risk_review"] is False
+    long_term = next(
+        row for row in item["strategy_assessments"]
+        if row["strategy_id"] == "long_term"
+    )
+    assert long_term["decision"] != "ELIGIBLE"
+    assert long_term["payload"]["eligible_for_risk_review"] is False
+    assert long_term["payload"]["analysis_only"] is True
+    assert not any(
+        row["strategy_id"] == "long_term" and row["status"] == "REGISTERED"
+        for row in item["opportunity_registrations"]
+    )
     assert item["orders_authorized"] is False
