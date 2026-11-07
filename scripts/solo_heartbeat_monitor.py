@@ -147,7 +147,7 @@ def classify_worker_snapshot(
         reasons.append("lease_expired")
 
     worker_healthy = (
-        status == "RUNNING"
+        status in {"RUNNING", "DEGRADED"}
         and heartbeat_age is not None
         and -1.0 <= heartbeat_age <= max_heartbeat_age_seconds
         and lease_expiry is not None
