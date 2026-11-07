@@ -43,12 +43,14 @@ class MarketAssessmentConfig:
     high_volatility_pct: float = 2.5
     trending_efficiency_ratio: float = 0.35
     ranging_efficiency_ratio: float = 0.20
+    max_candle_price_multiple: float = 6.0
 
     def __post_init__(self) -> None:
         values = (
             self.max_future_skew_seconds, self.freshness_intervals,
             self.minimum_directional_score, self.high_volatility_pct,
             self.trending_efficiency_ratio, self.ranging_efficiency_ratio,
+            self.max_candle_price_multiple,
         )
         if not all(math.isfinite(value) for value in values):
             raise ValueError("market assessment thresholds must be finite")
@@ -56,6 +58,8 @@ class MarketAssessmentConfig:
             raise ValueError("market timestamp thresholds are invalid")
         if not 0 < self.minimum_directional_score < 50:
             raise ValueError("minimum_directional_score must be between 0 and 50")
+        if self.max_candle_price_multiple <= 1:
+            raise ValueError("max_candle_price_multiple must be greater than one")
         if self.high_volatility_pct <= 0:
             raise ValueError("high_volatility_pct must be positive")
         if not 0 <= self.ranging_efficiency_ratio < self.trending_efficiency_ratio <= 1:
@@ -168,6 +172,23 @@ def _invalid_series_reason(
     for previous, current in zip(opened, opened[1:]):
         if current != _next_open(previous, timeframe):
             return "candle gap detected between consecutive bars"
+
+    # Reject extreme OHLC dislocations before deriving indicators or strategy evidence.
+    # This is a fail-closed data-integrity bound, not a volatility or trading signal.
+    max_multiple = config.max_candle_price_multiple
+    for previous, current in zip(rows, rows[1:]):
+        prior_close = float(previous.close)
+        current_high = float(current.high)
+        current_low = float(current.low)
+        if (
+            current_high > prior_close * max_multiple
+            or current_low < prior_close / max_multiple
+            or current_high / current_low > max_multiple
+        ):
+            return (
+                "extreme candle price discontinuity: OHLC range or prior-close ratio "
+                f"exceeds {max_multiple:g}x"
+            )
     latest_close = _utc(rows[-1].close_time, "latest close_time")
     age = (now - latest_close).total_seconds()
     if age < -config.max_future_skew_seconds:
