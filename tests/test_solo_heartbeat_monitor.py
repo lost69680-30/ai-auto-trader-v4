@@ -25,13 +25,22 @@ def healthy_snapshot():
             "total_rows": 10,
             "healthy_rows": 10,
             "stale_rows": 0,
+            "unsafe_rows": 0,
+            "symbols": [
+                "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+                "ADAUSDT", "DOGEUSDT", "TRXUSDT", "LINKUSDT", "AVAXUSDT",
+            ],
             "latest_checked_at": NOW - timedelta(seconds=20),
         },
     }
 
 
 def test_fresh_paper_only_worker_and_scheduler_are_healthy():
-    result = classify_worker_snapshot(healthy_snapshot(), now=NOW)
+    result = classify_worker_snapshot(
+        healthy_snapshot(), now=NOW,
+        expected_symbols=("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+                          "ADAUSDT", "DOGEUSDT", "TRXUSDT", "LINKUSDT", "AVAXUSDT"),
+    )
     assert result["state"] == "HEALTHY"
     assert result["worker_process_healthy"] is True
     assert result["scheduler_healthy"] is True
@@ -105,3 +114,26 @@ def test_missing_database_snapshot_is_unknown():
     result = classify_worker_snapshot(None, now=NOW)
     assert result["state"] == "UNKNOWN"
     assert result["orders_authorized"] is False
+
+
+def test_missing_expected_symbol_is_market_data_degradation():
+    snapshot = healthy_snapshot()
+    snapshot["feed"]["symbols"].remove("AVAXUSDT")
+    snapshot["feed"]["total_rows"] = 9
+    snapshot["feed"]["healthy_rows"] = 9
+    result = classify_worker_snapshot(
+        snapshot, now=NOW,
+        expected_symbols=("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+                          "ADAUSDT", "DOGEUSDT", "TRXUSDT", "LINKUSDT", "AVAXUSDT"),
+    )
+    assert result["state"] == "DEGRADED"
+    assert result["market_data_ready"] is False
+    assert "symbol_coverage_mismatch" in result["reasons"]
+
+
+def test_unsafe_feed_snapshot_is_safety_violation():
+    snapshot = healthy_snapshot()
+    snapshot["feed"]["unsafe_rows"] = 1
+    result = classify_worker_snapshot(snapshot, now=NOW)
+    assert result["state"] == "SAFETY_VIOLATION"
+    assert result["market_data_ready"] is False
