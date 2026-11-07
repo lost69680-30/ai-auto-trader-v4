@@ -416,8 +416,8 @@ def recovery_outcome_message(result: Mapping[str, Any]) -> str:
         return "::notice::Worker and scheduler recovery confirmed from read-only database state."
     if result.get("wake_request_attempted") is True:
         if result.get("wake_response_validated") is True:
-            return "::warning::A liveness wake was accepted, but worker/scheduler recovery was not confirmed."
-        return "::warning::A wake was attempted, but its liveness response was not validated and recovery was not confirmed."
+            return "::warning::Wake attempted and liveness response accepted, but worker/scheduler recovery was not confirmed."
+        return "::warning::Wake attempted, but its liveness response was not validated and recovery was not confirmed."
     return "::warning::Solo worker is stopped or degraded; no wake attempted."
 
 
