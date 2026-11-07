@@ -161,7 +161,11 @@ def build_direct_market_history_payload(
     *, source, symbol: str, allowed_symbols: Iterable[str],
     start: datetime, end: datetime, limit: int, now: datetime | None = None,
 ) -> dict[str, object]:
-    """Fetch bounded one-minute history directly from Binance public REST without persistence."""
+    """Fetch bounded one-minute history directly from Binance public REST without persistence.
+
+    Coverage metadata distinguishes a complete range from an upstream-short response or
+    a request truncated by the caller's candle limit. Missing internal candles remain fatal.
+    """
     if symbol not in allowed_symbols:
         raise ValueError("symbol is not in the configured market allowlist")
     if not isinstance(start, datetime) or start.tzinfo is None or start.utcoffset() is None:
@@ -179,8 +183,17 @@ def build_direct_market_history_payload(
     if end_utc <= start_utc:
         raise ValueError("history end must be later than start and not in the future")
 
-    cursor_ms = ((int(start_utc.timestamp() * 1000) + 59999) // 60000) * 60000
+    first_open_ms = ((int(start_utc.timestamp() * 1000) + 59999) // 60000) * 60000
     end_ms = int(end_utc.timestamp() * 1000) - 1
+    # A candle is complete only after its close timestamp has passed.
+    latest_closed_open_ms = ((int(current.timestamp() * 1000) - 60001) // 60000) * 60000
+    last_expected_open_ms = min((end_ms // 60000) * 60000, latest_closed_open_ms)
+    expected_count = (
+        max(0, ((last_expected_open_ms - first_open_ms) // 60000) + 1)
+        if last_expected_open_ms >= first_open_ms else 0
+    )
+
+    cursor_ms = first_open_ms
     rows = []
     while cursor_ms <= end_ms and len(rows) < limit:
         page_limit = min(1500, limit - len(rows))
@@ -202,14 +215,14 @@ def build_direct_market_history_payload(
             if not isinstance(closed, datetime) or closed.tzinfo is None or closed.utcoffset() is None:
                 raise RuntimeError("historical market source returned an invalid candle close timestamp")
             opened = opened.astimezone(timezone.utc)
-            if opened.timestamp() * 1000 < cursor_ms or opened.timestamp() * 1000 > end_ms:
+            opened_ms = int(opened.timestamp() * 1000)
+            if opened_ms < cursor_ms or opened_ms > end_ms:
                 raise RuntimeError("historical market source returned a candle outside the requested range")
             if getattr(row, "is_closed", False) is not True or closed.astimezone(timezone.utc) >= current:
                 continue
             if rows:
                 previous_ms = int(rows[-1].open_time.timestamp() * 1000)
-                current_ms = int(opened.timestamp() * 1000)
-                if current_ms - previous_ms != 60000:
+                if opened_ms - previous_ms != 60000:
                     raise RuntimeError("historical market source returned a missing or duplicate one-minute candle")
             rows.append(row)
         last_open_ms = int(page[-1].open_time.timestamp() * 1000)
@@ -220,6 +233,12 @@ def build_direct_market_history_payload(
         if len(page) < page_limit:
             break
 
+    returned_count = len(rows)
+    truncated = expected_count > limit
+    complete = returned_count == expected_count and not truncated
+    coverage_status = "COMPLETE" if complete else ("TRUNCATED" if truncated else "INCOMPLETE")
+    coverage_start = rows[0].open_time.astimezone(timezone.utc).isoformat() if rows else None
+    coverage_end = rows[-1].open_time.astimezone(timezone.utc).isoformat() if rows else None
     return {
         "symbol": symbol,
         "venue": "BINANCE_USDM_TESTNET",
@@ -231,6 +250,16 @@ def build_direct_market_history_payload(
             "open": row.open, "high": row.high, "low": row.low,
             "close": row.close, "volume": row.volume, "is_closed": True,
         } for row in rows],
+        "requested_start": start_utc.isoformat(),
+        "requested_end": end_utc.isoformat(),
+        "coverage_start": coverage_start,
+        "coverage_end": coverage_end,
+        "expected_candle_count": expected_count,
+        "returned_candle_count": returned_count,
+        "missing_candle_count": max(0, expected_count - returned_count),
+        "complete": complete,
+        "truncated": truncated,
+        "coverage_status": coverage_status,
         "history_source": "BINANCE_PUBLIC_REST_ON_DEMAND",
         "persistent_candle_storage": False,
         "orders_authorized": False,
