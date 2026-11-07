@@ -178,3 +178,55 @@ def test_direct_history_exposes_separate_missing_and_intentionally_omitted_count
 
     assert result["missing_candle_count"] == result["upstream_missing_candle_count"]
     assert result["unreturned_due_to_limit"] + result["returned_candle_count"] + result["upstream_missing_candle_count"] == result["expected_candle_count"]
+
+def test_direct_history_excludes_a_candle_not_fully_covered_by_mid_minute_end():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(0), candle(1))
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=2, seconds=30), limit=10,
+        now=BASE + timedelta(minutes=5),
+    )
+
+    assert result["expected_candle_count"] == 2
+    assert result["returned_candle_count"] == 2
+    assert result["complete"] is True
+    assert result["coverage_status"] == "COMPLETE"
+
+
+def test_direct_history_counts_last_closed_candle_at_exact_minute_boundary():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(0), candle(1), candle(2))
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=3), limit=10,
+        now=BASE + timedelta(minutes=3),
+    )
+
+    assert result["expected_candle_count"] == 3
+    assert result["returned_candle_count"] == 3
+    assert result["complete"] is True
+
+
+def test_direct_history_preserves_requested_end_and_reports_effective_end():
+    requested_end = BASE + timedelta(minutes=10)
+
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(0), candle(1), candle(2))
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=requested_end, limit=10,
+        now=BASE + timedelta(minutes=3),
+    )
+
+    assert result["requested_end"] == requested_end.isoformat()
+    assert result["effective_end"] == (BASE + timedelta(minutes=3)).isoformat()
+    assert result["expected_candle_count"] == 3
+    assert result["returned_candle_count"] == 3
+    assert result["complete"] is True
