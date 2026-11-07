@@ -591,23 +591,26 @@ def test_yearly_candle_api_reports_monthly_fetch_failure_without_fabricating_dat
 
 
 def test_candle_api_contract_reports_all_native_intervals_and_isolates_failure():
-    from types import SimpleNamespace
     from app.engines.read_only_api import build_market_candle_payload
 
     native_intervals = ("1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M")
+    open_times = {
+        "1m": datetime(2026, 1, 1, 23, 59, tzinfo=timezone.utc),
+        "5m": datetime(2026, 1, 1, 23, 55, tzinfo=timezone.utc),
+        "15m": datetime(2026, 1, 1, 23, 45, tzinfo=timezone.utc),
+        "1h": datetime(2026, 1, 1, 23, 0, tzinfo=timezone.utc),
+        "4h": datetime(2026, 1, 1, 20, 0, tzinfo=timezone.utc),
+        "1d": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+        "1w": datetime(2025, 12, 22, 0, 0, tzinfo=timezone.utc),
+    }
 
     class Source:
         def fetch_klines(self, symbol, *, interval, limit):
             if interval == "15m":
                 raise RuntimeError("temporary interval outage")
             if interval == "1M":
-                return _closed_monthly_candles(year=2024)
-            return [SimpleNamespace(
-                open_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                close_time=datetime(2024, 1, 1, 0, 0, 59, tzinfo=timezone.utc),
-                open=100.0, high=105.0, low=95.0, close=102.0,
-                volume=12.0, is_closed=True,
-            )]
+                return _closed_monthly_candles(year=2025)
+            return [_single_closed_candle_for_interval(symbol, interval, open_times[interval])]
 
     now = datetime(2026, 1, 2, 0, 0, 1, tzinfo=timezone.utc)
     payload = build_market_candle_payload(
