@@ -26,6 +26,14 @@ jobs:
             echo "::error::RENDER_API_KEY GitHub Actions secret is unavailable; Render was not changed."
             exit 2
           fi
+          # The prior rollout is stuck retrying a worker with the previous invalid research-window setting.
+          # Cancel only that known in-progress deploy so Render can start the already-queued env-update deploy.
+          cancelled="$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            "https://api.render.com/v1/services/${RENDER_WORKER_SERVICE_ID}/deploys/dep-dbnboidg1s2s73c8nl10/cancel" \
+            --header "Authorization: Bearer ${RENDER_API_KEY}" \
+            --header "Accept: application/json")"
+          printf '%s' "$cancelled" | jq -e '.status == "canceled"'
           response="$(curl --fail-with-body --silent --show-error \
             --request PATCH \
             "https://api.render.com/v1/services/${RENDER_WORKER_SERVICE_ID}" \
