@@ -454,8 +454,10 @@ def _summary_markdown(result: Mapping[str, Any], worker_id: str) -> str:
         f"- Orders authorized: `{result.get('orders_authorized')}`\n"
         f"- Heartbeat age: `{result.get('heartbeat_age_seconds')}` seconds\n"
         f"- Reasons: {reasons}\n"
-        f"- Conditional wake attempted: `{result.get('wake_request_attempted', False)}`\n"
-        f"- Liveness response validated: `{result.get('wake_response_validated', False)}`\n"
+        f"- Conditional wake attempted: `{result.get('wake_request_attempted', False)}`\\n"
+        f"- Keepwarm request attempted: `{result.get('keepwarm_request_attempted', False)}`\\n"
+        f"- Keepwarm response validated: `{result.get('keepwarm_response_validated', False)}`\\n"
+        f"- Liveness response validated: `{result.get('wake_response_validated', False) or result.get('keepwarm_response_validated', False)}`\\n"
         f"- Worker/scheduler recovery confirmed: `{result.get('recovery_confirmed', False)}`\n\n"
         "The database health check is read-only. A single liveness request is sent only after a confirmed stopped-worker classification; feed degradation alone never wakes the service.\n"
     )
