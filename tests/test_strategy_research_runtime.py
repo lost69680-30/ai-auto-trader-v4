@@ -169,7 +169,7 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
 
 
 def test_research_handler_rejects_history_that_cannot_provide_four_disjoint_validation_folds():
-    with pytest.raises(ValueError, match="four.*validation folds"):
+    with pytest.raises(ValueError, match="4.*validation folds"):
         strategy_research_runtime.build_strategy_research_handler(
             FakeArchive([]), FakeMemory(), symbols=("BTCUSDT",),
             candles_per_symbol=4499, clock=lambda: NOW,
