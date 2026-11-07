@@ -142,7 +142,7 @@ def worker_readiness_payload(
     )
 
     ready = (
-        feed_status == "HEALTHY"
+        feed_status in {"HEALTHY", "DEGRADED", "OFFLINE", "STALE"}
         and worker_status == "RUNNING"
         and age_is_fresh
         and lease_expired is False
@@ -158,6 +158,7 @@ def worker_readiness_payload(
         "worker_status": worker_status if isinstance(worker_status, str) else "UNKNOWN",
         "scheduler_status": scheduler_status if isinstance(scheduler_status, str) else "UNKNOWN",
         "scheduler_age_seconds": max(0.0, scheduler_age) if scheduler_age is not None and math.isfinite(scheduler_age) else None,
+        "market_data_ready": feed_status == "HEALTHY",
         "process_alive": process_alive,
         "lease_expired": lease_expired if isinstance(lease_expired, bool) else None,
         "age_seconds": float(age) if age_is_fresh else None,
