@@ -89,6 +89,8 @@ jobs:
           EXTRACTED_TEST="$PROJECT_DIR/android/app/src/test"
           for relative in \
             java/com/aiautotrader/v4/MainActivity.kt \
+            java/com/aiautotrader/v4/TradingViewCandlestickChart.kt \
+            java/com/aiautotrader/v4/TradingViewChartData.kt \
             java/com/aiautotrader/v4/MarketObservationFreshness.kt \
             java/com/aiautotrader/v4/MarketWebSocketClient.kt \
             java/com/aiautotrader/v4/PaperLedgerClient.kt; do
@@ -97,7 +99,8 @@ jobs:
           for relative in \
             java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt \
             java/com/aiautotrader/v4/MarketWebSocketClientTest.kt \
-            java/com/aiautotrader/v4/PaperLedgerClientTest.kt; do
+            java/com/aiautotrader/v4/PaperLedgerClientTest.kt \
+            java/com/aiautotrader/v4/TradingViewChartDataTest.kt; do
             cmp "$ROOT_TEST/$relative" "$EXTRACTED_TEST/$relative" || { echo "Android test-source mirror mismatch: $relative"; exit 1; }
           done
 
