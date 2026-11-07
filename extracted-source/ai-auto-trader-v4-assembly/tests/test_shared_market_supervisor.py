@@ -340,22 +340,6 @@ def test_worker_readyz_returns_200_for_fresh_healthy_worker_and_paper_only_state
         server.server_close()
 
 
-@pytest.mark.parametrize(
-    "override",
-    [
-        {"worker_status": "STALE"},
-        {"age_seconds": 120.0},
-        {"age_seconds": -1.0},
-        {"age_seconds": True},
-        {"lease_expired": True},
-        {"process_alive": False},
-        {"orders_authorized": True},
-        {"details": {"scheduled_jobs": {"status": "DEGRADED", "last_poll_at": "2026-11-07T01:00:00+00:00"}}},
-        {"details": {"scheduled_jobs": {"status": "RUNNING", "last_poll_at": "2026-10-01T00:00:00+00:00"}}},
-    ],
-)
-
-
 @pytest.mark.parametrize("feed_status", ["STALE", "DEGRADED", "OFFLINE"])
 def test_worker_readyz_does_not_restart_healthy_instance_for_market_feed_degradation(feed_status):
     import json
@@ -397,6 +381,20 @@ def test_worker_readyz_does_not_restart_healthy_instance_for_market_feed_degrada
         server.server_close()
 
 
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"worker_status": "STALE"},
+        {"age_seconds": 120.0},
+        {"age_seconds": -1.0},
+        {"age_seconds": True},
+        {"lease_expired": True},
+        {"process_alive": False},
+        {"orders_authorized": True},
+        {"details": {"scheduled_jobs": {"status": "DEGRADED", "last_poll_at": "2026-11-07T01:00:00+00:00"}}},
+        {"details": {"scheduled_jobs": {"status": "RUNNING", "last_poll_at": "2026-10-01T00:00:00+00:00"}}},
+    ],
+)
 def test_worker_readyz_returns_503_for_unhealthy_or_unsafe_state(override):
     import json
     from datetime import datetime, timezone
