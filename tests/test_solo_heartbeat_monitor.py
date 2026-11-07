@@ -137,3 +137,14 @@ def test_unsafe_feed_snapshot_is_safety_violation():
     result = classify_worker_snapshot(snapshot, now=NOW)
     assert result["state"] == "SAFETY_VIOLATION"
     assert result["market_data_ready"] is False
+
+
+def test_degraded_worker_status_can_still_be_process_healthy():
+    snapshot = healthy_snapshot()
+    snapshot["status"] = "DEGRADED"
+    snapshot["feed"]["healthy_rows"] = 7
+    snapshot["feed"]["stale_rows"] = 3
+    result = classify_worker_snapshot(snapshot, now=NOW)
+    assert result["state"] == "DEGRADED"
+    assert result["worker_process_healthy"] is True
+    assert result["market_data_ready"] is False
