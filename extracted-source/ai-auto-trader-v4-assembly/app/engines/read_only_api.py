@@ -22,6 +22,8 @@ from wsgiref.simple_server import make_server
 
 from app.engines.paper_ledger import SQLitePaperLedger
 from backend.timeframe_aggregation import aggregate_complete_yearly_candles
+from backend.market_assessment import assess_market
+from backend.market_data_adapter import MarketCandle
 from app.engines.postgres_paper_ledger import PostgresPaperLedger
 
 
@@ -280,31 +282,120 @@ def build_direct_market_history_payload(
 
 def build_market_candle_payload(
     *, source, symbol: str, allowed_symbols: Iterable[str],
-    intervals: tuple[str, ...], limit: int,
+    intervals: tuple[str, ...], limit: int, now: datetime | None = None,
 ) -> dict[str, object]:
-    """Build the authenticated read-only candle response, including complete yearly bars."""
+    """Build the authenticated read-only candle response with per-interval validation."""
     if symbol not in allowed_symbols:
         raise ValueError("symbol is not in the configured market allowlist")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+        raise ValueError("candle limit must be between 1 and 1000")
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        raise ValueError("candle history clock must be timezone-aware")
+    current = current.astimezone(timezone.utc)
+
     interval_payloads, interval_status, rows_by_interval = _fetch_candle_intervals(
         source, symbol, intervals, limit
     )
+    coverage_by_interval: dict[str, dict[str, object]] = {}
+
+    def build_coverage(payload, status: str, reason: str = "") -> dict[str, object]:
+        returned = len(payload)
+        if status == "HEALTHY":
+            coverage_status = "COMPLETE_WINDOW" if returned >= limit else "SHORT_HISTORY"
+        elif status == "INSUFFICIENT_HISTORY":
+            coverage_status = "INSUFFICIENT_HISTORY"
+        elif status == "GAP_DETECTED":
+            coverage_status = "INCOMPLETE"
+        elif status.startswith("UNAVAILABLE:"):
+            coverage_status = "UNAVAILABLE"
+        elif status in {"STALE", "IN_PROGRESS"}:
+            coverage_status = status
+        else:
+            coverage_status = "INVALID_DATA"
+        return {
+            "requested_limit": limit,
+            "returned_count": returned,
+            "first_open_time": payload[0].get("open_time") if payload else None,
+            "last_close_time": payload[-1].get("close_time") if payload else None,
+            "truncated": returned >= limit,
+            "validated": status == "HEALTHY",
+            "coverage_status": coverage_status,
+            "reason": reason or status,
+        }
+
+    for interval, rows in rows_by_interval.items():
+        existing_status = interval_status.get(interval, "INSUFFICIENT_HISTORY")
+        if existing_status.startswith("UNAVAILABLE:"):
+            status = existing_status
+            reason = existing_status
+        elif not rows:
+            status = "INSUFFICIENT_HISTORY"
+            reason = "no candles supplied"
+        else:
+            try:
+                assessment = assess_market(
+                    symbol, {interval: rows}, now=current,
+                )
+                timeframe_result = next(
+                    item for item in assessment.timeframes if item.timeframe == interval
+                )
+                status = timeframe_result.status
+                reason = "; ".join(timeframe_result.reasons)
+            except Exception as exc:
+                status = "INVALID_DATA"
+                reason = f"candle validation failed: {type(exc).__name__}"
+        interval_status[interval] = status
+        coverage_by_interval[interval] = build_coverage(
+            interval_payloads.get(interval, []), status, reason,
+        )
+
     yearly = aggregate_complete_yearly_candles(rows_by_interval.get("1M", ()))
     interval_payloads["1y"] = yearly
-    if yearly:
-        interval_status["1y"] = "HEALTHY"
-    elif interval_status.get("1M", "").startswith("UNAVAILABLE:"):
-        interval_status["1y"] = "UNAVAILABLE:MONTHLY_INTERVAL"
+    monthly_status = interval_status.get("1M", "INSUFFICIENT_HISTORY")
+    if monthly_status.startswith("UNAVAILABLE:"):
+        yearly_status = "UNAVAILABLE:MONTHLY_INTERVAL"
+        yearly_reason = "monthly interval unavailable"
+    elif monthly_status != "HEALTHY":
+        yearly_status = monthly_status
+        yearly_reason = f"derived yearly evidence blocked by monthly status: {monthly_status}"
+    elif not yearly:
+        yearly_status = "INSUFFICIENT_HISTORY"
+        yearly_reason = "no complete yearly candle can be assembled"
     else:
-        interval_status["1y"] = "INSUFFICIENT_HISTORY"
+        try:
+            yearly_rows = tuple(MarketCandle(
+                symbol=symbol,
+                open_time=datetime.fromisoformat(row["open_time"]),
+                close_time=datetime.fromisoformat(row["close_time"]),
+                open=float(row["open"]), high=float(row["high"]),
+                low=float(row["low"]), close=float(row["close"]),
+                volume=float(row["volume"]),
+                quote_volume=float(row.get("quote_volume", 0.0)),
+                trades=int(row.get("trades", 0)),
+                is_closed=bool(row.get("is_closed", False)),
+            ) for row in yearly)
+            assessment = assess_market(symbol, {"1Y": yearly_rows}, now=current)
+            yearly_result = next(
+                item for item in assessment.timeframes if item.timeframe == "1Y"
+            )
+            yearly_status = yearly_result.status
+            yearly_reason = "; ".join(yearly_result.reasons)
+        except Exception as exc:
+            yearly_status = "INVALID_DATA"
+            yearly_reason = f"yearly candle validation failed: {type(exc).__name__}"
+    interval_status["1y"] = yearly_status
+    coverage_by_interval["1y"] = build_coverage(
+        yearly, yearly_status, yearly_reason,
+    )
     return {
         "symbol": symbol,
         "candles_by_interval": interval_payloads,
         "interval_status": interval_status,
+        "coverage_by_interval": coverage_by_interval,
         "orders_authorized": False,
         "mode": "PAPER_ONLY",
     }
-
-
 def create_app(*, database_path: str, token: str, market_status: Callable[[], dict] | None = None,
                market_items: Callable[[], list[dict]] | None = None,
                market_candles: Callable[[str], dict] | None = None,
