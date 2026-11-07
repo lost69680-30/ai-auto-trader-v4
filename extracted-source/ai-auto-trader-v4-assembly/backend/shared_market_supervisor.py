@@ -79,17 +79,22 @@ def configured_supervisor_modules(
 
 def worker_readiness_payload(
     snapshot: Any, *, max_age_seconds: float = 90.0,
+    max_scheduler_stale_seconds: float = 900.0,
 ) -> tuple[dict[str, Any], int]:
     """Build a safe readiness response; unknown, stale, or unsafe state fails closed."""
     import math
 
-    if (
-        isinstance(max_age_seconds, bool)
-        or not isinstance(max_age_seconds, (int, float))
-        or not math.isfinite(max_age_seconds)
-        or max_age_seconds <= 0
+    for value, name in (
+        (max_age_seconds, "max_age_seconds"),
+        (max_scheduler_stale_seconds, "max_scheduler_stale_seconds"),
     ):
-        raise ValueError("max_age_seconds must be a finite positive number")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            raise ValueError(f"{name} must be a finite positive number")
 
     state = snapshot if isinstance(snapshot, Mapping) else {}
     feed_status = state.get("status")
@@ -107,12 +112,42 @@ def worker_readiness_payload(
         and math.isfinite(age)
         and 0 <= age <= float(max_age_seconds)
     )
+    details = state.get("details")
+    scheduler = details.get("scheduled_jobs") if isinstance(details, Mapping) else None
+    if not isinstance(scheduler, Mapping):
+        scheduler = {}
+    scheduler_status = scheduler.get("status")
+    scheduler_progress_times = []
+    for field in ("last_poll_started_at", "last_poll_at"):
+        raw = scheduler.get(field)
+        if not isinstance(raw, str):
+            continue
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            continue
+        scheduler_progress_times.append(parsed.astimezone(timezone.utc))
+    scheduler_age = None
+    if scheduler_progress_times:
+        scheduler_age = (
+            datetime.now(timezone.utc) - max(scheduler_progress_times)
+        ).total_seconds()
+    scheduler_is_fresh = (
+        scheduler_status == "RUNNING"
+        and isinstance(scheduler_age, (int, float))
+        and math.isfinite(scheduler_age)
+        and -1.0 <= scheduler_age <= float(max_scheduler_stale_seconds)
+    )
+
     ready = (
         feed_status == "HEALTHY"
         and worker_status == "RUNNING"
         and age_is_fresh
         and lease_expired is False
         and process_alive
+        and scheduler_is_fresh
         and orders_authorized is False
     )
     mode = "PAPER_ONLY" if orders_authorized is False else "SAFETY_VIOLATION"
@@ -121,6 +156,8 @@ def worker_readiness_payload(
         "mode": mode,
         "feed_status": feed_status if isinstance(feed_status, str) else "UNKNOWN",
         "worker_status": worker_status if isinstance(worker_status, str) else "UNKNOWN",
+        "scheduler_status": scheduler_status if isinstance(scheduler_status, str) else "UNKNOWN",
+        "scheduler_age_seconds": max(0.0, scheduler_age) if scheduler_age is not None and math.isfinite(scheduler_age) else None,
         "process_alive": process_alive,
         "lease_expired": lease_expired if isinstance(lease_expired, bool) else None,
         "age_seconds": float(age) if age_is_fresh else None,
@@ -132,6 +169,7 @@ def worker_readiness_payload(
 def start_worker_health_server(
     port: int, *, host: str = "0.0.0.0",
     readiness_provider=None, max_age_seconds: float = 90.0,
+    max_scheduler_stale_seconds: float = 900.0,
 ):
     """Serve separate liveness and data-aware readiness routes for the paper worker."""
     import json
@@ -178,7 +216,9 @@ def start_worker_health_server(
                         "orders_authorized": False,
                     }
                 payload, status_code = worker_readiness_payload(
-                    snapshot, max_age_seconds=max_age_seconds,
+                    snapshot,
+                    max_age_seconds=max_age_seconds,
+                    max_scheduler_stale_seconds=max_scheduler_stale_seconds,
                 )
                 self._respond(payload, status_code)
                 return
