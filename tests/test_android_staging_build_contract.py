@@ -25,8 +25,9 @@ class AndroidStagingBuildContractTests(unittest.TestCase):
     def test_staging_workflow_targets_only_the_staging_api(self):
         self.assertIn("https://solo-ai-auto-trader-staging-api.onrender.com", self.workflow)
         self.assertIn("Unexpected staging API target", self.workflow)
-        self.assertNotIn("ai-auto-trader-v4-backend.onrender.com", self.workflow)
-        self.assertNotIn("solo-futures-websocket-staging.onrender.com", self.workflow)
+        self.assertNotIn('PAPER_API_BASE_URL="https://ai-auto-trader-v4-backend.onrender.com"', self.workflow)
+        self.assertNotIn('PAPER_API_BASE_URL="https://solo-futures-websocket-staging.onrender.com"', self.workflow)
+        self.assertIn('if grep -Fq \'ai-auto-trader-v4-backend.onrender.com\' "$BUILD_CONFIG"', self.workflow)
 
     def test_workflow_checks_embedded_url_and_package_before_upload(self):
         self.assertIn("BUILD_CONFIG=", self.workflow)
