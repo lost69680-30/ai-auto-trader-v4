@@ -17,7 +17,7 @@ Do not embed TradingView Advanced Charts or Trading Platform in this repository.
 - Converts ISO-8601 candle open times to UTC epoch seconds and rejects malformed timestamps, non-finite or inconsistent OHLC values, negative volume, non-monotonic timestamps, and values that cannot be represented safely by the chart API.
 - Keeps chart errors isolated from the paper ledger and risk state.
 - Supports Solo dark/light chart backgrounds.
-- Retains TradingView's chart attribution logo through the chart option `attributionLogo = true`; the UI must be verified on-device to confirm the linked credit is visible in both themes.
+- Retains TradingView's chart attribution logo through the chart option `attributionLogo = true` and packages the upstream `NOTICE` text in `res/raw/tradingview_notice.txt`; on-device checks must still verify the linked logo is visible in both themes.
 
 ## Data and analysis boundary
 
