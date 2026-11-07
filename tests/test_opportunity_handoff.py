@@ -348,3 +348,41 @@ def test_restart_reconciliation_records_intent_then_ledger_confirmed_position():
         if item.evidence_type == "PAPER_POSITION"
     ]
     assert {item.payload["status"] for item in position_evidence} == {"OPEN", "CLOSED"}
+
+def test_triggered_opportunity_blocks_cost_above_price_planner_maximum():
+    reset_registry()
+    now = datetime.now(timezone.utc)
+    store = PostgresOpportunityStore(DSN)
+    coordinator = _coordinator(store)
+    record = _triggered_opportunity(store, now)
+    paper = FakePaperService()
+    paper.config.symbols = (
+        SimpleNamespace(symbol="BTCUSDT", estimated_round_trip_cost_pct=0.6),
+    )
+
+    class HighAtrFreshSource(FreshSource):
+        def fetch_klines(self, symbol, *, interval, limit, now=None):
+            rows = super().fetch_klines(symbol, interval=interval, limit=limit, now=now)
+            return tuple(MarketCandle(
+                symbol=row.symbol,
+                open_time=row.open_time,
+                close_time=row.close_time,
+                open=row.open,
+                high=row.high + 2.0,
+                low=row.low - 2.0,
+                close=row.close,
+                volume=row.volume,
+                quote_volume=row.quote_volume,
+                trades=row.trades,
+                is_closed=row.is_closed,
+            ) for row in rows)
+
+    result = process_triggered_opportunity(
+        coordinator, record, source=HighAtrFreshSource(now),
+        paper_service=paper, now=now, strategy_engine=RevalidationEngine(),
+    )
+
+    assert result["status"] == "NO_FRESH_PLAN"
+    assert result["orders_authorized"] is False
+    assert paper.calls == []
+    assert store.get_opportunity(record.opportunity_id).state == "BLOCKED"
