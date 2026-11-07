@@ -18,6 +18,7 @@ BRAND_RESOURCES = (
     "res/drawable/ic_solo_emblem_monochrome.xml",
     "res/drawable/ic_solo_emblem_light.xml",
     "res/drawable/ic_solo_notification.xml",
+    "res/raw/tradingview_notice.txt",
     "res/mipmap-anydpi-v26/ic_launcher.xml",
     "res/mipmap-anydpi-v26/ic_launcher_round.xml",
 )
@@ -94,6 +95,13 @@ def test_brand_palette_uses_the_approved_hidden_sovereign_tokens():
 def test_root_and_render_assembly_brand_resources_are_byte_identical():
     for relative in BRAND_RESOURCES:
         assert (ROOT_ANDROID / relative).read_bytes() == (PACKAGED_ANDROID / relative).read_bytes()
+
+
+def test_tradingview_attribution_notice_is_packaged_and_complete():
+    notice = (ROOT_ANDROID / "res/raw/tradingview_notice.txt").read_text(encoding="utf-8")
+    assert "TradingView Lightweight Charts™" in notice
+    assert "Copyright (с) 2025 TradingView, Inc." in notice
+    assert "https://www.tradingview.com/" in notice
 
 
 def test_android_header_selects_the_light_emblem_for_light_theme():
