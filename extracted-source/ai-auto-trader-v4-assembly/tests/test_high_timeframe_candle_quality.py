@@ -83,3 +83,21 @@ def test_higher_timeframe_candle_inside_conservative_continuity_bound_remains_us
     assert monthly.status == "HEALTHY"
     assert monthly.direction in {"BULLISH", "BEARISH", "NEUTRAL"}
     assert result.orders_authorized is False
+
+
+def test_first_candle_is_also_checked_for_extreme_internal_ohlc_range():
+    rows = _monthly_series()
+    first = rows[0]
+    rows[0] = replace(
+        first,
+        high=first.close * 25.0,
+        low=first.close * 0.99,
+    )
+
+    result = assess_market("BTCUSDT", {"1M": rows}, now=NOW)
+    monthly = next(item for item in result.timeframes if item.timeframe == "1M")
+
+    assert monthly.status == "INVALID_DATA"
+    assert monthly.direction == "INSUFFICIENT_DATA"
+    assert any("extreme candle price discontinuity" in reason for reason in monthly.reasons)
+    assert result.orders_authorized is False
