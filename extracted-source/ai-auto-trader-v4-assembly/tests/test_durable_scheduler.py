@@ -162,3 +162,32 @@ def test_claim_next_only_claims_explicitly_enabled_job_names():
             ("disabled_market_scan",),
         ).fetchone()
     assert unclaimed == ("PENDING",)
+
+def test_coalescing_missed_intervals_enqueues_only_latest_due_occurrence():
+    reset_tables()
+    scheduler = DurableJobScheduler(DSN)
+    first = datetime(2026, 11, 7, 10, 0, tzinfo=timezone.utc)
+    now = first + timedelta(minutes=3)
+    scheduler.register_interval(
+        "market_intelligence_scan", interval_seconds=60,
+        first_run_at=first, payload={"scope": "continuous_opportunity_search"},
+    )
+
+    assert scheduler.enqueue_due(now=now, coalesce_missed=True) == 1
+    job = scheduler.claim_next(owner="worker-recovery", now=now)
+    assert job is not None
+    assert job["scheduled_for"] == now
+    assert scheduler.enqueue_due(now=now, coalesce_missed=True) == 0
+
+    with psycopg.connect(DSN) as conn:
+        next_run = conn.execute(
+            "SELECT next_run_at FROM paper_ledger.scheduled_job_definitions WHERE job_name = %s",
+            ("market_intelligence_scan",),
+        ).fetchone()[0]
+        rows = conn.execute(
+            "SELECT scheduled_for FROM paper_ledger.scheduled_jobs WHERE job_name = %s ORDER BY scheduled_for",
+            ("market_intelligence_scan",),
+        ).fetchall()
+
+    assert next_run == now + timedelta(seconds=60)
+    assert rows == [(now,)]
