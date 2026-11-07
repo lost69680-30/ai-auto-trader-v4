@@ -4,7 +4,7 @@
 
 Solo uses TradingView Lightweight Charts as its Android candlestick renderer. The chart library is presentation-only: it does not supply market data, calculate Solo's risk limits, create paper intents, or expose an order interface. Solo remains the source of truth for market data and all analysis.
 
-Use the official Android wrapper and the published `com.tradingview:lightweightcharts:5.2.0` artifact. The wrapper renders the chart in Android WebView. Keep the existing native Compose dashboard, symbol selector, timeframe selector, and Solo analysis panels.
+Use the official Android wrapper and the published `com.tradingview:lightweightcharts:5.2.1` artifact. The wrapper renders the chart in Android WebView. Keep the existing native Compose dashboard, symbol selector, timeframe selector, and Solo analysis panels.
 
 Do not embed TradingView Advanced Charts or Trading Platform in this repository. Advanced Charts is distributed through a private, approval-based repository and is not redistributable in public repositories. Lightweight Charts is Apache-2.0 and suitable for this project, subject to its attribution requirement.
 
