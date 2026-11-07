@@ -148,9 +148,13 @@ def _evaluate_window(
     context_rows = rows[context_start:end]
     test_rows = rows[start:end]
     now = context_rows[-1].timestamp.astimezone(timezone.utc)
+    if rule_spec is not None:
+        raise ValueError(
+            "external rule specs are not supported by the current backtest engine"
+        )
     strategy = run_backtest(
         symbol, context_rows, config=backtest_config, research_config=research_config,
-        research_now=now, start_timestamp=test_rows[0].timestamp, rule_spec=rule_spec,
+        research_now=now, start_timestamp=test_rows[0].timestamp,
     )
     entry_price = test_rows[0].open
     exit_price = test_rows[-1].close
