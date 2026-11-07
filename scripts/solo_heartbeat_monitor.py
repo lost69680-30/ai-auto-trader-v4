@@ -413,7 +413,7 @@ def load_worker_snapshot(database_url: str, worker_id: str, max_snapshot_age_sec
 def recovery_outcome_message(result: Mapping[str, Any]) -> str:
     """Describe the actual recovery attempt without implying an attempt was skipped."""
     if result.get("recovery_confirmed") is True:
-        return "::notice::Worker process and scheduler recovery were confirmed from read-only database state."
+        return "::notice::Worker and scheduler recovery confirmed from read-only database state."
     if result.get("wake_request_attempted") is True:
         if result.get("wake_response_validated") is True:
             return "::warning::A liveness wake was accepted, but worker/scheduler recovery was not confirmed."
