@@ -54,7 +54,7 @@ def candle_rows(symbol="BTCUSDT", count=3000):
 
 
 def test_research_handler_persists_walk_forward_evidence_without_order_authority(monkeypatch):
-    rows = candle_rows()
+    rows = candle_rows(count=4500)
     archive = FakeArchive(rows)
     memory = FakeMemory()
     canonical_candles = tuple(Candle(
@@ -111,7 +111,7 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     assert summary["evaluated"] == 1
     assert summary["candidate_evaluations"] == 4
     assert summary["orders_authorized"] is False
-    assert calls[0][0:2] == ("BTCUSDT", 3000)
+    assert calls[0][0:2] == ("BTCUSDT", 4500)
     assert {call[2]["rule_spec"].family for call in calls} == {
         "SMA_CROSS", "MOMENTUM", "BREAKOUT", "RSI_THRESHOLD",
     }
@@ -148,6 +148,14 @@ def test_research_handler_persists_walk_forward_evidence_without_order_authority
     assert key.startswith("solo-research:")
 
 
+def test_research_handler_rejects_history_that_cannot_provide_four_disjoint_validation_folds():
+    with pytest.raises(ValueError, match="four.*validation folds"):
+        strategy_research_runtime.build_strategy_research_handler(
+            FakeArchive([]), FakeMemory(), symbols=("BTCUSDT",),
+            candles_per_symbol=4499, clock=lambda: NOW,
+        )
+
+
 def test_research_handler_rejects_wrong_scope_and_venue():
     handler = strategy_research_runtime.build_strategy_research_handler(
         FakeArchive([]), FakeMemory(), symbols=("BTCUSDT",), clock=lambda: NOW,
@@ -165,7 +173,7 @@ def test_research_handler_skips_symbols_without_sufficient_archive_history(monke
     archive = FakeArchive(candle_rows(count=100))
     memory = FakeMemory()
     handler = strategy_research_runtime.build_strategy_research_handler(
-        archive, memory, symbols=("BTCUSDT",), candles_per_symbol=3000,
+        archive, memory, symbols=("BTCUSDT",), candles_per_symbol=4500,
         clock=lambda: NOW,
     )
     with pytest.raises(RuntimeError, match="no candidates were evaluated"):
@@ -177,7 +185,7 @@ def test_research_handler_skips_symbols_without_sufficient_archive_history(monke
 
 
 def test_research_memory_write_failure_propagates_for_scheduler_retry(monkeypatch):
-    rows = candle_rows()
+    rows = candle_rows(count=4500)
     archive = FakeArchive(rows)
     canonical_candles = tuple(Candle(
         symbol="BTCUSDT", timestamp=row.open_time,
@@ -229,7 +237,7 @@ def test_research_memory_write_failure_propagates_for_scheduler_retry(monkeypatc
 
 
 def test_research_handler_rejects_evaluator_provenance_for_wrong_symbol(monkeypatch):
-    rows = candle_rows()
+    rows = candle_rows(count=4500)
     archive = FakeArchive(rows)
     memory = FakeMemory()
     wrong_provenance = DatasetProvenance(
@@ -294,7 +302,7 @@ def test_stateless_history_loader_fetches_closed_candles_in_bounded_pages():
     )
 
     assert len(candles) == 3000
-    assert len(source.requests) == 2
+    assert len(source.requests) == 3
     assert all(request[1] == "1m" and request[2] <= 1500 for request in source.requests)
     assert all(candles[index].timestamp < candles[index + 1].timestamp for index in range(2999))
     assert all(
@@ -333,7 +341,7 @@ def test_stateless_history_loader_rejects_missing_minute_candles():
 def test_stateless_research_handler_evaluates_and_persists_without_archive(monkeypatch):
     from backend.strategy_research_runtime import build_strategy_research_handler
 
-    archived = candle_rows(count=3000)
+    archived = candle_rows(count=4500)
     market_rows = tuple(SimpleNamespace(
         symbol="BTCUSDT", open_time=row.open_time, close_time=row.close_time,
         open=row.open, high=row.high, low=row.low, close=row.close, volume=row.volume,
