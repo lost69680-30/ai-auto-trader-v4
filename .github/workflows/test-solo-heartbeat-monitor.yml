@@ -7,7 +7,7 @@ on:
       - "tests/test_solo_heartbeat_monitor.py"
       - ".github/workflows/test-solo-heartbeat-monitor.yml"
   push:
-    branches: [main]
+    branches: [main, fix/solo-conditional-worker-recovery-20261107]
     paths:
       - "scripts/solo_heartbeat_monitor.py"
       - "tests/test_solo_heartbeat_monitor.py"
