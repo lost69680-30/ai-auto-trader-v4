@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import signal
 import threading
 import time
@@ -223,6 +224,18 @@ def opportunity_reassessment_handler(coordinator: OpportunityCoordinator, source
     return handle
 
 
+def _safe_dispatch_error_label(value: Any) -> str | None:
+    """Persist only a safe exception-type label, never arbitrary dispatcher text."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return type(value).__name__[:80]
+    label = value.partition(":")[0].strip()
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,79}", label):
+        return label
+    return "DispatchError"
+
+
 def run_scheduled_jobs(
     stop: threading.Event, scheduler: DurableJobScheduler,
     dispatcher: AnalysisJobDispatcher, *, poll_interval: float = 5.0,
@@ -259,10 +272,11 @@ def run_scheduled_jobs(
         dispatch_status = getattr(dispatcher, "last_run_status", "IDLE")
         dispatch_error = getattr(dispatcher, "last_error", None)
         degraded = scheduler_error is not None or dispatch_error is not None or dispatch_status == "LEASE_LOST"
+        safe_dispatch_error = _safe_dispatch_error_label(dispatch_error)
         publish_health(
             status="DEGRADED" if degraded else "RUNNING",
             last_poll_at=datetime.now(timezone.utc).isoformat(),
-            last_error=scheduler_error or dispatch_error,
+            last_error=scheduler_error or safe_dispatch_error,
             last_dispatch_status=dispatch_status,
             jobs_enqueued=enqueued,
         )
