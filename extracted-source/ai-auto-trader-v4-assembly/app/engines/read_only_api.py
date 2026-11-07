@@ -188,8 +188,9 @@ def build_direct_market_history_payload(
     first_open_ms = ((int(start_utc.timestamp() * 1000) + 59999) // 60000) * 60000
     end_ms = int(end_utc.timestamp() * 1000) - 1
     # A candle is complete only after its close timestamp has passed.
-    latest_closed_open_ms = ((int(current.timestamp() * 1000) - 60001) // 60000) * 60000
-    last_expected_open_ms = min((end_ms // 60000) * 60000, latest_closed_open_ms)
+    latest_closed_open_ms = ((int(current.timestamp() * 1000) - 60000) // 60000) * 60000
+    # Only count a minute bar when its full close time is inside the exclusive end boundary.
+    last_expected_open_ms = min(((end_ms - 59999) // 60000) * 60000, latest_closed_open_ms)
     expected_count = (
         max(0, ((last_expected_open_ms - first_open_ms) // 60000) + 1)
         if last_expected_open_ms >= first_open_ms else 0
@@ -262,7 +263,8 @@ def build_direct_market_history_payload(
             "close": row.close, "volume": row.volume, "is_closed": True,
         } for row in rows],
         "requested_start": start_utc.isoformat(),
-        "requested_end": end_utc.isoformat(),
+        "requested_end": end.astimezone(timezone.utc).isoformat(),
+        "effective_end": end_utc.isoformat(),
         "coverage_start": coverage_start,
         "coverage_end": coverage_end,
         "expected_candle_count": expected_count,
