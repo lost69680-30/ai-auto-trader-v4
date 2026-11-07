@@ -61,6 +61,46 @@ internal fun TradingViewCandlestickChart(
     val chartError = remember { mutableStateOf<String?>(null) }
     val appliedData = remember { mutableStateOf(emptyList<com.tradingview.lightweightcharts.api.series.models.CandlestickData>()) }
     val chartView = remember(context) { ChartsView(context) }
+    val latestThemeKey = rememberUpdatedState(
+        listOf(
+            backgroundColor.toArgb(),
+            textColor.toArgb(),
+            gridColor.toArgb(),
+            upColor.toArgb(),
+            downColor.toArgb(),
+        ).hashCode(),
+    )
+    val appliedTheme = remember { mutableStateOf<Int?>(null) }
+
+    fun applyChartTheme() {
+        val themeKey = latestThemeKey.value
+        if (appliedTheme.value == themeKey) return
+        chartView.api.applyOptions {
+            layout = layoutOptions {
+                background = SolidColor(latestBackgroundColor.value.toArgb().toIntColor())
+                textColor = latestTextColor.value.toArgb().toIntColor()
+                attributionLogo = true
+            }
+            timeScale = timeScaleOptions {
+                timeVisible = true
+                secondsVisible = false
+                borderColor = latestGridColor.value.toArgb().toIntColor()
+                fixLeftEdge = true
+            }
+            rightPriceScale = priceScaleOptions {
+                borderColor = latestGridColor.value.toArgb().toIntColor()
+            }
+            grid = gridOptions {
+                horzLines = gridLineOptions {
+                    color = latestGridColor.value.toArgb().toIntColor()
+                }
+                vertLines = gridLineOptions {
+                    color = latestGridColor.value.toArgb().toIntColor()
+                }
+            }
+        }
+        appliedTheme.value = themeKey
+    }
 
     val stateListener = remember(chartView) {
         { state: ChartsView.State ->
@@ -68,34 +108,12 @@ internal fun TradingViewCandlestickChart(
                 is ChartsView.State.Preparing -> {
                     seriesState.value = null
                     appliedData.value = emptyList()
+                    appliedTheme.value = null
                 }
                 is ChartsView.State.Ready -> {
                     chartError.value = null
                     if (seriesState.value == null) {
-                        chartView.api.applyOptions {
-                            layout = layoutOptions {
-                                background = SolidColor(latestBackgroundColor.value.toArgb().toIntColor())
-                                textColor = latestTextColor.value.toArgb().toIntColor()
-                                attributionLogo = true
-                            }
-                            timeScale = timeScaleOptions {
-                                timeVisible = true
-                                secondsVisible = false
-                                borderColor = latestGridColor.value.toArgb().toIntColor()
-                                fixLeftEdge = true
-                            }
-                            rightPriceScale = priceScaleOptions {
-                                borderColor = gridColor.toArgb().toIntColor()
-                            }
-                            grid = gridOptions {
-                                horzLines = gridLineOptions {
-                                    color = latestGridColor.value.toArgb().toIntColor()
-                                }
-                                vertLines = gridLineOptions {
-                                    color = gridColor.toArgb().toIntColor()
-                                }
-                            }
-                        }
+                        applyChartTheme()
                         chartView.api.addCandlestickSeries(
                             options = CandlestickSeriesOptions(
                                 upColor = latestUpColor.value.toArgb().toIntColor(),
@@ -168,9 +186,12 @@ internal fun TradingViewCandlestickChart(
                         update = {
                             val currentData = latestData.value
                             val currentSeries = seriesState.value
-                            if (currentSeries != null && currentData != appliedData.value) {
-                                currentSeries.setData(currentData)
-                                appliedData.value = currentData
+                            if (currentSeries != null) {
+                                applyChartTheme()
+                                if (currentData != appliedData.value) {
+                                    currentSeries.setData(currentData)
+                                    appliedData.value = currentData
+                                }
                             }
                         },
                     )
