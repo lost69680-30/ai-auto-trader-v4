@@ -235,8 +235,17 @@ def build_direct_market_history_payload(
 
     returned_count = len(rows)
     truncated = expected_count > limit
+    # Candles beyond the requested cap are intentionally unreturned, not missing.
+    unreturned_due_to_limit = max(0, expected_count - limit)
+    # A provider shortfall is measured only within the portion we actually asked it to return.
+    upstream_missing_count = max(0, min(expected_count, limit) - returned_count)
     complete = returned_count == expected_count and not truncated
-    coverage_status = "COMPLETE" if complete else ("TRUNCATED" if truncated else "INCOMPLETE")
+    if truncated and upstream_missing_count:
+        coverage_status = "TRUNCATED_AND_INCOMPLETE"
+    elif truncated:
+        coverage_status = "TRUNCATED"
+    else:
+        coverage_status = "COMPLETE" if complete else "INCOMPLETE"
     coverage_start = rows[0].open_time.astimezone(timezone.utc).isoformat() if rows else None
     coverage_end = rows[-1].open_time.astimezone(timezone.utc).isoformat() if rows else None
     return {
@@ -256,7 +265,9 @@ def build_direct_market_history_payload(
         "coverage_end": coverage_end,
         "expected_candle_count": expected_count,
         "returned_candle_count": returned_count,
-        "missing_candle_count": max(0, expected_count - returned_count),
+        "missing_candle_count": upstream_missing_count,
+        "upstream_missing_candle_count": upstream_missing_count,
+        "unreturned_due_to_limit": unreturned_due_to_limit,
         "complete": complete,
         "truncated": truncated,
         "coverage_status": coverage_status,
