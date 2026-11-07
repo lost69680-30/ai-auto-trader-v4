@@ -2670,7 +2670,23 @@ private fun AnalyticsChartCard(title: String, note: String, kind: ChartKind) {
 
 @Composable
 private fun CandlestickChart(modifier: Modifier = Modifier, candles: List<MarketCandle>) {
-    Canvas(modifier.background(Panel, RoundedCornerShape(10.dp)).padding(8.dp)) {
+    TradingViewCandlestickChart(
+        modifier = modifier,
+        candles = candles.takeLast(120),
+        backgroundColor = Panel,
+        textColor = Muted,
+        gridColor = Grid,
+        upColor = Green,
+        downColor = Red,
+        fallbackContent = { fallbackModifier ->
+            FallbackCandlestickChart(fallbackModifier, candles)
+        },
+    )
+}
+
+@Composable
+private fun FallbackCandlestickChart(modifier: Modifier, candles: List<MarketCandle>) {
+    Canvas(modifier) {
         val w = size.width
         val h = size.height
         val chartH = h * .78f
