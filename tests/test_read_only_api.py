@@ -490,6 +490,7 @@ def _closed_monthly_candles(year=2025):
 
 
 
+# Coverage contract: chart intervals are validated independently from the history endpoint.
 def _single_closed_candle_for_interval(symbol, interval, opened):
     from backend.market_data_adapter import MarketCandle
 
