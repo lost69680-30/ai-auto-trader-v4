@@ -95,7 +95,7 @@ jobs:
           for relative in java/com/aiautotrader/v4/MainActivity.kt java/com/aiautotrader/v4/MarketObservationFreshness.kt java/com/aiautotrader/v4/MarketWebSocketClient.kt; do
             cmp "$ROOT_MAIN/$relative" "$EXTRACTED_MAIN/$relative" || { echo "Android main-source mirror mismatch: $relative"; exit 1; }
           done
-          for relative in java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt java/com/aiautotrader/v4/MarketWebSocketClientTest.kt; do
+          for relative in java/com/aiautotrader/v4/MarketAnalysisChecksTest.kt java/com/aiautotrader/v4/MarketWebSocketClientTest.kt java/com/aiautotrader/v4/BackendSessionRestoreTest.kt; do
             cmp "$ROOT_TEST/$relative" "$EXTRACTED_TEST/$relative" || { echo "Android test-source mirror mismatch: $relative"; exit 1; }
           done
 
