@@ -2,7 +2,17 @@ from pathlib import Path
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[1]
+def repository_root() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        if (
+            (parent / "android" / "app" / "build.gradle.kts").is_file()
+            and (parent / ".github" / "workflows" / "build-market-analysis-apk.yml").is_file()
+        ):
+            return parent
+    raise RuntimeError("could not locate Solo repository root")
+
+
+ROOT = repository_root()
 ROOT_GRADLE = ROOT / "android" / "app" / "build.gradle.kts"
 EXTRACTED = ROOT / "extracted-source" / "ai-auto-trader-v4-assembly"
 EXTRACTED_GRADLE = EXTRACTED / "android" / "app" / "build.gradle.kts"
@@ -25,8 +35,9 @@ class AndroidStagingBuildContractTests(unittest.TestCase):
     def test_staging_workflow_targets_only_the_staging_api(self):
         self.assertIn("https://solo-ai-auto-trader-staging-api.onrender.com", self.workflow)
         self.assertIn("Unexpected staging API target", self.workflow)
-        self.assertNotIn("ai-auto-trader-v4-backend.onrender.com", self.workflow)
-        self.assertNotIn("solo-futures-websocket-staging.onrender.com", self.workflow)
+        self.assertNotIn('PAPER_API_BASE_URL="https://ai-auto-trader-v4-backend.onrender.com"', self.workflow)
+        self.assertNotIn('PAPER_API_BASE_URL="https://solo-futures-websocket-staging.onrender.com"', self.workflow)
+        self.assertIn('if grep -Fq \'ai-auto-trader-v4-backend.onrender.com\' "$BUILD_CONFIG"', self.workflow)
 
     def test_workflow_checks_embedded_url_and_package_before_upload(self):
         self.assertIn("BUILD_CONFIG=", self.workflow)
