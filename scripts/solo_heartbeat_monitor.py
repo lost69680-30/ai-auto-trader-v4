@@ -6,6 +6,8 @@ import math
 import os
 from pathlib import Path
 import sys
+import time
+from urllib.request import Request, urlopen
 from typing import Any, Iterable, Mapping
 
 
@@ -241,6 +243,130 @@ def classify_worker_snapshot(
     }
 
 
+WORKER_LIVENESS_URL = "https://solo-futures-websocket-staging.onrender.com/healthz"
+
+
+def worker_wake_required(result: Mapping[str, Any] | None) -> bool:
+    """Wake only a confirmed stopped worker; feed degradation and unknown state are not enough."""
+    return (
+        isinstance(result, Mapping)
+        and result.get("state") == "STOPPED"
+        and result.get("orders_authorized") is False
+    )
+
+
+def request_worker_wake(
+    result: Mapping[str, Any] | None,
+    *,
+    opener=None,
+    timeout_seconds: float = 45.0,
+) -> dict[str, Any]:
+    """Send at most one liveness-only request after a read-only stop classification."""
+    if not worker_wake_required(result):
+        return {
+            "attempted": False,
+            "response_validated": False,
+            "error_type": None,
+        }
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, (int, float))
+        or not math.isfinite(timeout_seconds)
+        or timeout_seconds <= 0
+    ):
+        raise ValueError("timeout_seconds must be a finite positive number")
+
+    request = Request(
+        WORKER_LIVENESS_URL,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "Solo-Conditional-Worker-Recovery/1.0",
+        },
+        method="GET",
+    )
+    open_url = opener or urlopen
+    try:
+        with open_url(request, timeout=float(timeout_seconds)) as response:
+            status_code = getattr(response, "status", None)
+            body = response.read()
+        payload = json.loads(body.decode("utf-8"))
+        validated = (
+            status_code == 200
+            and isinstance(payload, Mapping)
+            and payload.get("status") == "ok"
+            and payload.get("mode") == "PAPER_ONLY"
+            and payload.get("orders_authorized") is False
+        )
+        return {
+            "attempted": True,
+            "response_validated": bool(validated),
+            "error_type": None if validated else "UnverifiedLivenessResponse",
+        }
+    except Exception as exc:
+        # A timeout may occur while Render is cold-starting. The caller makes
+        # no second HTTP request and checks the read-only database for recovery.
+        return {
+            "attempted": True,
+            "response_validated": False,
+            "error_type": type(exc).__name__,
+        }
+
+
+def wait_for_worker_recovery(
+    database_url: str,
+    worker_id: str,
+    *,
+    max_heartbeat_age_seconds: float = 90.0,
+    max_scheduler_stale_seconds: float = 900.0,
+    max_snapshot_age_seconds: float = 90.0,
+    expected_symbols: Iterable[str] | None = None,
+    max_attempts: int = 10,
+    poll_interval_seconds: float = 15.0,
+    sleeper=time.sleep,
+    now_provider=lambda: datetime.now(timezone.utc),
+) -> dict[str, Any]:
+    """Confirm worker and scheduler recovery from read-only snapshots, never from HTTP alone."""
+    if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
+        raise ValueError("max_attempts must be a positive integer")
+    if (
+        isinstance(poll_interval_seconds, bool)
+        or not isinstance(poll_interval_seconds, (int, float))
+        or not math.isfinite(poll_interval_seconds)
+        or poll_interval_seconds < 0
+    ):
+        raise ValueError("poll_interval_seconds must be a finite non-negative number")
+
+    latest: dict[str, Any] = {
+        "state": "UNKNOWN",
+        "worker_process_healthy": False,
+        "scheduler_healthy": False,
+        "market_data_ready": False,
+        "orders_authorized": False,
+        "reasons": ["recovery_not_yet_observed"],
+    }
+    for attempt in range(max_attempts):
+        snapshot = load_worker_snapshot(
+            database_url, worker_id, max_snapshot_age_seconds
+        )
+        latest = classify_worker_snapshot(
+            snapshot,
+            now=now_provider(),
+            max_heartbeat_age_seconds=max_heartbeat_age_seconds,
+            max_scheduler_stale_seconds=max_scheduler_stale_seconds,
+            max_snapshot_age_seconds=max_snapshot_age_seconds,
+            expected_symbols=expected_symbols,
+        )
+        if (
+            latest.get("worker_process_healthy") is True
+            and latest.get("scheduler_healthy") is True
+            and latest.get("orders_authorized") is False
+        ):
+            return latest
+        if attempt + 1 < max_attempts:
+            sleeper(float(poll_interval_seconds))
+    return latest
+
+
 def load_worker_snapshot(database_url: str, worker_id: str, max_snapshot_age_seconds: float) -> dict[str, Any] | None:
     """Read the worker heartbeat and market snapshots using a read-only connection."""
     import psycopg
@@ -285,8 +411,11 @@ def _summary_markdown(result: Mapping[str, Any], worker_id: str) -> str:
         f"- Market data ready: `{result.get('market_data_ready')}`\n"
         f"- Orders authorized: `{result.get('orders_authorized')}`\n"
         f"- Heartbeat age: `{result.get('heartbeat_age_seconds')}` seconds\n"
-        f"- Reasons: {reasons}\n\n"
-        "This monitor uses read-only database access. It does not ping, wake, restart, or mutate the worker.\n"
+        f"- Reasons: {reasons}\n"
+        f"- Conditional wake attempted: `{result.get('wake_request_attempted', False)}`\n"
+        f"- Liveness response validated: `{result.get('wake_response_validated', False)}`\n"
+        f"- Worker/scheduler recovery confirmed: `{result.get('recovery_confirmed', False)}`\n\n"
+        "The database health check is read-only. A single liveness request is sent only after a confirmed stopped-worker classification; feed degradation alone never wakes the service.\n"
     )
 
 
@@ -331,6 +460,28 @@ def main() -> int:
             "orders_authorized": None,
             "reasons": [f"read_only_monitor_error_{type(exc).__name__}"],
         }
+
+    if worker_wake_required(result):
+        wake = request_worker_wake(result)
+        recovered = wait_for_worker_recovery(
+            database_url,
+            worker_id,
+            max_heartbeat_age_seconds=max_heartbeat_age,
+            max_scheduler_stale_seconds=max_scheduler_age,
+            max_snapshot_age_seconds=max_snapshot_age,
+            expected_symbols=expected_symbols,
+            max_attempts=10,
+            poll_interval_seconds=15.0,
+        )
+        recovered["wake_request_attempted"] = wake["attempted"]
+        recovered["wake_response_validated"] = wake["response_validated"]
+        recovered["wake_request_error_type"] = wake["error_type"]
+        recovered["recovery_confirmed"] = (
+            recovered.get("worker_process_healthy") is True
+            and recovered.get("scheduler_healthy") is True
+            and recovered.get("orders_authorized") is False
+        )
+        result = recovered
 
     print(json.dumps(result, sort_keys=True, default=str))
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
