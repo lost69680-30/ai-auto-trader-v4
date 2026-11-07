@@ -410,6 +410,17 @@ def load_worker_snapshot(database_url: str, worker_id: str, max_snapshot_age_sec
     }
 
 
+def recovery_outcome_message(result: Mapping[str, Any]) -> str:
+    """Describe the actual recovery attempt without implying an attempt was skipped."""
+    if result.get("recovery_confirmed") is True:
+        return "::notice::Worker process and scheduler recovery were confirmed from read-only database state."
+    if result.get("wake_request_attempted") is True:
+        if result.get("wake_response_validated") is True:
+            return "::warning::A liveness wake was accepted, but worker/scheduler recovery was not confirmed."
+        return "::warning::A wake was attempted, but its liveness response was not validated and recovery was not confirmed."
+    return "::warning::Solo worker is stopped or degraded; no wake attempted."
+
+
 def _summary_markdown(result: Mapping[str, Any], worker_id: str) -> str:
     reasons = ", ".join(result.get("reasons") or []) or "none"
     return (
@@ -506,7 +517,7 @@ def main() -> int:
     if result["state"] == "UNKNOWN":
         print("::error::Solo worker health is unknown; no restart was attempted.")
         return 2
-    print("::warning::Solo worker is stopped or degraded; no wake or restart was attempted.")
+    print(recovery_outcome_message(result))
     return 1
 
 
