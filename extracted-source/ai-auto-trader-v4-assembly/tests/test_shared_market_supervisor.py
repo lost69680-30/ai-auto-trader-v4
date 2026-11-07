@@ -333,6 +333,7 @@ def test_worker_readyz_returns_200_for_fresh_healthy_worker_and_paper_only_state
         assert body["process_alive"] is True
         assert body["scheduler_status"] == "RUNNING"
         assert body["scheduler_age_seconds"] <= 900
+        assert body["market_data_ready"] is True
         assert body["orders_authorized"] is False
     finally:
         server.shutdown()
@@ -342,7 +343,6 @@ def test_worker_readyz_returns_200_for_fresh_healthy_worker_and_paper_only_state
 @pytest.mark.parametrize(
     "override",
     [
-        {"status": "STALE"},
         {"worker_status": "STALE"},
         {"age_seconds": 120.0},
         {"age_seconds": -1.0},
@@ -354,6 +354,49 @@ def test_worker_readyz_returns_200_for_fresh_healthy_worker_and_paper_only_state
         {"details": {"scheduled_jobs": {"status": "RUNNING", "last_poll_at": "2026-10-01T00:00:00+00:00"}}},
     ],
 )
+
+
+@pytest.mark.parametrize("feed_status", ["STALE", "DEGRADED", "OFFLINE"])
+def test_worker_readyz_does_not_restart_healthy_instance_for_market_feed_degradation(feed_status):
+    import json
+    from datetime import datetime, timezone
+    from urllib.request import urlopen
+
+    from backend.shared_market_supervisor import start_worker_health_server
+
+    state = {
+        "status": feed_status,
+        "worker_status": "RUNNING",
+        "age_seconds": 4.0,
+        "lease_expired": False,
+        "orders_authorized": False,
+        "process_alive": True,
+        "details": {
+            "scheduled_jobs": {
+                "status": "RUNNING",
+                "last_poll_at": datetime.now(timezone.utc).isoformat(),
+            },
+        },
+    }
+    server = start_worker_health_server(
+        0, host="127.0.0.1",
+        readiness_provider=lambda: dict(state),
+        max_age_seconds=90,
+        max_scheduler_stale_seconds=900,
+    )
+    try:
+        with urlopen(f"http://127.0.0.1:{server.server_port}/readyz", timeout=2) as response:
+            body = json.loads(response.read())
+            assert response.status == 200
+            assert body["status"] == "ready"
+            assert body["feed_status"] == feed_status
+            assert body["market_data_ready"] is False
+            assert body["orders_authorized"] is False
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_worker_readyz_returns_503_for_unhealthy_or_unsafe_state(override):
     import json
     from datetime import datetime, timezone
@@ -429,6 +472,7 @@ def test_worker_readyz_fails_closed_when_readiness_provider_raises():
                 "feed_status": "UNKNOWN",
                 "scheduler_status": "UNKNOWN",
                 "scheduler_age_seconds": None,
+                "market_data_ready": False,
                 "process_alive": False,
                 "lease_expired": None,
                 "age_seconds": None,
