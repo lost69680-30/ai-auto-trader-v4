@@ -298,6 +298,7 @@ def test_worker_heartbeat_requires_restart_for_stale_lease_even_when_process_is_
 
 def test_worker_readyz_returns_200_for_fresh_healthy_worker_and_paper_only_state():
     import json
+    from datetime import datetime, timezone
     from urllib.request import urlopen
 
     from backend.shared_market_supervisor import start_worker_health_server
@@ -309,11 +310,18 @@ def test_worker_readyz_returns_200_for_fresh_healthy_worker_and_paper_only_state
         "lease_expired": False,
         "orders_authorized": False,
         "process_alive": True,
+        "details": {
+            "scheduled_jobs": {
+                "status": "RUNNING",
+                "last_poll_at": datetime.now(timezone.utc).isoformat(),
+            },
+        },
     }
     server = start_worker_health_server(
         0, host="127.0.0.1",
         readiness_provider=lambda: dict(state),
         max_age_seconds=90,
+        max_scheduler_stale_seconds=900,
     )
     try:
         with urlopen(f"http://127.0.0.1:{server.server_port}/readyz", timeout=2) as response:
@@ -323,6 +331,8 @@ def test_worker_readyz_returns_200_for_fresh_healthy_worker_and_paper_only_state
         assert body["mode"] == "PAPER_ONLY"
         assert body["worker_status"] == "RUNNING"
         assert body["process_alive"] is True
+        assert body["scheduler_status"] == "RUNNING"
+        assert body["scheduler_age_seconds"] <= 900
         assert body["orders_authorized"] is False
     finally:
         server.shutdown()
@@ -340,10 +350,13 @@ def test_worker_readyz_returns_200_for_fresh_healthy_worker_and_paper_only_state
         {"lease_expired": True},
         {"process_alive": False},
         {"orders_authorized": True},
+        {"details": {"scheduled_jobs": {"status": "DEGRADED", "last_poll_at": "2026-11-07T01:00:00+00:00"}}},
+        {"details": {"scheduled_jobs": {"status": "RUNNING", "last_poll_at": "2026-10-01T00:00:00+00:00"}}},
     ],
 )
 def test_worker_readyz_returns_503_for_unhealthy_or_unsafe_state(override):
     import json
+    from datetime import datetime, timezone
     from urllib.error import HTTPError
     from urllib.request import urlopen
 
@@ -356,12 +369,19 @@ def test_worker_readyz_returns_503_for_unhealthy_or_unsafe_state(override):
         "lease_expired": False,
         "orders_authorized": False,
         "process_alive": True,
+        "details": {
+            "scheduled_jobs": {
+                "status": "RUNNING",
+                "last_poll_at": datetime.now(timezone.utc).isoformat(),
+            },
+        },
     }
     state.update(override)
     server = start_worker_health_server(
         0, host="127.0.0.1",
         readiness_provider=lambda: dict(state),
         max_age_seconds=90,
+        max_scheduler_stale_seconds=900,
     )
     try:
         try:
@@ -408,6 +428,8 @@ def test_worker_readyz_fails_closed_when_readiness_provider_raises():
                 "mode": "PAPER_ONLY",
                 "worker_status": "UNKNOWN",
                 "feed_status": "UNKNOWN",
+                "scheduler_status": "UNKNOWN",
+                "scheduler_age_seconds": None,
                 "process_alive": False,
                 "lease_expired": None,
                 "age_seconds": None,
