@@ -176,14 +176,20 @@ def _invalid_series_reason(
     # Reject extreme OHLC dislocations before deriving indicators or strategy evidence.
     # This is a fail-closed data-integrity bound, not a volatility or trading signal.
     max_multiple = config.max_candle_price_multiple
-    for previous, current in zip(rows, rows[1:]):
-        prior_close = float(previous.close)
+    for index, current in enumerate(rows):
         current_high = float(current.high)
         current_low = float(current.low)
+        if current_high / current_low > max_multiple:
+            return (
+                "extreme candle price discontinuity: OHLC range or prior-close ratio "
+                f"exceeds {max_multiple:g}x"
+            )
+        if index == 0:
+            continue
+        prior_close = float(rows[index - 1].close)
         if (
             current_high > prior_close * max_multiple
             or current_low < prior_close / max_multiple
-            or current_high / current_low > max_multiple
         ):
             return (
                 "extreme candle price discontinuity: OHLC range or prior-close ratio "
