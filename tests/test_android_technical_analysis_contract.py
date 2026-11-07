@@ -144,3 +144,14 @@ def test_chart_exposes_candle_history_refresh_freshness_separately_from_price_fe
     assert "CANDLE HISTORY · REFRESH FAILED" in source
     assert "CANDLE HISTORY · NOT LOADED" in source
     assert "candle history refresh status" in source
+
+def test_candle_refresh_failure_is_recorded_after_the_request_finishes():
+    source = SOURCE.read_text(encoding="utf-8")
+    refresh = source.split(
+        "LaunchedEffect(sessionToken, selectedMarket?.symbol, candleSymbolKey, isForeground)"
+    )[1].split("val timeframeSnapshots", 1)[0]
+    assert refresh.index("val history = withContext(Dispatchers.IO)") < refresh.index(
+        "candleHistoryLastAttemptSucceededBySymbol.value + (candleSymbolKey to false)"
+    )
+    assert "CANDLE HISTORY · REFRESH FAILED" in source
+    assert "CANDLE HISTORY · STALE" in source
