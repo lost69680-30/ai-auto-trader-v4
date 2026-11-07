@@ -5,6 +5,7 @@ plugins {
 }
 
 val paperApiBaseUrl = providers.gradleProperty("paperApiBaseUrl").orElse("").get()
+val stagingBuild = providers.gradleProperty("stagingBuild").map { it.toBoolean() }.orElse(false).get()
 
 android {
     namespace = "com.aiautotrader.v4"
@@ -12,6 +13,7 @@ android {
 
     defaultConfig {
         applicationId = "com.aiautotrader.v4"
+        if (stagingBuild) applicationIdSuffix = ".staging"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
