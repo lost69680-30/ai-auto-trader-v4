@@ -138,6 +138,7 @@ def test_android_notification_center_has_a_safe_delivery_probe():
     assert 'Text("Send test notification")' in source
     assert "This test does not create a risk alert" in source
 
+# The selected timeframe must own its own freshness and backend coverage status.
 def test_chart_freshness_is_tracked_for_the_selected_symbol_and_timeframe():
     source = SOURCE.read_text(encoding="utf-8")
     assert "candleHistoryLastSuccessAtBySymbolAndTimeframe" in source
