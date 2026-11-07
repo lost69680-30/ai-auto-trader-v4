@@ -1,64 +1,66 @@
-# Solo research learning, graph analysis and agent boundaries
+# Solo Research Learning, Graph Analysis and Specialist Boundaries
 
-## Current implementation
+**Reviewed:** 2026-11-07
 
-### Multi-timeframe intelligence
-The worker's market-intelligence pipeline produces closed-candle timeframe assessments, validated indicators, regime/conflict evidence, and five separate strategy profiles. These are deterministic analysis components. Their scores are heuristic, not calibrated probabilities. A scan may correctly return NO_TRADE or ANALYSIS_ONLY for every symbol.
+## Deterministic market intelligence
 
-### Research learning gate
-backend/strategy_learning_lab.py accepts only paper-only experiment records with:
-- an immutable market-data manifest;
-- at least four validation folds;
+The shared market-intelligence pipeline validates closed candle histories and produces timeframe regime/conflict evidence, technical indicators and five independent strategy profiles (scalping, day, swing, position and long-term). The profiles preserve disagreements rather than majority-voting away conflicts. Long-term analysis remains analysis-only. Scores are heuristic and `NOT_CALIBRATED`.
+
+Indicator values are descriptive evidence, not calibrated probabilities, forecasts, order instructions or risk approval. Invalid, stale, incomplete or gapped market history must be rejected or marked unavailable.
+
+## Research-learning quality gate
+
+`backend/strategy_learning_lab.py` accepts only paper-only research experiments with:
+- immutable market-data manifests and source provenance;
+- at least four out-of-sample validation folds;
 - at least 30 validation trades;
-- an explicit quality-qualified EVALUATED validation report with no failure reasons;
-- internally consistent validation trade counts, mean excess return, positive-fold percentage, and maximum drawdown;
-- an untouched final holdout that remains excluded from learning rows.
+- an explicit quality-qualified `EVALUATED` validation report with no failure reasons;
+- fold counts and reported returns, positive-fold percentage and drawdown that reconcile to the underlying evidence;
+- a separately recorded untouched final holdout that remains excluded from all learning rows.
 
-The research dataset includes validation-fold evidence only. It does not contain holdout values. Proposal weights cannot contain risk, order, position, leverage, capital, allocation, stop, exposure, or related execution/risk terms. PPO, RL, GAT and specialist labels are proposal categories, not permission to change the system.
+The dataset contains validation-fold evidence only. It never copies untouched holdout values. Proposal weights are checked to reject risk, order, position, leverage, capital, allocation, stop, exposure, margin and other execution-control fields.
 
-An independent evaluation must use a non-overlapping market-data window and a separate dataset fingerprint. A candidate that beats the baseline return without exceeding its drawdown receives REVIEW_REQUIRED only. Promotion remains NOT_PROMOTED; there is no automatic promotion or order authorization.
+Independent evaluation must use a separate fingerprint and non-overlapping market-data window. Even a proposal that beats the baseline return without exceeding baseline drawdown receives `REVIEW_REQUIRED` only. Promotion remains `NOT_PROMOTED`; no automatic policy promotion, risk-setting update or order authorization exists.
 
-### Relationship graph preparation
-backend/market_relationship_graph.py prepares an undirected graph from aligned closed-period per-symbol returns:
-- strict canonical symbols, equal observation counts, minimum history and finite-number validation;
+## Graph relationship preparation
+
+`backend/market_relationship_graph.py` builds a deterministic undirected graph from aligned closed-period per-symbol returns:
+- canonical uppercase symbols, equal observation counts, minimum history and finite-number validation;
 - Pearson correlation edges above a configured absolute threshold;
 - positive and inverse relationship labels;
 - node mean return, volatility, degree and degree centrality;
 - deterministic input fingerprint and sorted output;
-- constant-return series are retained as isolated nodes, never assigned fabricated correlations.
+- constant-return series preserved as isolated nodes, without fabricated correlations.
 
-This is a deterministic graph-feature preparation step suitable for later GAT experiments. It is not a trained Graph Attention Network, neural inference, or an automated market forecast. It has no order, risk-setting, strategy-promotion, or live-exchange interface.
+This module prepares graph features for future Graph Attention Network research. It is not a trained GAT, neural inference engine, automated market forecast or trading policy. The graph has no order, risk-setting, strategy-promotion or live-exchange interface.
 
-## Specialist agents and orchestration
+## Deterministic specialist protocol
 
-The existing Android AI Agents screen intentionally labels most specialists as specified/planned and not running. The current backend has real market-analysis modules and strategy profiles, but it does not yet run fifteen autonomous LLM agents, a persistent A2A/MCP message bus, or a distributed specialist-agent runtime. Do not claim those agents are active.
+`backend/research_agent_protocol.py` implements a versioned in-process protocol and deterministic supervisor for registered research handlers. It uses immutable market snapshots with symbol, market type, venue, source fingerprint and observation/expiry timestamps. It validates allowlisted roles, status, payload bounds and finite JSON-safe evidence; it rejects stale/mismatched inputs, duplicate identities and forbidden order/risk fields. Handler failures expose sanitized error types rather than private exception content.
 
-The next safe implementation gate is a versioned evidence-message contract and deterministic supervisor that:
-1. accepts only identified source evidence with timestamps, symbol, interval, venue and data fingerprint;
-2. records each specialist's inputs, output, runtime and failure status;
-3. rejects stale, duplicated, malformed or conflicting claims;
-4. never aggregates heuristic scores into an order permission;
-5. routes candidate research only to the existing independent Risk Guardian for separate paper-only review.
+Risk Guardian is deliberately not a specialist role. It remains the independent authority for paper-intent approval. Specialist outputs are evidence only and do not become risk permission.
 
-## PPO/RL training decision
+The Android specialist-role catalogue is not evidence that fifteen autonomous agents are running. The current protocol does not provide a persistent message bus, distributed workers, LLM orchestration, MCP/A2A transport, production tracing or durable agent-message audit. Do not describe it as a production multi-agent platform.
 
-PPO/RL training is deliberately not enabled. The current research database has no passed strategy-quality rows at the reviewed checkpoint. Most experiments are rejected, insufficient, or legacy records with missing validation-quality status. Training a policy now would overfit to weak or incomplete evidence.
+## PPO / RL / GAT training boundary
 
-Training remains blocked until:
-- qualified training datasets pass the research gate above;
-- features and reward calculations are versioned and leakage-tested;
-- chronological training/validation partitions and independent untouched evaluation are proven non-overlapping;
-- transaction costs, slippage, funding, fills and protection are realistic enough for the intended market;
-- a fixed baseline is beaten on independent data with a bounded drawdown;
-- model weights are immutable and cannot affect risk limits or execution authority.
+PPO/RL/GAT training and serving are not implemented as running Solo services. The learning lab and graph preparation code define safe data and proposal boundaries only. Training remains blocked until all of the following are supported by inspectable evidence:
+1. quality-qualified training datasets pass the research gate;
+2. point-in-time feature provenance, reward calculations and feature versions are leakage-tested;
+3. chronological training/validation partitions and independent, untouched evaluation windows are proven non-overlapping;
+4. costs, slippage, funding, simulated fills, protection and portfolio accounting are realistic enough for the intended task;
+5. a fixed deterministic baseline is beaten on independent data with acceptable drawdown and sufficient sample size;
+6. candidate weights are immutable, reviewable, and cannot modify risk or execution controls.
 
-The future PPO runtime must be an offline research process. It may emit candidate weights or scores for evaluation only. It cannot call exchange endpoints or authorize paper intents. Model deployment remains a manual, separately reviewed operation.
+Any future model must run offline first and may emit only candidate evidence for separate review. It cannot call exchange endpoints, create intents, modify risk settings, clear Emergency Stop or authorize paper actions. Deployment requires a separate review and explicit decision.
 
-## Explicit product truth
+## Explicit safety invariants
 
-- PAPER_ONLY remains mandatory.
-- orders_authorized=false remains mandatory.
-- Risk Guardian retains exclusive paper-intent approval.
-- Emergency Stop is never auto-cleared.
-- No live orders or paid service dependency are introduced by these research components.
-- Graph relationships and model/agent scores are explanatory evidence, not calibrated probability or profit forecasts.
+- Runtime remains `PAPER_ONLY`.
+- Every specialist, graph, learning and strategy output must retain `orders_authorized=false`.
+- Risk Guardian retains exclusive authority to approve paper intents.
+- Emergency Stop is never automatically cleared.
+- Stale, mismatched, incomplete or invalid evidence fails closed.
+- Holdout evidence remains untouched and excluded from learning.
+- No model or agent can change risk limits, leverage, size, execution state or exchange permissions.
+- No live orders or paid-service dependency are introduced by these research components.
