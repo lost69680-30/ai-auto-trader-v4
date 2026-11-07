@@ -86,6 +86,14 @@ def _env_bool(name: str, *, default: bool = False) -> bool:
 
 
 
+def configured_strategy_research_candle_limit() -> int:
+    """Require enough stateless 1m history for four validation folds plus untouched holdout."""
+    return _bounded_env_int(
+        "PAPER_STRATEGY_RESEARCH_CANDLES", 4500,
+        minimum=4500, maximum=10000,
+    )
+
+
 def _bounded_env_int(
     name: str, default: int, *, minimum: int, maximum: int,
 ) -> int:
@@ -474,10 +482,7 @@ def main() -> None:
             from backend.strategy_research_memory import PostgresStrategyResearchMemory
             from backend.strategy_research_runtime import build_strategy_research_handler
 
-            research_candle_limit = _bounded_env_int(
-                "PAPER_STRATEGY_RESEARCH_CANDLES", 3000,
-                minimum=3000, maximum=10000,
-            )
+            research_candle_limit = configured_strategy_research_candle_limit()
             research_memory = PostgresStrategyResearchMemory(dsn)
             intelligence_handlers["strategy_research_evaluation"] = build_strategy_research_handler(
                 archive, research_memory,
