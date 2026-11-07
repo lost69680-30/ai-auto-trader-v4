@@ -353,7 +353,7 @@ private object BackendSession {
     val marketIntelligenceScanAttempts = mutableStateOf(0)
     // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
     val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
-    // Candle history refresh status is tracked independently from live mark-price freshness.
+    // candle history refresh status is tracked independently from live mark-price freshness.
     val candleHistoryLastSuccessAtBySymbol = mutableStateOf<Map<String, java.time.Instant>>(emptyMap())
     val candleHistoryLastAttemptSucceededBySymbol = mutableStateOf<Map<String, Boolean>>(emptyMap())
     val paperLedger = mutableStateOf<PaperLedgerSnapshot?>(null)
