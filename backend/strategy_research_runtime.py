@@ -28,6 +28,8 @@ from backend.walk_forward import WalkForwardConfig, evaluate_walk_forward
 
 
 logger = logging.getLogger(__name__)
+
+MINIMUM_VALIDATION_FOLDS = 4
 _RESEARCH_VERSION = "solo-four-family-candidate-benchmark-v2-cost-sensitivity"
 _RESEARCH_CANDIDATES = (
     ("trend_sma_cross", ExternalRuleSpec("SMA_CROSS", {"fast_period": 10, "slow_period": 30}, "ONE_BAR")),
@@ -161,7 +163,7 @@ def build_strategy_research_handler(
     *,
     source=None,
     symbols: Iterable[str],
-    candles_per_symbol: int = 3000,
+    candles_per_symbol: int = 4500,
     venue: str = "BINANCE_USDM_TESTNET",
     market_type: str = "FUTURES",
     provider: str = "binance-public-testnet",
@@ -190,6 +192,18 @@ def build_strategy_research_handler(
         raise ValueError("candles_per_symbol must be between 3000 and 10000")
     wf_config = walk_forward_config or WalkForwardConfig()
     bt_config = backtest_config or BacktestConfig(candle_interval_minutes=1)
+    minimum_fold_history = (
+        wf_config.train_bars
+        + (MINIMUM_VALIDATION_FOLDS - 1) * wf_config.step_bars
+        + wf_config.validation_bars
+        + wf_config.holdout_bars
+    )
+    if candles_per_symbol < minimum_fold_history:
+        raise ValueError(
+            "research history must cover at least "
+            f"{MINIMUM_VALIDATION_FOLDS} disjoint validation folds and an untouched holdout "
+            f"(need at least {minimum_fold_history} candles)"
+        )
     if wf_config.candle_interval_minutes != 1 or bt_config.candle_interval_minutes != 1:
         raise ValueError("canonical research archive and backtest must use one-minute candles")
     if candles_per_symbol < (
