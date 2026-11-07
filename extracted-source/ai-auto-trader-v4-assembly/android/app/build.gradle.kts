@@ -19,6 +19,14 @@ android {
         buildConfigField("String", "PAPER_API_BASE_URL", "\"${paperApiBaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
 
+    // Every debug build is a separate staging install; release keeps the normal app ID.
+    buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".staging"
+            resValue("string", "app_name", "Solo Staging")
+        }
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true
