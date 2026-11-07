@@ -1,54 +1,38 @@
-name: Solo staging Render keep-warm and readiness
+name: Solo independent worker heartbeat monitor
 
 on:
   push:
-    branches: [main, fix/solo-keepwarm-cold-start-window]
+    branches: [main]
     paths:
-      - .github/workflows/solo-render-keepwarm.yml
+      - "scripts/solo_heartbeat_monitor.py"
+      - ".github/workflows/solo-render-keepwarm.yml"
   schedule:
-    # Ten-minute cadence reduces idle spin-down while keeping public Actions usage bounded.
-    # GitHub scheduled execution remains best-effort, not an uptime guarantee.
-    - cron: "3,13,23,33,43,53 * * * *"
+    - cron: "*/10 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: solo-staging-render-keepwarm
+  group: solo-independent-heartbeat-monitor
   cancel-in-progress: false
 
 jobs:
-  monitor-and-recover:
+  monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Wake worker, verify independent heartbeat, and recover confirmed failure
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install read-only PostgreSQL client
+        run: python -m pip install "psycopg[binary]==3.3.6"
+      - name: Inspect independent worker heartbeat without waking the service
         env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          API_READY_URL: https://solo-ai-auto-trader-staging-api.onrender.com/readyz
-          WORKER_LIVENESS_URL: https://solo-futures-websocket-staging.onrender.com/healthz
-          RENDER_WORKER_SERVICE_ID: srv-dbhr5ign74is738detbg
-        id: watchdog
-        run: |
-          set +e
-          python scripts/solo_independent_watchdog.py 2>&1 | tee "$RUNNER_TEMP/solo-watchdog.log"
-          watchdog_status=${PIPESTATUS[0]}
-          {
-            echo "## Solo independent worker watchdog"
-            if [ "$watchdog_status" -eq 0 ]; then
-              echo "- Result: **healthy / completed**"
-            else
-              echo "- Result: **failed / needs attention**"
-            fi
-            echo '- Worker: `solo-futures-websocket-staging`'
-            echo '- Readiness authority: independent API/database `/readyz`'
-            echo "- Safety: restart is permitted only for confirmed worker failure; paper-only checks remain mandatory."
-            echo
-            echo "### Execution evidence"
-            echo '```text'
-            cat "$RUNNER_TEMP/solo-watchdog.log"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$watchdog_status"
+          SOLO_BACKUP_DATABASE_URL: ${{ secrets.SOLO_BACKUP_DATABASE_URL }}
+          PAPER_WORKER_ID: solo-market-worker
+          PAPER_SYMBOLS: BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,TRXUSDT,LINKUSDT,AVAXUSDT
+          PAPER_MAX_MARKET_AGE_SECONDS: "90"
+          PAPER_MAX_SCHEDULER_STALE_SECONDS: "900"
+        run: python scripts/solo_heartbeat_monitor.py

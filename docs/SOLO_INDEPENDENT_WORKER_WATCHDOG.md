@@ -1,50 +1,46 @@
-# Solo independent worker watchdog
+# Solo independent worker heartbeat monitoring
 
-## What this adds
+## What this does
 
-A GitHub-hosted scheduled monitor runs every ten minutes, outside the Render API and worker services. It first calls the worker's minimal public `/healthz` endpoint to keep the Render Free web service awake, then calls the separate staging API's public `/readyz` endpoint, which reads the shared PostgreSQL worker heartbeat and validated market-feed readiness. The Python monitor is isolated in `scripts/solo_independent_watchdog.py` and has unit tests for safe restart classification.
+The scheduled monitor runs in GitHub Actions, independently of Render. It connects to Supabase PostgreSQL using the dedicated `solo_backup_reader` role through the `SOLO_BACKUP_DATABASE_URL` GitHub Actions secret.
 
-The monitor always allows a 60-second cold-start/lease-renewal grace after a stale heartbeat is observed, even if the first liveness request times out, then distinguishes a confirmed worker-process/lease failure from ordinary data-feed degradation.
-- `status=ready`, `worker_status=RUNNING`, and `orders_authorized=false`: healthy; no restart.
-- `worker_status` is `STALE`, `STOPPED`, `ERROR`, or `MISSING`: confirmed worker heartbeat failure; one worker-service restart may be requested.
-- API unreachable, invalid response, `UNKNOWN`, or worker still `RUNNING` but readiness is degraded: fail closed and do not restart the worker. This avoids restarting a healthy process for a market-data outage or an API/network problem.
+It performs SELECT-only checks of:
+- worker heartbeat freshness and lease validity;
+- scheduler status and last successful poll time;
+- market-feed freshness and configured symbol coverage;
+- worker and feed `orders_authorized=false` invariants.
 
-After a restart request, the monitor makes one worker keepalive request and polls the independent readiness endpoint with bounded retries. It succeeds only when the worker lease and market readiness return to healthy.
+It reports one of:
+- `HEALTHY`: worker heartbeat, lease, scheduler, and market snapshots are fresh and paper-only;
+- `DEGRADED`: worker process is alive but scheduler or market-data quality needs attention;
+- `STOPPED`: worker status is stopped/error/stale, heartbeat expired, or lease expired;
+- `SAFETY_VIOLATION`: any order-authorization invariant is violated;
+- `UNKNOWN`: database or heartbeat evidence is unavailable or malformed.
 
-The in-service supervisor remains responsible for worker child-process exits and scheduler-progress stalls. The external monitor is an independent service-level recovery layer; it does not replace the internal watchdog.
+The scheduled workflow does not call the worker's `/healthz` endpoint, does not wake Render, does not restart the service, and does not write to Supabase.
 
-## One-time GitHub setup
+## GitHub setup
 
-Add this repository Actions secret:
+The repository needs the existing Actions secret:
 
-- `RENDER_API_KEY`: a Render API key with permission to restart the Solo staging worker service. Store it only in GitHub Actions secrets. Never commit it or put it in Android/app configuration.
+- `SOLO_BACKUP_DATABASE_URL`: PostgreSQL connection string for the dedicated read-only `solo_backup_reader` role. The monitor requires TLS and sets the session read-only. Never expose this value in logs, source, or Android configuration.
 
-Pinned staging targets:
-- Independent readiness API: `https://solo-ai-auto-trader-staging-api.onrender.com/readyz`
-- API Render service: `solo-ai-auto-trader-staging-api`
-- Worker Render service: `solo-futures-websocket-staging`
-- Worker service ID: `srv-dbhr5ign74is738detbg`
+The monitor workflow is `.github/workflows/solo-render-keepwarm.yml` (historical filename; now a read-only monitor) and runs every ten minutes plus manual dispatch. A second manual workflow, `.github/workflows/solo-independent-worker-watchdog.yml`, runs the same read-only check on demand.
 
-The readiness API is on a separate Render service and reads the shared worker heartbeat. If the API cannot be reached, the workflow reports failure but deliberately does not restart the worker because worker failure cannot be confirmed.
+## Render Free limitation
 
-## Recovery and safety limits
+Render Free web services may stop after inactivity. A stopped heartbeat is therefore reported as stopped/stale; the monitor deliberately does not issue repeated pings or automatic restarts to bypass the free-tier idle-sleep behaviour. GitHub scheduled runs are also best-effort and are not a real-time uptime SLA.
 
-- Scheduled interval: the existing `.github/workflows/solo-render-keepwarm.yml` workflow runs this monitor every ten minutes. The separate `.github/workflows/solo-independent-worker-watchdog.yml` workflow provides pull-request validation and a manual dispatch entry point, avoiding duplicate scheduled runs. GitHub Actions may delay scheduled runs; the recovery job timeout is 12 minutes.
-- At most one Render restart request is issued per workflow run.
-- Recovery is verified through the separate API's database-backed `/readyz` endpoint; the worker `/healthz` endpoint is used only for keepalive/liveness.
-- No database writes, market-data mutations, exchange credentials, order endpoints, or trading permissions are used.
-- The readiness payload must explicitly report `orders_authorized=false`.
-- A stale market feed with a still-running worker does not trigger a restart.
-- No Emergency Stop state is cleared or modified.
-- This is independent of the Render worker process/host, but it is not a guaranteed real-time uptime SLA and depends on GitHub Actions and the separate API service being reachable.
+For guaranteed continuous worker operation, Solo needs an always-on hosting plan or a suitable always-on compute environment. Current $0 hosting constraints do not provide that guarantee.
 
-## Acceptance still required
+## Manual cold-start recovery
 
-After merging and adding `RENDER_API_KEY`, run the workflow manually once. Confirm:
-1. healthy `/readyz` returns without a restart;
-2. a stale worker lease triggers exactly one restart request;
-3. the workflow verifies worker recovery through `/readyz`;
-4. a stale market feed with a running worker does not cause a restart;
-5. the worker's lease, scheduler progress, and configured market symbols are healthy after recovery.
+The manual workflow `.github/workflows/solo-staging-health-check.yml` is intentionally separate. When deliberately dispatched, it requests the worker's `/healthz` route once to wake the service, then checks the separate API's database-backed `/readyz` response. It is a manual recovery/acceptance action, not a scheduled keep-alive.
 
-Do not call the system fully independently monitored until these staging checks pass.
+## Safety
+
+- The monitor uses read-only database credentials and requires TLS.
+- It never calls exchange order endpoints or Render restart APIs.
+- It never changes ledger rows, risk limits, credentials, or Emergency Stop state.
+- Any observed `orders_authorized=true` is reported as a safety violation.
+- Stale market data is reported separately from a stopped worker process.
