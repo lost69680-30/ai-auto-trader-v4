@@ -221,3 +221,44 @@ def test_spot_scan_rejects_futures_venue_identity():
             venue="BINANCE_USDM_TESTNET",
         )
 
+def test_scan_rejects_extreme_monthly_discontinuity_and_derived_yearly_evidence():
+    from dataclasses import replace
+
+    class ExtremeMonthlySource(FakeSource):
+        def fetch_klines(self, symbol, *, interval, limit, now=None):
+            if interval != "1M":
+                return super().fetch_klines(symbol, interval=interval, limit=limit, now=now)
+            rows = list(monthly_series(symbol, now or datetime.now(timezone.utc), count=60))
+            rows[30] = replace(rows[30], high=rows[30].close * 25.0)
+            return tuple(rows)
+
+    source = ExtremeMonthlySource()
+    store = FakeStore()
+    handler = market_intelligence_scan(
+        store, source, (policy(),), market_type="FUTURES", candle_limit=100,
+    )
+
+    handler({"scope": "market_intelligence"}, "market-scan-extreme-monthly")
+
+    item = store.payload["symbols"][0]
+    monthly = item["indicator_assessments"]["1M"]
+    yearly = item["indicator_assessments"]["1Y"]
+    market_timeframes = {row["timeframe"]: row for row in item["assessment"]["timeframes"]}
+
+    assert monthly["status"] == "INVALID_DATA"
+    assert yearly["status"] == "INVALID_DATA"
+    assert any("extreme candle price discontinuity" in reason for reason in monthly["reasons"])
+    assert market_timeframes["1M"]["status"] == "INVALID_DATA"
+    assert market_timeframes["1Y"]["status"] == "INVALID_DATA"
+    long_term = next(
+        row for row in item["strategy_assessments"]
+        if row["strategy_id"] == "long_term"
+    )
+    assert long_term["decision"] != "ELIGIBLE"
+    assert long_term["payload"]["eligible_for_risk_review"] is False
+    assert long_term["payload"]["analysis_only"] is True
+    assert not any(
+        row["strategy_id"] == "long_term" and row["status"] == "REGISTERED"
+        for row in item["opportunity_registrations"]
+    )
+    assert item["orders_authorized"] is False

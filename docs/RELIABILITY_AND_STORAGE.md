@@ -93,11 +93,11 @@ The post-deploy check closes the specific post-wake heartbeat and scheduler-back
 
 The staging API now exposes two unauthenticated, deliberately minimal probes:
 - `GET /healthz`: process liveness only. Returns a small PAPER_ONLY response and `orders_authorized=false`; it reveals no account, position, credential, or worker details.
-- `GET /readyz`: readiness requires the shared market worker heartbeat to be `RUNNING`, the validated market feed to be `HEALTHY`, and the reported order-authorization flag to be exactly false. It returns HTTP 503 if those conditions are not met or the health lookup fails.
+- Worker-service `GET /readyz`: readiness requires the supervisor's worker child to be alive, its PostgreSQL heartbeat fresh, its lease valid, scheduler progress fresh, and `orders_authorized=false`. It reports market-feed health separately; a temporary exchange outage does not by itself make the worker process unready. It returns HTTP 503 for missing/stale heartbeat, expired lease, dead child, stalled scheduler, provider/database errors, or any unsafe/unknown authorization state.
 
 The probes are covered by tests in both source mirrors. The Step 3 market validation workflow passed on commit `2285343b983b8aea1ab34a1257c4517aabd97dc1`: **98 passed, 11 skipped**; the 11 skipped tests require a PostgreSQL integration database not provisioned in that CI job. The source-mirror comparison and static read-only safety checks also passed.
 
-Render service settings currently report an empty Health Check Path. The Render connector available for this work can inspect the setting but cannot change it. Set the staging service Health Check Path to `/healthz` in Render Dashboard → staging service → Settings if desired. Do not use `/readyz` as the platform deploy health check: worker startup may take longer than API startup; use it for a separate readiness monitor.
+The worker service should use `/readyz` as its Render Health Check Path; `/healthz` is intentionally only a process-liveness/wake route and can return 200 while the worker child or scheduler is unavailable. Render's health-check restart behavior is for a running instance; it does not guarantee that a Free instance remains continuously active. A conditional external recovery monitor may first confirm a stopped/stale worker from the read-only database heartbeat and then make one `/healthz` request to wake a sleeping service. It must not issue recurring keep-alive requests or wake a process solely because market data is degraded while the worker and scheduler remain healthy. The workflow `.github/workflows/solo-configure-render-worker-readiness.yml` is prepared to set the worker service Health Check Path to `/readyz`; it is not run from this code-only branch.
 
 ### Backup and restore workflow
 
@@ -154,3 +154,12 @@ The earlier sections above contain historical status statements that are superse
 - The original restore workflow only checked for at least one table and one candle row. The follow-up branch strengthens this to validate the 14 expected tables, RLS and primary keys, but this stricter version still needs a new workflow run.
 
 The branch `fix/solo-restore-validation` contains these corrections for review. No merge or deployment is implied by these documentation updates.
+
+
+### Current staging worker topology correction — 2026-11-07
+
+The current staging deployment is split into an API-only service and a separate worker service. The worker-only supervisor exposes /healthz for liveness and /readyz for data-aware process/scheduler readiness. The worker service's Health Check Path was observed as /healthz, which is weaker than the current worker readiness contract. A separate branch corrects the Render configuration workflow to /readyz; no Render setting or deployment is changed by that code review. The API-only service should continue to expose its own API routes and is not the target of the worker health-check setting.
+
+The worker supervisor can restart a failed worker child while its parent process remains alive. It cannot revive the parent process after Render suspends/stops the whole service. Whole-service recovery therefore needs an external monitor that checks PostgreSQL first and wakes the service only after a confirmed stopped/stale heartbeat or stalled scheduler. A degraded market feed alone is not evidence that the worker process is dead. The recovery request must use only the unauthenticated liveness route, verify PAPER_ONLY and orders_authorized=false, and then verify recovery through read-only heartbeat/scheduler checks.
+
+The higher-timeframe analysis now rejects extreme inter-candle OHLC discontinuities (greater than 6x the prior close or a greater-than-6x candle high/low ratio) as invalid data. This is a conservative data-integrity tripwire for the configured testnet symbol universe, not a market-volatility threshold or trading signal. Indicator status is PARTIAL whenever a required value (EMA20/50, RSI14, MACD line/signal, Bollinger Bands, ATR14, VWAP, or relative volume) cannot be computed; partial evidence must not be described as a complete healthy indicator set.

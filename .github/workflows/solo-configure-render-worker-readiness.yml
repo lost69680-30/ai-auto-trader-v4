@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Set Render deploy liveness check to /healthz
+      - name: Set Render worker readiness check to /readyz
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_WORKER_SERVICE_ID: srv-dbhr5ign74is738detbg
@@ -26,19 +26,13 @@ jobs:
             echo "::error::RENDER_API_KEY GitHub Actions secret is unavailable; Render was not changed."
             exit 2
           fi
-          # The prior rollout is stuck retrying a worker with the previous invalid research-window setting.
-          # Cancel only that known in-progress deploy so Render can start the already-queued env-update deploy.
-          cancelled="$(curl --fail-with-body --silent --show-error \
-            --request POST \
-            "https://api.render.com/v1/services/${RENDER_WORKER_SERVICE_ID}/deploys/dep-dbnbpi97m43s73bl5rng/cancel" \
-            --header "Authorization: Bearer ${RENDER_API_KEY}" \
-            --header "Accept: application/json")"
-          printf '%s' "$cancelled" | jq -e '.status == "canceled"'
+          # Render should restart a running worker whose heartbeat, lease, or scheduler readiness fails.
+          # This changes only the staging worker's health-check path; it does not deploy code.
           response="$(curl --fail-with-body --silent --show-error \
             --request PATCH \
             "https://api.render.com/v1/services/${RENDER_WORKER_SERVICE_ID}" \
             --header "Authorization: Bearer ${RENDER_API_KEY}" \
             --header "Accept: application/json" \
             --header "Content-Type: application/json" \
-            --data '{"serviceDetails":{"healthCheckPath":"/healthz"}}')"
-          printf '%s' "$response" | jq -e '.serviceDetails.healthCheckPath == "/healthz"'
+            --data '{"serviceDetails":{"healthCheckPath":"/readyz"}}')"
+          printf '%s' "$response" | jq -e '.serviceDetails.healthCheckPath == "/readyz"'
