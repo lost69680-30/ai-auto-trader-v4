@@ -1,0 +1,26 @@
+name: Solo staging DB restore workflow contract
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/solo-staging-db-restore-drill.yml"
+      - ".github/workflows/test-solo-staging-db-restore-contract.yml"
+      - "tests/test_solo_staging_db_restore_contract.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solo-staging-db-restore-contract
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Lint GitHub Actions workflow syntax
+        uses: reviewdog/action-actionlint@v1
+      - name: Run staging restore contract tests
+        run: python -m unittest discover -s tests -p 'test_solo_staging_db_restore_contract.py' -v
