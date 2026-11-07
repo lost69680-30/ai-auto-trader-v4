@@ -148,3 +148,13 @@ def test_degraded_worker_status_can_still_be_process_healthy():
     assert result["state"] == "DEGRADED"
     assert result["worker_process_healthy"] is True
     assert result["market_data_ready"] is False
+
+
+def test_degraded_heartbeat_status_never_reports_fully_healthy():
+    snapshot = healthy_snapshot()
+    snapshot["status"] = "DEGRADED"
+    result = classify_worker_snapshot(snapshot, now=NOW)
+    assert result["state"] == "DEGRADED"
+    assert result["worker_process_healthy"] is True
+    assert result["scheduler_healthy"] is True
+    assert result["market_data_ready"] is True
