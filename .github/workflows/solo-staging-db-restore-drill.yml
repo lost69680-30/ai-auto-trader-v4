@@ -5,6 +5,10 @@ on:
   # already performs a full disposable restore before publishing its ciphertext.
   schedule:
     - cron: "0 7 1 * *"
+  pull_request:
+    paths:
+      - ".github/workflows/solo-staging-db-restore-drill.yml"
+      - "tests/test_solo_staging_db_restore_contract.py"
   workflow_dispatch:
     inputs:
       confirm_staging_only:
@@ -23,7 +27,7 @@ concurrency:
 jobs:
   restore-into-disposable-postgres:
     name: Read-only export and restore into temporary PostgreSQL 17
-    if: github.event_name == 'schedule' || inputs.confirm_staging_only == true
+    if: github.event_name == 'schedule' || github.event_name == 'pull_request' || inputs.confirm_staging_only == true
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
