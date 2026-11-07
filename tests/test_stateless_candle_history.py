@@ -126,3 +126,41 @@ def test_direct_history_marks_limit_truncation_explicitly():
     assert result["truncated"] is True
     assert result["expected_candle_count"] == 2
     assert result["returned_candle_count"] == 1
+
+def test_direct_history_distinguishes_provider_shortfall_from_limit_truncation():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            # The requested range is longer than the cap, but the provider returns
+            # fewer rows than the cap. This is both capped and upstream-incomplete.
+            return (candle(0),)
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=4), limit=2,
+        now=BASE + timedelta(minutes=5),
+    )
+
+    assert result["truncated"] is True
+    assert result["complete"] is False
+    assert result["coverage_status"] == "TRUNCATED_AND_INCOMPLETE"
+    assert result["unreturned_due_to_limit"] == 2
+    assert result["upstream_missing_candle_count"] == 1
+    assert result["missing_candle_count"] == 1
+
+
+def test_limit_truncation_does_not_count_intentionally_unreturned_candles_as_missing():
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit, now, start_time_ms, end_time_ms):
+            return (candle(0),)
+
+    result = build_direct_market_history_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        start=BASE, end=BASE + timedelta(minutes=2), limit=1,
+        now=BASE + timedelta(minutes=3),
+    )
+
+    assert result["truncated"] is True
+    assert result["coverage_status"] == "TRUNCATED"
+    assert result["unreturned_due_to_limit"] == 1
+    assert result["upstream_missing_candle_count"] == 0
+    assert result["missing_candle_count"] == 0
