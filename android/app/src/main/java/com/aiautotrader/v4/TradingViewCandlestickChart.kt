@@ -52,6 +52,11 @@ internal fun TradingViewCandlestickChart(
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val latestData = rememberUpdatedState(marketCandlesToTradingViewData(candles))
+    val latestBackgroundColor = rememberUpdatedState(backgroundColor)
+    val latestTextColor = rememberUpdatedState(textColor)
+    val latestGridColor = rememberUpdatedState(gridColor)
+    val latestUpColor = rememberUpdatedState(upColor)
+    val latestDownColor = rememberUpdatedState(downColor)
     val seriesState = remember { mutableStateOf<SeriesApi?>(null) }
     val chartError = remember { mutableStateOf<String?>(null) }
     val appliedData = remember { mutableStateOf(emptyList<com.tradingview.lightweightcharts.api.series.models.CandlestickData>()) }
@@ -69,14 +74,14 @@ internal fun TradingViewCandlestickChart(
                     if (seriesState.value == null) {
                         chartView.api.applyOptions {
                             layout = layoutOptions {
-                                background = SolidColor(backgroundColor.toArgb().toIntColor())
-                                textColor = textColor.toArgb().toIntColor()
+                                background = SolidColor(latestBackgroundColor.value.toArgb().toIntColor())
+                                textColor = latestTextColor.value.toArgb().toIntColor()
                                 attributionLogo = true
                             }
                             timeScale = timeScaleOptions {
                                 timeVisible = true
                                 secondsVisible = false
-                                borderColor = gridColor.toArgb().toIntColor()
+                                borderColor = latestGridColor.value.toArgb().toIntColor()
                                 fixLeftEdge = true
                             }
                             rightPriceScale = priceScaleOptions {
@@ -84,7 +89,7 @@ internal fun TradingViewCandlestickChart(
                             }
                             grid = gridOptions {
                                 horzLines = gridLineOptions {
-                                    color = gridColor.toArgb().toIntColor()
+                                    color = latestGridColor.value.toArgb().toIntColor()
                                 }
                                 vertLines = gridLineOptions {
                                     color = gridColor.toArgb().toIntColor()
@@ -93,10 +98,10 @@ internal fun TradingViewCandlestickChart(
                         }
                         chartView.api.addCandlestickSeries(
                             options = CandlestickSeriesOptions(
-                                upColor = upColor.toArgb().toIntColor(),
-                                downColor = downColor.toArgb().toIntColor(),
-                                wickUpColor = upColor.toArgb().toIntColor(),
-                                wickDownColor = downColor.toArgb().toIntColor(),
+                                upColor = latestUpColor.value.toArgb().toIntColor(),
+                                downColor = latestDownColor.value.toArgb().toIntColor(),
+                                wickUpColor = latestUpColor.value.toArgb().toIntColor(),
+                                wickDownColor = latestDownColor.value.toArgb().toIntColor(),
                                 borderVisible = false,
                                 lastValueVisible = true,
                                 priceLineVisible = false,
