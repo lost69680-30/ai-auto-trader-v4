@@ -353,6 +353,8 @@ private object BackendSession {
     val marketIntelligenceScanAttempts = mutableStateOf(0)
     // Keep the last validated closed-candle snapshot when screens change or refreshes fail.
     val candleHistoryBySymbol = mutableStateOf<Map<String, Map<String, List<MarketCandle>>>>(emptyMap())
+    val candleHistoryLastSuccessAtBySymbol = mutableStateOf<Map<String, java.time.Instant>>(emptyMap())
+    val candleHistoryLastAttemptSucceededBySymbol = mutableStateOf<Map<String, Boolean>>(emptyMap())
     val paperLedger = mutableStateOf<PaperLedgerSnapshot?>(null)
     val paperLedgerStatus = mutableStateOf("NOT LOADED")
     val paperLedgerError = mutableStateOf("")
@@ -2220,24 +2222,41 @@ private fun AnalysisScreen() {
     }
     val candleSymbolKey = normalizeSymbol(selectedMarket?.symbol ?: symbol)
     val candleHistoryByTimeframe = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
+    val candleHistoryLastSuccessAt = BackendSession.candleHistoryLastSuccessAtBySymbol.value[candleSymbolKey]
+    val candleHistoryLastAttemptSucceeded = BackendSession.candleHistoryLastAttemptSucceededBySymbol.value[candleSymbolKey]
+    val candleHistoryAgeSeconds = candleHistoryLastSuccessAt?.let {
+        java.time.Duration.between(it, freshnessClock).seconds.coerceAtLeast(0)
+    }
+    val candleHistoryFreshnessLabel = when {
+        candleHistoryLastSuccessAt == null -> "CANDLE HISTORY · NOT LOADED"
+        candleHistoryLastAttemptSucceeded == false ->
+            "CANDLE HISTORY · REFRESH FAILED · LAST GOOD ${candleHistoryAgeSeconds}s AGO"
+        (candleHistoryAgeSeconds ?: 0) > 90 ->
+            "CANDLE HISTORY · STALE · LAST SUCCESS ${candleHistoryAgeSeconds}s AGO"
+        else -> "CANDLE HISTORY · LAST SUCCESS ${candleHistoryAgeSeconds}s AGO"
+    }
     var candleHistoryLoading by remember { mutableStateOf(false) }
     LaunchedEffect(sessionToken, selectedMarket?.symbol, candleSymbolKey, isForeground) {
         if (isForeground && sessionToken.length >= 32 && selectedMarket != null && candleSymbolKey.isNotBlank()) {
             while (true) {
                 candleHistoryLoading = true
+                BackendSession.candleHistoryLastAttemptSucceededBySymbol.value =
+                    BackendSession.candleHistoryLastAttemptSucceededBySymbol.value + (candleSymbolKey to false)
                 val history = withContext(Dispatchers.IO) {
                     try { fetchCandleHistory(sessionToken, selectedMarket.symbol) } catch (_: Exception) { emptyMap() }
                 }
                 // Update only intervals with usable candles so an empty/failed refresh cannot
                 // erase a previously validated chart for the same symbol.
-                if (history.isNotEmpty()) {
-                    val nonEmptyHistory = history.filterValues { it.isNotEmpty() }
-                    if (nonEmptyHistory.isNotEmpty()) {
-                        val previous = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
-                        BackendSession.candleHistoryBySymbol.value =
-                            BackendSession.candleHistoryBySymbol.value +
-                                (candleSymbolKey to (previous + nonEmptyHistory))
-                    }
+                val nonEmptyHistory = history.filterValues { it.isNotEmpty() }
+                if (nonEmptyHistory.isNotEmpty()) {
+                    val previous = BackendSession.candleHistoryBySymbol.value[candleSymbolKey].orEmpty()
+                    BackendSession.candleHistoryBySymbol.value =
+                        BackendSession.candleHistoryBySymbol.value +
+                            (candleSymbolKey to (previous + nonEmptyHistory))
+                    BackendSession.candleHistoryLastSuccessAtBySymbol.value =
+                        BackendSession.candleHistoryLastSuccessAtBySymbol.value + (candleSymbolKey to java.time.Instant.now())
+                    BackendSession.candleHistoryLastAttemptSucceededBySymbol.value =
+                        BackendSession.candleHistoryLastAttemptSucceededBySymbol.value + (candleSymbolKey to true)
                 }
                 candleHistoryLoading = false
                 delay(60_000)
@@ -2311,6 +2330,12 @@ private fun AnalysisScreen() {
             }
             Text("REST feed: ${BackendSession.feedStatus.value} · WebSocket: ${BackendSession.websocketStatus.value} · ${BackendSession.marketMessage.value}", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
             Text("Selected interval: $timeframe · loaded directly from validated, closed backend candles. No missing candles are fabricated.", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+            Text(
+                candleHistoryFreshnessLabel,
+                color = if (candleHistoryLastSuccessAt != null && candleHistoryLastAttemptSucceeded != false && (candleHistoryAgeSeconds ?: 0) <= 90) Green else Color(0xFFE7B65E),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+            )
             CandlestickChart(Modifier.fillMaxWidth().height(190.dp), displayedCandles)
             if (selectedMarket == null) {
                 Text(if (BackendSession.marketLoading.value || candleHistoryLoading) "Loading authenticated interval-specific candles…" else "No validated candles for $symbol. The chart will remain empty rather than fabricate prices.", color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
