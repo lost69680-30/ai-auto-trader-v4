@@ -1,50 +1,75 @@
-# AI Auto Trader v4 Architecture and Readiness
+# Solo Architecture and Current Readiness
 
-## Current implemented flow
+**Reviewed:** 2026-11-07  
+**Scope:** Source-level architecture across the current backend integration and Android integration branches. This document distinguishes implemented code, opt-in runtime behavior, CI evidence, and operational acceptance.
 
-1. **Public market data** — `backend/market_data_adapter.py` parses Binance USDⓈ-M Futures public REST market metadata, 24-hour stats, top-of-book, klines, and mark/index/funding context. It does not fetch account state or submit orders.
-2. **REST worker** — `backend/market_worker.py` polls an explicit symbol list, checks freshness, closed candles, and gaps, tracks feed status, and uses capped backoff. Consumer/poll-cycle exceptions are logged and retried. No WebSocket stream, server-clock synchronisation, feed-health SLA, or full request-weight scheduler is present.
-3. **Research** — `backend/scanner.py`, `backend/opportunity_intelligence.py`, `backend/strategy_research.py`, and `backend/liquidity_structure.py` are joined by `app/engines/research_pipeline.py`. These components provide structured candidate evidence and a fail-closed `NO_TRADE` outcome; they do not establish a profitable forecast.
-4. **Price planning and validation** — `app/engines/price_planner.py` derives a candidate plan from explicit closed candles, a reference price/time, exchange tick size, expiry, and cost assumptions. `app/engines/signal_handoff.py` sends a reviewed candidate through signal validation, then requests a watcher.
-5. **Trigger and risk** — `app/engines/paper_signal_cycle.py` checks the trigger before `app/engines/orchestrator.py` applies the independent `app/core/risk_guardian.py` gate. The guardian validates finite inputs and recomputes stop-distance risk conservatively. It does not place orders.
-6. **Persistent paper execution** — `app/engines/paper_ledger.py` records idempotent paper intents, simulated fills, positions, marks, P&L, emergency state, and audit events in SQLite. `app/engines/protection.py` simulates stop-loss/take-profit, optional trailing stops, emergency-stop exits, and recovery.
-7. **Coordinator/runtime** — `app/engines/complete_analysis_pipeline.py` connects a research result to planning, signal handoff, trigger watch, and paper intent. `app/engines/paper_runtime.py` wraps healthy market polls, an injected analysis callback, simulated fills, and protective updates. It deliberately requires the caller to supply verified market configuration, costs, sizing, limits, and portfolio state.
+## Product and safety contract
 
-## Part 5 intelligence work on the feature branch
+Solo is a market-analysis and paper-research system. It is not a live trading bot.
 
-The open draft PR branch `feat/continuous-opportunity-engine` contains additional research-layer work. This work has passed the backend and PostgreSQL CI suites on the branch, but it is **not merged or deployed**.
+- Runtime mode must remain `PAPER_ONLY`; every research, strategy, graph and specialist output carries `orders_authorized=false`.
+- There is no live exchange order-placement interface in this architecture.
+- The independent Risk Guardian is the only authority that may approve a paper intent. Research, indicators, strategies, specialist handlers and learning proposals cannot bypass it.
+- AI-produced weights or settings cannot change risk limits, leverage, position sizing, Emergency Stop or execution controls.
+- Emergency Stop is never automatically cleared. Stale, missing, malformed, uncertain or contradictory evidence fails closed.
+- Credentials remain in backend secret storage and are not embedded in the Android application, research artifacts or agent payloads.
 
-- **Multi-timeframe market state** — `backend/market_assessment.py` validates closed candle histories and reports timeframe direction, trend score, momentum, volatility, efficiency, relative volume, structure, candle pattern, support/resistance, regime and conflicts. Scores are heuristic evidence, not calibrated probabilities.
-- **Indicator Intelligence** — `backend/indicator_intelligence.py` validates each timeframe's candle series before calculating EMA20/50, RSI14, MACD 12/26/9, Bollinger Bands, ATR14, ATR percentage, VWAP and prior-20-candle relative volume. Missing history is reported as unavailable; invalid/stale/gapped series are blocked. Outputs remain `NOT_CALIBRATED` and `orders_authorized=false`.
-- **Scheduled market intelligence** — `backend/market_intelligence_scan.py` uses the existing shared market-data source and worker path. Reports now include per-timeframe indicator assessments; no second exchange client or polling loop was added.
-- **Independent strategy assessment** — `backend/strategy_assessment_engine.py` maintains separate scalping, day, swing, position and long-term assessments. Each receives compact indicator evidence and conflict references. Indicator context is not a majority vote and does not silently overwrite the strategy's own decision. Long-term analysis remains analysis-only.
-- **Continuous Opportunity Engine** — `backend/opportunity_store.py`, `backend/opportunity_coordinator.py` and `backend/continuous_opportunity_search.py` provide the durable paper-only opportunity research foundation. The explicit price plan is separately recorded as evidence. Scheduled worker activation, fresh trigger-to-risk integration and read-only opportunity API completion remain outstanding.
+## Current market and paper-analysis flow
 
-The feature branch's latest verified backend suite at this checkpoint reported **526 passed**; PostgreSQL integration, ASGI and read-only market-data/safety checks passed. This is CI evidence only. It does not establish live operation, Android phone verification, deployment readiness or profitability.
+1. **Public Testnet market data** — the shared adapter uses explicitly scoped Binance Spot Testnet and Binance USDⓈ-M Futures Testnet sources. Venue identity is retained; Spot data is not interpreted as Futures mark-price or funding context. The adapters are read-only.
+2. **Shared supervised worker** — one shared market-data worker supplies validated snapshots and candles to market analysis and durable scheduled jobs. It checks candle closure, freshness, gaps and source identity. Opportunity scanning reuses this source; it does not create a second exchange polling loop.
+3. **Market assessment and Indicator Intelligence** — validated closed-candle series produce timeframe regime, trend, momentum, volatility, structure, support/resistance, candle-pattern and conflict evidence. Indicator Intelligence calculates EMA20/50, RSI14, MACD 12/26/9, Bollinger Bands, ATR14/ATR%, VWAP and prior-20-candle relative volume. Invalid, stale, incomplete or gapped histories are rejected or reported unavailable.
+4. **Independent Nexus strategy assessment** — scalping, day, swing, position and long-term profiles are assessed independently. Indicator context is attached as evidence, not majority-voted into one direction. Long-term assessment remains analysis-only. Scores are heuristic and `NOT_CALIBRATED`, not win probabilities.
+5. **Durable Continuous Opportunity Engine** — a PostgreSQL registry stores independent opportunities, versioned assessments, price-plan evidence, watch conditions, append-only events and worker claims. Spot and Futures coordinators are venue-isolated. Reassessment uses the opportunity's own timeframe and fresh closed candles. Expiry, invalidation, duplicate delivery and lease reclamation are handled fail-closed.
+6. **Fresh trigger and paper-risk handoff** — a triggered Futures opportunity is reloaded and reassessed with fresh market/candle evidence and the independent strategy profiles. The handoff enters the existing signal-validation and paper-service path, then the PaperSignalCycle and Risk Guardian. Intent state is only advanced when the paper ledger confirms the result. Spot remains research-only.
+7. **Paper ledger and protection** — the paper service records idempotent intents, simulated fills, positions, marks, P&L, Emergency Stop state and audit events. Protection logic simulates stop-loss/take-profit and permitted trailing behavior. This is simulation, not exchange-side protection.
+8. **Authenticated read-only opportunity API** — list/detail/event/assessment/evidence endpoints expose opportunity research. There are no opportunity mutation endpoints.
 
-## Safety controls strengthened in the latest audit
+## Runtime activation and hosting constraints
 
-- Reject NaN, infinity, booleans in numeric fields, invalid risk limits, malformed timestamps, and invalid open-position counts.
-- Recompute stop-distance risk as `quantity × abs(entry_price − stop_loss)` and compare the greater of the supplied estimate and recomputed risk to the trade risk cap.
-- Reject duplicate symbol frames, stale polls, frame/poll timestamp mismatches, malformed candle evidence, and quotes observed before the pending intent.
-- Preserve source market-observation timestamps in protection marks.
-- Keep a transient analysis, polling, or consumer callback exception from silently terminating the continuous worker loop; logs must be monitored.
+The source supports scheduled research, but runtime activation is deliberately opt-in:
 
-## Deliberate boundaries and missing work
+- `PAPER_MARKET_INTELLIGENCE_ENABLED` defaults to `false`.
+- `PAPER_STRATEGY_RESEARCH_ENABLED` defaults to `false`.
+- `PAPER_OPPORTUNITY_PAPER_HANDOFF_ENABLED` defaults to `false`.
+- Raw candle archiving remains separately opt-in; stateless bounded candle retrieval is supported without making permanent candle archives mandatory.
 
-- **No exchange execution adapter:** No Binance Testnet or live order placement, cancellation, order/fill reconciliation, or API-key handling exists. Do not interpret `APPROVED` as permission to send an order.
-- **No self-contained composition layer:** the complete coordinator requires injected plan/sized-request factories, and the runtime requires an injected analysis handler. A trusted concrete entry point/config loader is still needed for unattended operation.
-- **Simplified Futures accounting:** quantity × price assumes linear unit exposure. The model lacks exchange-specific contract multipliers, funding payments, leverage/margin, maintenance margin, liquidation, partial fills, and full portfolio netting.
-- **Market-data operations:** current polling is REST-based and per symbol. Do not poll every eligible Futures contract at a short interval until request-weight budgeting, caching, and/or WebSocket streaming are implemented and verified. No live outbound connectivity smoke test was established here.
-- **Product deployment:** no production REST/WebSocket API, authentication/session management, cloud deployment, secrets manager, monitoring/alerting/notifications, Android frontend, Gradle build, or APK is included.
-- **Advanced AI:** PPO/RL, GAT, CTDE, and MCP/A2A runtime/training are future research directions, not implemented features or a guarantee of profit. Use a transparent baseline and out-of-sample validation before adding them.
+Do not enable these flags merely to make the dashboard look active. Read-only research activation and paper handoff are separate decisions. Handoff must remain disabled unless its specific staging acceptance gate is satisfied.
 
-## Gates before considering Testnet
+The independent external watchdog checks worker liveness and an independent API/database readiness endpoint. The scheduler watchdog distinguishes a stalled job runner from a stale market feed or a failed individual job. It must not restart a healthy worker or treat a transient database health-read exception as confirmed failure. The user-provided November 6 run confirms the healthy/no-restart path; a real confirmed-failure restart-and-recovery event has not yet been accepted.
 
-1. Add a versioned runtime config with explicit symbol allowlist, exchange filters, transaction costs, clock policy, per-trade/daily/portfolio risk, and paper-account state.
-2. Connect adapter → worker → scanner/research → planner → handoff/watcher → sizing/orchestrator → ledger/protection through a reproducible entry point.
-3. Run multi-day paper/replay and restart drills, verify audit consistency and emergency stop, and inspect metrics for feed freshness, rejected signals, fills, drawdown, fees/slippage, and protection exits.
-4. Implement a separately permissioned Testnet adapter with exchange-filter compliance, order lifecycle idempotency, cancellation/reconciliation, disconnect and partial-fill handling, plus comprehensive contract tests.
-5. Only after stable Testnet and manual approval, evaluate any next execution scope. Real-money mode must remain disabled until those controls and separate approval exist.
+**$0 hosting limitation:** the current Render Free service can sleep and does not provide guaranteed continuous worker compute. GitHub Actions is useful for CI and manually dispatched checks, not a replacement for a real-time worker or guaranteed scheduler. Do not use keep-alive traffic, hidden background polling, paid resources or usage that can incur charges to simulate always-on hosting. When the host sleeps or the worker heartbeat expires, the UI and API must report degraded/stale state.
 
-`PROJECT_COMPLETENESS_AUDIT.md` is the detailed verification report. Passing the local tests shows only the behaviors covered by those tests, not profitability or production readiness.
+## Strategy research and evaluation
+
+The strategy-research runtime compares fixed candidate families using chronological walk-forward folds, a distinct untouched final holdout, market-data lineage and explicit benchmark comparisons. It does not tune or promote parameters automatically.
+
+Validation-only cost sensitivity recomputes metrics from validation-fold trade-level ledgers at ordered cost multipliers. It never reads untouched holdout data. If trade-level evidence is missing, the report is `UNAVAILABLE`; aggregate totals must not be used to fabricate trade-level stress results.
+
+These evaluations use simplified simulator assumptions. They do not fully model order-book depth, market impact, liquidation, exchange-specific contract multipliers, full Futures funding/margin accounting or actual venue fills. Backtest and stress reports are research evidence, not a profitability forecast.
+
+## Graph and learning research
+
+- The relationship graph module creates deterministic correlation edges and node statistics from aligned closed-period return arrays. It is preparation for future GAT research, not a trained Graph Attention Network or forecast.
+- The learning lab accepts only quality-qualified walk-forward validation evidence, records data lineage and excludes untouched holdout values. A proposal can receive `REVIEW_REQUIRED` only; it cannot auto-promote a strategy or alter Risk Guardian settings.
+- The deterministic specialist protocol is an in-process research supervisor over immutable, fingerprinted snapshots. It validates timestamps, venue/symbol identity, role allowlists, payload size and safety fields; it sanitizes failures and rejects risk/execution controls.
+- These are not fifteen autonomous LLM agents, a persistent distributed message bus, or a production MCP/A2A network.
+- PPO/RL/GAT training and inference are not implemented as running production services. They remain offline research-only and gated on qualified datasets, leakage-safe partitions, realistic simulation and independent evaluation.
+
+## Android and TradingView chart boundary
+
+The Android integration branch contains the TradingView Lightweight Charts Android wrapper. It renders Solo-provided OHLC candles after local validation of timestamps, numeric values, OHLC consistency, ordering and supported price precision. It has no order or execution interface.
+
+TradingView is the chart-rendering library here, not Solo's market-data provider. Candle history and live observations come through Solo's own configured market-data/API path. Do not scrape TradingView, extract TradingView indicator values, or treat a TradingView widget as a custom-data API. The 5.2.1 Android wrapper dependency upgrade is in the draft Android cost-sensitivity PR and remains subject to its current CI and physical-device acceptance.
+
+## Deliberate exclusions and remaining acceptance
+
+- No live Binance order adapter, order placement, cancellation, live fill reconciliation or live account trading.
+- No Forex adapter or verified Forex session-calendar implementation.
+- No autonomous LLM-agent network, distributed A2A/MCP bus, trained PPO/RL policy or trained GAT model.
+- No claim of guaranteed 24/7 processing on the current free host.
+- Passing GitHub CI proves only the tested source and disposable-CI behavior. It does not establish that the current Render deployment runs the latest source, that a long real-market soak has passed, or that an APK has been installed and accepted on the user's phone.
+
+Before widening runtime activation, complete and record: actual staging deployment/source identity; worker/API readiness; a real confirmed-failure recovery drill; scheduler and duplicate-delivery verification; backup/restore and rollback evidence; multi-day paper/replay soak; and Android physical-device chart, notification, freshness and safety acceptance.
+
+**Permanent boundary:** `PAPER_ONLY`; `orders_authorized=false`; no live orders; independent Risk Guardian authority; Emergency Stop never auto-cleared; no paid infrastructure or accidental billing.
