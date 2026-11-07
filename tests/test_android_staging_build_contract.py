@@ -6,6 +6,14 @@ def repository_root() -> Path:
     for parent in Path(__file__).resolve().parents:
         if (
             (parent / "android" / "app" / "build.gradle.kts").is_file()
+            and (
+                parent
+                / "extracted-source"
+                / "ai-auto-trader-v4-assembly"
+                / "android"
+                / "app"
+                / "build.gradle.kts"
+            ).is_file()
             and (parent / ".github" / "workflows" / "build-market-analysis-apk.yml").is_file()
         ):
             return parent
