@@ -48,7 +48,9 @@ def test_multi_timeframe_contains_week_month_and_year_with_explicit_api_mapping(
 def test_candle_history_is_cached_without_claiming_stale_data_is_live():
     source = SOURCE.read_text(encoding="utf-8")
     assert "candleHistoryBySymbol" in source
-    assert "val nonEmptyHistory = history.filterValues { it.isNotEmpty() }" in source
+    assert "val nonEmptyHistory = history.filter { (interval, candles) ->" in source
+    assert 'status == "HEALTHY" || status == "INSUFFICIENT_HISTORY"' in source
+    assert "candleHistoryCoverageStatusBySymbolAndTimeframe" in source
     assert "LAST GOOD SNAPSHOT" in source
     assert "Signal confidence" in source
     assert "NOT CALIBRATED" in source
