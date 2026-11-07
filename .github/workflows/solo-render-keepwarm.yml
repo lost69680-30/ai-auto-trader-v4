@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
       - name: Install read-only PostgreSQL client
         run: python -m pip install "psycopg[binary]==3.3.6"
-      - name: Keep verified live worker warm and wake only after a confirmed stop
+      - name: Inspect worker state and wake only after a confirmed stop
         env:
           SOLO_BACKUP_DATABASE_URL: ${{ secrets.SOLO_BACKUP_DATABASE_URL }}
           PAPER_WORKER_ID: solo-market-worker
