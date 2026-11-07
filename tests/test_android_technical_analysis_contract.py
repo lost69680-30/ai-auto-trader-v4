@@ -135,3 +135,12 @@ def test_android_notification_center_has_a_safe_delivery_probe():
     assert "SoloNotificationCenter.sendTestNotification(context)" in source
     assert 'Text("Send test notification")' in source
     assert "This test does not create a risk alert" in source
+
+def test_chart_exposes_candle_history_refresh_freshness_separately_from_price_feed():
+    source = SOURCE.read_text(encoding="utf-8")
+    assert "candleHistoryLastSuccessAtBySymbol" in source
+    assert "candleHistoryLastAttemptSucceededBySymbol" in source
+    assert "CANDLE HISTORY · LAST SUCCESS" in source
+    assert "CANDLE HISTORY · REFRESH FAILED" in source
+    assert "CANDLE HISTORY · NOT LOADED" in source
+    assert "candle history refresh status" in source
