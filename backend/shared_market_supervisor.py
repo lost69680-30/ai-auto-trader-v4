@@ -334,6 +334,7 @@ def main() -> None:
             int(os.environ["PORT"]),
             readiness_provider=readiness_provider,
             max_age_seconds=max_market_age,
+            max_scheduler_stale_seconds=scheduler_stale_seconds,
         )
     market_store = None
     if "worker" in modules and database_url:
