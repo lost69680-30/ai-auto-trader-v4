@@ -27,7 +27,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate GitHub Actions workflow syntax
         uses: reviewdog/action-actionlint@v1
       - name: Install monitor test dependencies
@@ -42,13 +42,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install read-only PostgreSQL client
         run: python -m pip install "psycopg[binary]==3.3.6"
-      - name: Inspect worker heartbeat without waking or restarting it
+      - name: Inspect worker health, keep live service warm, and wake only after a confirmed stop
         env:
           SOLO_BACKUP_DATABASE_URL: ${{ secrets.SOLO_BACKUP_DATABASE_URL }}
           PAPER_WORKER_ID: solo-market-worker
