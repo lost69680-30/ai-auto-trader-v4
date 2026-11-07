@@ -443,7 +443,7 @@ def process_triggered_opportunity(
             PricePlanningConfig(
                 max_reference_age_seconds=30,
                 max_candle_age_seconds=timeframe_age,
-                max_round_trip_cost_pct=max(0.5, float(cost_pct)),
+                max_round_trip_cost_pct=0.5,
             ),
         )
         if planned.status != "READY" or planned.plan is None:
