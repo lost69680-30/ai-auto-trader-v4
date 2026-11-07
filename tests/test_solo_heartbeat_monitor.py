@@ -399,3 +399,34 @@ def test_keepwarm_never_contacts_render_for_unknown_or_unsafe_state():
     assert request_worker_keepwarm(unknown, opener=opener)["attempted"] is False
     assert request_worker_keepwarm(classify_worker_snapshot(unsafe, now=NOW), opener=opener)["attempted"] is False
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("degraded_feed", "expected_exit"),
+    [(False, 0), (True, 1)],
+)
+def test_live_worker_does_not_send_keepwarm_liveness_request(
+    monkeypatch, degraded_feed, expected_exit
+):
+    from scripts import solo_heartbeat_monitor as monitor
+
+    now = datetime.now(UTC)
+    snapshot = healthy_snapshot()
+    snapshot["heartbeat_at"] = now - timedelta(seconds=5)
+    snapshot["lease_expires_at"] = now + timedelta(seconds=85)
+    snapshot["details"]["scheduled_jobs"]["last_poll_at"] = now - timedelta(seconds=10)
+    snapshot["feed"]["latest_checked_at"] = now - timedelta(seconds=20)
+    if degraded_feed:
+        snapshot["feed"]["healthy_rows"] = 7
+        snapshot["feed"]["stale_rows"] = 3
+
+    monkeypatch.setenv("SOLO_BACKUP_DATABASE_URL", "postgresql://read-only")
+    monkeypatch.setenv("PAPER_WORKER_ID", "solo-market-worker")
+    monkeypatch.setattr(monitor, "load_worker_snapshot", lambda *args: snapshot)
+
+    def forbidden_liveness_request(**kwargs):
+        pytest.fail("a live worker must not receive periodic keepwarm requests")
+
+    monkeypatch.setattr(monitor, "_request_worker_liveness", forbidden_liveness_request)
+
+    assert monitor.main() == expected_exit
