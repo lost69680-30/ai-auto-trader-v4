@@ -158,7 +158,8 @@ def test_chart_freshness_is_tracked_for_the_selected_symbol_and_timeframe():
     assert "CANDLE HISTORY · INVALID / INCOMPLETE DATA" in source
     assert "CANDLE HISTORY · LIMITED HISTORY" in source
     assert "CANDLE HISTORY · INSUFFICIENT HISTORY" in source
-    assert "candle history refresh status" in source
+    assert "candleHistoryFreshnessLabel" in source
+    assert "Text(\n                candleHistoryFreshnessLabel," in source
 
 
 def test_partial_candle_refresh_updates_only_intervals_with_valid_data():
