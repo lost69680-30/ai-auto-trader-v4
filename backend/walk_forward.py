@@ -53,6 +53,7 @@ class EvaluationWindow:
     buy_hold_return_pct: float
     cash_return_pct: float = 0.0
     used_for_selection: bool = False
+    market_regime: MarketRegimeEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +62,17 @@ class WalkForwardResult:
     folds: tuple[EvaluationWindow, ...]
     holdout: EvaluationWindow
     warnings: tuple[str, ...]
+    orders_authorized: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class MarketRegimeEvidence:
+    trend_state: str
+    volatility_state: str
+    trend_return_pct: float
+    realized_volatility_pct: float
+    observations: int
+    methodology: str
     orders_authorized: bool = False
 
 
@@ -85,6 +97,35 @@ def _validate_dataset(symbol: str, rows: list[Candle], interval_minutes: int) ->
         if row.high < max(row.open, row.close, row.low) or row.low > min(row.open, row.close, row.high):
             raise ValueError(f"inconsistent OHLC values at row {index}")
         previous = stamp
+
+
+def _classify_market_regime(rows: list[Candle]) -> MarketRegimeEvidence:
+    if len(rows) < 3:
+        raise ValueError("market regime classification requires at least three candles")
+    returns = [
+        (rows[index].close / rows[index - 1].close - 1.0) * 100.0
+        for index in range(1, len(rows))
+    ]
+    if not all(math.isfinite(value) for value in returns):
+        raise ValueError("market regime returns must be finite")
+    mean_return = math.fsum(returns) / len(returns)
+    variance = math.fsum((value - mean_return) ** 2 for value in returns) / len(returns)
+    volatility = math.sqrt(variance)
+    trend = (rows[-1].close / rows[0].close - 1.0) * 100.0
+    if not math.isfinite(volatility) or not math.isfinite(trend):
+        raise ValueError("market regime metrics must be finite")
+    return MarketRegimeEvidence(
+        trend_state="UP" if trend >= 1.0 else "DOWN" if trend <= -1.0 else "RANGE",
+        volatility_state="LOW" if volatility < 0.25 else "MEDIUM" if volatility < 1.0 else "HIGH",
+        trend_return_pct=round(trend, 6),
+        realized_volatility_pct=round(volatility, 6),
+        observations=len(returns),
+        methodology=(
+            "Close-to-close trend thresholds ±1%; population standard deviation of "
+            "percentage returns: LOW <0.25%, MEDIUM <1.0%, otherwise HIGH."
+        ),
+        orders_authorized=False,
+    )
 
 
 def _evaluate_window(
@@ -124,6 +165,7 @@ def _evaluate_window(
         buy_hold_return_pct=round(buy_hold_return, 6),
         cash_return_pct=0.0,
         used_for_selection=False,
+        market_regime=_classify_market_regime(test_rows),
     )
 
 
