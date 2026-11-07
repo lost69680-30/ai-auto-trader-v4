@@ -166,8 +166,8 @@ def test_claim_next_only_claims_explicitly_enabled_job_names():
 def test_coalescing_missed_intervals_enqueues_only_latest_due_occurrence():
     reset_tables()
     scheduler = DurableJobScheduler(DSN)
-    first = datetime(2026, 11, 7, 10, 0, tzinfo=timezone.utc)
-    now = first + timedelta(minutes=3)
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    first = now - timedelta(minutes=3)
     scheduler.register_interval(
         "market_intelligence_scan", interval_seconds=60,
         first_run_at=first, payload={"scope": "continuous_opportunity_search"},
@@ -178,6 +178,10 @@ def test_coalescing_missed_intervals_enqueues_only_latest_due_occurrence():
     assert job is not None
     assert job["scheduled_for"] == now
     assert scheduler.enqueue_due(now=now, coalesce_missed=True) == 0
+    assert scheduler.complete(
+        job["idempotency_key"], owner=job["lease_owner"],
+        now=now + timedelta(seconds=1),
+    ) is True
 
     with psycopg.connect(DSN) as conn:
         next_run = conn.execute(
@@ -185,9 +189,9 @@ def test_coalescing_missed_intervals_enqueues_only_latest_due_occurrence():
             ("market_intelligence_scan",),
         ).fetchone()[0]
         rows = conn.execute(
-            "SELECT scheduled_for FROM paper_ledger.scheduled_jobs WHERE job_name = %s ORDER BY scheduled_for",
+            "SELECT scheduled_for, status FROM paper_ledger.scheduled_jobs WHERE job_name = %s ORDER BY scheduled_for",
             ("market_intelligence_scan",),
         ).fetchall()
 
     assert next_run == now + timedelta(seconds=60)
-    assert rows == [(now,)]
+    assert rows == [(now, "SUCCEEDED")]
