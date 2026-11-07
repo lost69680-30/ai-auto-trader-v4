@@ -21,12 +21,12 @@ def test_render_worker_readiness_workflow_embedded_bash_is_syntax_valid():
         / ".github/workflows/solo-configure-render-worker-readiness.yml"
     ).read_text(encoding="utf-8")
     match = re.search(
-        r"(?m)^        run: \\|\\n((?:^          .*\\n|^            .*\\n)+)",
+        r"(?m)^        run: \|\n((?:^          .*\n|^            .*\n)+)",
         workflow,
     )
     assert match is not None, "expected the Render configuration step to have a bash run block"
 
-    script = "\\n".join(line[10:] for line in match.group(1).splitlines())
+    script = "\n".join(line[10:] for line in match.group(1).splitlines())
     completed = subprocess.run(
         ["bash", "-n"],
         input=script,
