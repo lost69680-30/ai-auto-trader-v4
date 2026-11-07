@@ -488,6 +488,51 @@ def _closed_monthly_candles(year=2025):
     return rows
 
 
+
+
+# Coverage contract: chart intervals are validated independently from the history endpoint.
+def _single_closed_candle_for_interval(symbol, interval, opened):
+    from backend.market_data_adapter import MarketCandle
+
+    fixed = {
+        "1m": timedelta(minutes=1), "5m": timedelta(minutes=5),
+        "15m": timedelta(minutes=15), "1h": timedelta(hours=1),
+        "4h": timedelta(hours=4), "1d": timedelta(days=1),
+        "1w": timedelta(days=7),
+    }
+    if interval == "1M":
+        next_open = (
+            datetime(opened.year + 1, 1, 1, tzinfo=timezone.utc)
+            if opened.month == 12 else datetime(opened.year, opened.month + 1, 1, tzinfo=timezone.utc)
+        )
+    else:
+        next_open = opened + fixed[interval]
+    return MarketCandle(
+        symbol=symbol, open_time=opened,
+        close_time=next_open - timedelta(milliseconds=1),
+        open=100.0, high=101.0, low=99.0, close=100.5,
+        volume=10.0, quote_volume=1000.0, trades=10, is_closed=True,
+    )
+
+
+def _closed_minute_series(symbol="BTCUSDT", *, start=None, count=60, missing_index=None):
+    from backend.market_data_adapter import MarketCandle
+
+    start = start or datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rows = []
+    for index in range(count):
+        if index == missing_index:
+            continue
+        opened = start + timedelta(minutes=index)
+        price = 100.0 + index * 0.1
+        rows.append(MarketCandle(
+            symbol=symbol, open_time=opened,
+            close_time=opened + timedelta(minutes=1) - timedelta(milliseconds=1),
+            open=price, high=price + 0.2, low=price - 0.2, close=price + 0.1,
+            volume=10.0, quote_volume=1000.0, trades=10, is_closed=True,
+        ))
+    return rows
+
 def test_yearly_candle_api_assembles_only_complete_closed_months_and_status():
     from app.engines.read_only_api import build_market_candle_payload
 
@@ -503,12 +548,15 @@ def test_yearly_candle_api_assembles_only_complete_closed_months_and_status():
         allowed_symbols=("BTCUSDT",),
         intervals=("1M", "1d"),
         limit=100,
+        now=datetime(2026, 1, 2, 0, 0, 1, tzinfo=timezone.utc),
     )
 
     yearly = payload["candles_by_interval"]["1y"]
     assert payload["symbol"] == "BTCUSDT"
     assert payload["interval_status"]["1M"] == "HEALTHY"
-    assert payload["interval_status"]["1y"] == "HEALTHY"
+    assert payload["interval_status"]["1y"] == "INSUFFICIENT_HISTORY"
+    assert payload["coverage_by_interval"]["1M"]["coverage_status"] == "SHORT_HISTORY"
+    assert payload["coverage_by_interval"]["1y"]["coverage_status"] == "INSUFFICIENT_HISTORY"
     assert len(yearly) == 1
     assert yearly[0]["open"] == 101.0
     assert yearly[0]["high"] == 132.0
@@ -544,30 +592,35 @@ def test_yearly_candle_api_reports_monthly_fetch_failure_without_fabricating_dat
 
 
 def test_candle_api_contract_reports_all_native_intervals_and_isolates_failure():
-    from types import SimpleNamespace
     from app.engines.read_only_api import build_market_candle_payload
 
     native_intervals = ("1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M")
+    open_times = {
+        "1m": datetime(2026, 1, 1, 23, 59, tzinfo=timezone.utc),
+        "5m": datetime(2026, 1, 1, 23, 55, tzinfo=timezone.utc),
+        "15m": datetime(2026, 1, 1, 23, 45, tzinfo=timezone.utc),
+        "1h": datetime(2026, 1, 1, 23, 0, tzinfo=timezone.utc),
+        "4h": datetime(2026, 1, 1, 20, 0, tzinfo=timezone.utc),
+        "1d": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+        "1w": datetime(2025, 12, 22, 0, 0, tzinfo=timezone.utc),
+    }
 
     class Source:
         def fetch_klines(self, symbol, *, interval, limit):
             if interval == "15m":
                 raise RuntimeError("temporary interval outage")
             if interval == "1M":
-                return _closed_monthly_candles(year=2024)
-            return [SimpleNamespace(
-                open_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                close_time=datetime(2024, 1, 1, 0, 0, 59, tzinfo=timezone.utc),
-                open=100.0, high=105.0, low=95.0, close=102.0,
-                volume=12.0, is_closed=True,
-            )]
+                return _closed_monthly_candles(year=2025)
+            return [_single_closed_candle_for_interval(symbol, interval, open_times[interval])]
 
+    now = datetime(2026, 1, 2, 0, 0, 1, tzinfo=timezone.utc)
     payload = build_market_candle_payload(
         source=Source(),
         symbol="BTCUSDT",
         allowed_symbols=("BTCUSDT",),
         intervals=native_intervals,
         limit=100,
+        now=now,
     )
 
     assert tuple(payload["candles_by_interval"]) == (*native_intervals, "1y")
@@ -575,11 +628,14 @@ def test_candle_api_contract_reports_all_native_intervals_and_isolates_failure()
         if interval == "15m":
             assert payload["interval_status"][interval] == "UNAVAILABLE:RuntimeError"
             assert payload["candles_by_interval"][interval] == []
-        else:
+        elif interval == "1M":
             assert payload["interval_status"][interval] == "HEALTHY"
-            assert len(payload["candles_by_interval"][interval]) == (12 if interval == "1M" else 1)
+            assert len(payload["candles_by_interval"][interval]) == 12
+        else:
+            assert payload["interval_status"][interval] == "INSUFFICIENT_HISTORY"
+            assert len(payload["candles_by_interval"][interval]) == 1
 
-    assert payload["interval_status"]["1y"] == "HEALTHY"
+    assert payload["interval_status"]["1y"] == "INSUFFICIENT_HISTORY"
     assert len(payload["candles_by_interval"]["1y"]) == 1
     assert payload["orders_authorized"] is False
     assert payload["mode"] == "PAPER_ONLY"
@@ -941,3 +997,63 @@ def test_api_token_environment_value_is_trimmed_without_changing_token_contents(
     assert _load_api_token({"PAPER_API_TOKEN": "  " + expected + " \n"}) == expected
     assert _load_api_token({"PAPER_API_TOKEN": expected}) == expected
     assert _load_api_token({"PAPER_API_TOKEN": "   "}) == ""
+
+def test_market_candle_api_reports_internal_gap_instead_of_healthy_interval():
+    from app.engines.read_only_api import build_market_candle_payload
+
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    now = start + timedelta(minutes=60, seconds=1)
+    rows = _closed_minute_series(count=60, missing_index=30)
+
+    class Source:
+        def fetch_klines(self, symbol, *, interval, limit):
+            return rows[:limit] if interval == "1m" else []
+
+    payload = build_market_candle_payload(
+        source=Source(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        intervals=("1m",), limit=60, now=now,
+    )
+
+    coverage = payload["coverage_by_interval"]["1m"]
+    assert payload["interval_status"]["1m"] == "GAP_DETECTED"
+    assert coverage["coverage_status"] == "INCOMPLETE"
+    assert coverage["validated"] is False
+    assert coverage["returned_count"] == 59
+    assert "gap" in coverage["reason"].lower()
+    assert payload["orders_authorized"] is False
+
+
+def test_market_candle_api_distinguishes_short_history_from_a_full_limited_window():
+    from app.engines.read_only_api import build_market_candle_payload
+
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    short_now = start + timedelta(minutes=60, seconds=1)
+    full_now = start + timedelta(minutes=100, seconds=1)
+
+    class ShortSource:
+        def fetch_klines(self, symbol, *, interval, limit):
+            return _closed_minute_series(count=60)[:limit] if interval == "1m" else []
+
+    short = build_market_candle_payload(
+        source=ShortSource(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        intervals=("1m",), limit=100, now=short_now,
+    )
+    short_coverage = short["coverage_by_interval"]["1m"]
+    assert short["interval_status"]["1m"] == "HEALTHY"
+    assert short_coverage["coverage_status"] == "SHORT_HISTORY"
+    assert short_coverage["returned_count"] == 60
+    assert short_coverage["truncated"] is False
+
+    class FullSource:
+        def fetch_klines(self, symbol, *, interval, limit):
+            return _closed_minute_series(count=100)[:limit] if interval == "1m" else []
+
+    full = build_market_candle_payload(
+        source=FullSource(), symbol="BTCUSDT", allowed_symbols=("BTCUSDT",),
+        intervals=("1m",), limit=100, now=full_now,
+    )
+    full_coverage = full["coverage_by_interval"]["1m"]
+    assert full["interval_status"]["1m"] == "HEALTHY"
+    assert full_coverage["coverage_status"] == "COMPLETE_WINDOW"
+    assert full_coverage["returned_count"] == 100
+    assert full_coverage["truncated"] is True

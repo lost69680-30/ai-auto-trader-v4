@@ -17,7 +17,7 @@ It reports one of:
 - `SAFETY_VIOLATION`: any order-authorization invariant is violated;
 - `UNKNOWN`: database or heartbeat evidence is unavailable or malformed.
 
-The scheduled workflow does not call the worker's `/healthz` endpoint, does not wake Render, does not restart the service, and does not write to Supabase.
+The scheduled workflow keeps database inspection SELECT-only. It sends no periodic liveness requests to a healthy or degraded-but-live worker. Only when the read-only classifier confirms `STOPPED` with `orders_authorized=false` does it send one unauthenticated `/healthz` wake request, then poll read-only state to verify worker and scheduler recovery. A degraded feed alone is never treated as a stopped process. Unknown or unsafe authorization state never triggers a request.
 
 ## GitHub setup
 
@@ -25,22 +25,22 @@ The repository needs the existing Actions secret:
 
 - `SOLO_BACKUP_DATABASE_URL`: PostgreSQL connection string for the dedicated read-only `solo_backup_reader` role. The monitor requires TLS and sets the session read-only. Never expose this value in logs, source, or Android configuration.
 
-The monitor workflow is `.github/workflows/solo-render-keepwarm.yml` (historical filename; now a read-only monitor) and runs every ten minutes plus manual dispatch. A second manual workflow, `.github/workflows/solo-independent-worker-watchdog.yml`, runs the same read-only check on demand.
+The monitor workflow is `.github/workflows/solo-render-keepwarm.yml` (historical filename) and runs every ten minutes plus manual dispatch. It performs one read-only database classification and sends a single `/healthz` wake request only after a confirmed stopped-worker state. It never pings a healthy worker to keep a Free service warm and never uses Render management APIs. A second manual workflow, `.github/workflows/solo-independent-worker-watchdog.yml`, validates the monitor code and contracts.
 
 ## Render Free limitation
 
-Render Free web services may stop after inactivity. A stopped heartbeat is therefore reported as stopped/stale; the monitor deliberately does not issue repeated pings or automatic restarts to bypass the free-tier idle-sleep behaviour. GitHub scheduled runs are also best-effort and are not a real-time uptime SLA.
+Render Free web services may stop after inactivity. The ten-minute GitHub schedule checks database state only. After a confirmed stale/stopped state, the monitor makes at most one `/healthz` wake request and verifies recovery from PostgreSQL. It does not send recurring keep-alive requests, call the Render management/restart API, or treat feed degradation as worker death. GitHub scheduled runs are best-effort and may be delayed, so this is not a real-time uptime SLA or a guarantee of continuous compute.
 
 For guaranteed continuous worker operation, Solo needs an always-on hosting plan or a suitable always-on compute environment. Current $0 hosting constraints do not provide that guarantee.
 
 ## Manual cold-start recovery
 
-The manual workflow `.github/workflows/solo-staging-health-check.yml` is intentionally separate. When deliberately dispatched, it requests the worker's `/healthz` route once to wake the service, then checks the separate API's database-backed `/readyz` response. It is a manual recovery/acceptance action, not a scheduled keep-alive.
+The manual workflow `.github/workflows/solo-staging-health-check.yml` remains a separate end-to-end acceptance action. It can be dispatched deliberately to exercise `/healthz` and then verify the separate API's database-backed readiness. The scheduled monitor uses the database classifier to decide whether the single worker liveness request is warranted.
 
 ## Safety
 
 - The monitor uses read-only database credentials and requires TLS.
-- It never calls exchange order endpoints or Render restart APIs.
+- It never calls exchange order endpoints or Render management/restart APIs; the only HTTP action is at most one unauthenticated worker liveness GET per ten-minute monitor run.
 - It never changes ledger rows, risk limits, credentials, or Emergency Stop state.
 - Any observed `orders_authorized=true` is reported as a safety violation.
 - Stale market data is reported separately from a stopped worker process.
