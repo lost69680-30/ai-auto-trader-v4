@@ -2,7 +2,17 @@ from pathlib import Path
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[1]
+def repository_root() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        if (
+            (parent / "android" / "app" / "build.gradle.kts").is_file()
+            and (parent / ".github" / "workflows" / "build-market-analysis-apk.yml").is_file()
+        ):
+            return parent
+    raise RuntimeError("could not locate Solo repository root")
+
+
+ROOT = repository_root()
 ROOT_GRADLE = ROOT / "android" / "app" / "build.gradle.kts"
 EXTRACTED = ROOT / "extracted-source" / "ai-auto-trader-v4-assembly"
 EXTRACTED_GRADLE = EXTRACTED / "android" / "app" / "build.gradle.kts"
