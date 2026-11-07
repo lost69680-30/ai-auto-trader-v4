@@ -30,7 +30,7 @@ jobs:
           # Cancel only that known in-progress deploy so Render can start the already-queued env-update deploy.
           cancelled="$(curl --fail-with-body --silent --show-error \
             --request POST \
-            "https://api.render.com/v1/services/${RENDER_WORKER_SERVICE_ID}/deploys/dep-dbnboidg1s2s73c8nl10/cancel" \
+            "https://api.render.com/v1/services/${RENDER_WORKER_SERVICE_ID}/deploys/dep-dbnbpi97m43s73bl5rng/cancel" \
             --header "Authorization: Bearer ${RENDER_API_KEY}" \
             --header "Accept: application/json")"
           printf '%s' "$cancelled" | jq -e '.status == "canceled"'
